@@ -8,6 +8,7 @@ mod connection;
 mod schema;
 mod schema_store;
 mod session;
+mod stream;
 
 pub use connection::DEFAULT_USB_BAUD;
 pub use schema::{
@@ -18,6 +19,9 @@ pub use schema_store::{
     SchemaStore, SchemaStoreError, StoredSchema, schema_store_key,
 };
 pub use session::{DeviceSession, SessionError, SessionEvent};
+pub use stream::{
+    StreamConfig, StreamError, StreamSession, StreamSnapshot, StreamState,
+};
 
 // These are application-facing domain value types. Clients import them from
 // `nmixx-app`; they do not depend on `nmixx-core` directly.
