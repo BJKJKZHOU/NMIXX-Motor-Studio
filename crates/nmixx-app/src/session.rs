@@ -267,11 +267,19 @@ impl Worker {
 
             match self.transport.receive(deadline.saturating_duration_since(now)) {
                 Ok(frame) => {
-                    let inbound = decode_inbound(frame)
-                        .map_err(|error| SessionError::Decode(error.to_string()))?;
+                    let inbound = match decode_inbound(frame) {
+                        Ok(inbound) => inbound,
+                        Err(error) => {
+                            self.transactions.cancel(txn);
+                            return Err(SessionError::Decode(error.to_string()));
+                        }
+                    };
                     match inbound {
                         InboundFrame::Response(response) if response.txn == txn.get() => {
-                            self.transactions.complete(&response)?;
+                            if let Err(error) = self.transactions.complete(&response) {
+                                self.transactions.cancel(txn);
+                                return Err(error.into());
+                            }
                             return Ok(response);
                         }
                         other => self.dispatch(other),
