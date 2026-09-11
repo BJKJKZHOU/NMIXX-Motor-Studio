@@ -205,3 +205,34 @@ fn timeout_cancels_pending_transaction_and_next_request_can_succeed() {
         ParameterValue::U8(0)
     );
 }
+
+#[test]
+fn malformed_response_does_not_poison_following_request() {
+    let state = ScriptState::default();
+    state.incoming.lock().unwrap().push_back(Ok(
+        CanFdFrame::new(can_id(MSG_RESPONSE, NODE_ID_DEFAULT), &[1, MSG_PARAMETER, PARAM_READ])
+            .unwrap(),
+    ));
+
+    let session = DeviceSession::spawn(Box::new(ScriptedTransport::new(state.clone())));
+    assert!(matches!(
+        session.parameter_read(0x0710, ParameterType::U8),
+        Err(SessionError::Decode(_))
+    ));
+
+    state
+        .incoming
+        .lock()
+        .unwrap()
+        .push_back(Ok(response(
+            2,
+            PARAM_READ,
+            AxdrStatus::Ok,
+            &[0x10, 0x07, ParameterType::U8 as u8, 0],
+        )));
+
+    assert_eq!(
+        session.parameter_read(0x0710, ParameterType::U8).unwrap(),
+        ParameterValue::U8(0)
+    );
+}
