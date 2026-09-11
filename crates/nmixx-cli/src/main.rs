@@ -7,17 +7,15 @@ use std::time::Duration;
 use clap::{Parser, Subcommand, ValueEnum};
 use nmixx_app::{
     ActionMetadata, AxdrStatus, DEFAULT_USB_BAUD, DeviceSession, HostSchema, ParameterMetadata,
-    ParameterType, ParameterValue, PositionValue, SchemaNumber, SessionEvent,
+    ParameterType, ParameterValue, PositionValue, SchemaNumber, SchemaStore, SessionEvent,
 };
 
 #[derive(Debug, Parser)]
 #[command(name = "nmixxctl", version, about = "NMIXX Motor Studio CLI")]
 struct Cli {
-    /// USB CDC serial port, for commands that access a device.
     #[arg(long, global = true)]
     port: Option<String>,
 
-    /// Serial line rate used when opening the USB CDC port.
     #[arg(long, global = true, default_value_t = DEFAULT_USB_BAUD)]
     baud: u32,
 
@@ -25,62 +23,52 @@ struct Cli {
     #[arg(long, global = true)]
     schema: Option<PathBuf>,
 
+    /// Override the local NMIXX schema-store directory.
+    #[arg(long, global = true)]
+    schema_store: Option<PathBuf>,
+
     #[command(subcommand)]
     command: Command,
 }
 
 #[derive(Debug, Subcommand)]
 enum Command {
-    /// Device discovery and connection utilities.
     Device {
         #[command(subcommand)]
         command: DeviceCommand,
     },
-    /// Read, write, or inspect firmware Parameters.
     Param {
         #[command(subcommand)]
         command: ParamCommand,
     },
-    /// Trigger a firmware Action by symbol, Host name, or numeric ID.
     Action {
         #[command(subcommand)]
         command: ActionCommand,
+    },
+    /// Manage locally imported Host schemas.
+    Schema {
+        #[command(subcommand)]
+        command: SchemaCommand,
     },
 }
 
 #[derive(Debug, Subcommand)]
 enum DeviceCommand {
-    /// List serial ports visible to NMIXX Motor Studio.
     List,
 }
 
 #[derive(Debug, Subcommand)]
 enum ParamCommand {
-    /// List Parameters from the loaded Host schema.
     List,
-    /// Show metadata for one Parameter.
-    Info {
-        /// Parameter key: schema symbol/name, decimal ID, or 0x-prefixed hexadecimal ID.
-        key: String,
-    },
-    /// Read one Parameter.
+    Info { key: String },
     Get {
-        /// Parameter key: schema symbol/name, decimal ID, or 0x-prefixed hexadecimal ID.
         key: String,
-
-        /// Parameter type override. Required for numeric IDs when no schema is loaded.
         #[arg(long = "type", value_enum)]
         ty: Option<CliParameterType>,
     },
-    /// Write one Parameter.
     Set {
-        /// Parameter key: schema symbol/name, decimal ID, or 0x-prefixed hexadecimal ID.
         key: String,
-
-        /// Value text. Position uses `turns,theta`, for example `-2,1.5`.
         value: String,
-
-        /// Parameter type override. Required for numeric IDs when no schema is loaded.
         #[arg(long = "type", value_enum)]
         ty: Option<CliParameterType>,
     },
@@ -88,26 +76,31 @@ enum ParamCommand {
 
 #[derive(Debug, Subcommand)]
 enum ActionCommand {
-    /// List Actions from the loaded Host schema.
     List,
-    /// Show metadata for one Action.
-    Info {
-        /// Action key: schema symbol/name, decimal ID, or 0x-prefixed hexadecimal ID.
-        key: String,
-    },
-    /// Start an Action.
+    Info { key: String },
     Start {
-        /// Action key: schema symbol/name, decimal ID, or 0x-prefixed hexadecimal ID.
         key: String,
-
-        /// Return after the Action is accepted instead of waiting for completion.
         #[arg(long)]
         no_wait: bool,
-
-        /// Completion wait timeout in seconds.
         #[arg(long, default_value_t = 30)]
         timeout: u64,
     },
+}
+
+#[derive(Debug, Subcommand)]
+enum SchemaCommand {
+    /// Validate and import one Host schema TOML into the local store.
+    Import {
+        path: PathBuf,
+        #[arg(long)]
+        replace: bool,
+    },
+    /// List locally imported schemas.
+    List,
+    /// Show metadata for one imported schema key.
+    Info { key: String },
+    /// Export one imported schema without rewriting its TOML contents.
+    Export { key: String, destination: PathBuf },
 }
 
 #[derive(Debug, Clone, Copy, ValueEnum)]
@@ -151,11 +144,44 @@ fn run() -> Result<(), Box<dyn Error>> {
         port,
         baud,
         schema,
+        schema_store,
         command,
     } = Cli::parse();
     let schema = schema.as_deref().map(HostSchema::load).transpose()?;
 
     match command {
+        Command::Schema { command } => {
+            let store = match schema_store {
+                Some(root) => SchemaStore::new(root),
+                None => SchemaStore::default()?,
+            };
+            match command {
+                SchemaCommand::Import { path, replace } => {
+                    let stored = store.import(&path, replace)?;
+                    println!("imported {}", stored.key);
+                    println!("path: {}", stored.path.display());
+                }
+                SchemaCommand::List => {
+                    for stored in store.list()? {
+                        println!(
+                            "{:<48} protocol={} parameters={} actions={}",
+                            stored.key,
+                            stored.schema.protocol,
+                            stored.schema.parameters.len(),
+                            stored.schema.actions.len()
+                        );
+                    }
+                }
+                SchemaCommand::Info { key } => {
+                    let stored = store.get(&key)?;
+                    print_schema_info(&stored.key, &stored.path, &stored.schema);
+                }
+                SchemaCommand::Export { key, destination } => {
+                    store.export(&key, &destination)?;
+                    println!("exported {key} -> {}", destination.display());
+                }
+            }
+        }
         Command::Device {
             command: DeviceCommand::List,
         } => {
@@ -164,13 +190,9 @@ fn run() -> Result<(), Box<dyn Error>> {
             }
         }
         Command::Param { command } => match command {
-            ParamCommand::List => {
-                let schema = require_schema(schema.as_ref())?;
-                print_parameter_list(schema);
-            }
+            ParamCommand::List => print_parameter_list(require_schema(schema.as_ref())?),
             ParamCommand::Info { key } => {
-                let schema = require_schema(schema.as_ref())?;
-                let metadata = resolve_parameter_metadata(schema, &key)?;
+                let metadata = resolve_parameter_metadata(require_schema(schema.as_ref())?, &key)?;
                 print_parameter_info(metadata);
             }
             ParamCommand::Get { key, ty } => {
@@ -197,13 +219,9 @@ fn run() -> Result<(), Box<dyn Error>> {
             }
         },
         Command::Action { command } => match command {
-            ActionCommand::List => {
-                let schema = require_schema(schema.as_ref())?;
-                print_action_list(schema);
-            }
+            ActionCommand::List => print_action_list(require_schema(schema.as_ref())?),
             ActionCommand::Info { key } => {
-                let schema = require_schema(schema.as_ref())?;
-                let metadata = resolve_action_metadata(schema, &key)?;
+                let metadata = resolve_action_metadata(require_schema(schema.as_ref())?, &key)?;
                 print_action_info(metadata);
             }
             ActionCommand::Start {
@@ -213,25 +231,17 @@ fn run() -> Result<(), Box<dyn Error>> {
             } => {
                 let (action_id, action_label) = resolve_action(schema.as_ref(), &key)?;
                 let session = open_session(port.as_deref(), baud)?;
-                let events = if no_wait {
-                    None
-                } else {
-                    Some(session.subscribe()?)
-                };
+                let events = if no_wait { None } else { Some(session.subscribe()?) };
                 let handle = session.action_start(action_id)?;
                 println!(
                     "accepted txn={} action={} (0x{action_id:04X})",
                     handle.txn.get(),
                     action_label
                 );
-
                 if let Some(events) = events {
                     loop {
                         match events.recv_timeout(Duration::from_secs(timeout)) {
-                            Ok(SessionEvent::ActionCompleted {
-                                handle: completed,
-                                status,
-                            }) if completed == handle => {
+                            Ok(SessionEvent::ActionCompleted { handle: completed, status }) if completed == handle => {
                                 match status {
                                     AxdrStatus::Ok => println!("completed OK"),
                                     other => println!("completed {other:?}"),
@@ -242,8 +252,7 @@ fn run() -> Result<(), Box<dyn Error>> {
                             Err(RecvTimeoutError::Timeout) => {
                                 return Err(format!(
                                     "action {action_label} (0x{action_id:04X}) completion timed out after {timeout}s"
-                                )
-                                .into());
+                                ).into());
                             }
                             Err(RecvTimeoutError::Disconnected) => {
                                 return Err("device session closed while waiting for action".into());
@@ -254,7 +263,6 @@ fn run() -> Result<(), Box<dyn Error>> {
             }
         },
     }
-
     Ok(())
 }
 
@@ -267,41 +275,29 @@ fn open_session(port: Option<&str>, baud: u32) -> Result<DeviceSession, Box<dyn 
     Ok(DeviceSession::open_usb(port, baud)?)
 }
 
-fn resolve_parameter_metadata<'a>(
-    schema: &'a HostSchema,
-    key: &str,
-) -> Result<&'a ParameterMetadata, Box<dyn Error>> {
+fn resolve_parameter_metadata<'a>(schema: &'a HostSchema, key: &str) -> Result<&'a ParameterMetadata, Box<dyn Error>> {
     if let Some(metadata) = schema.parameter_by_key(key) {
         return Ok(metadata);
     }
     if let Ok(id) = parse_u16(key) {
-        return schema
-            .parameter_by_id(id)
+        return schema.parameter_by_id(id)
             .ok_or_else(|| format!("parameter ID 0x{id:04X} is not present in the loaded schema").into());
     }
     Err(format!("unknown parameter key '{key}' in loaded schema").into())
 }
 
-fn resolve_action_metadata<'a>(
-    schema: &'a HostSchema,
-    key: &str,
-) -> Result<&'a ActionMetadata, Box<dyn Error>> {
+fn resolve_action_metadata<'a>(schema: &'a HostSchema, key: &str) -> Result<&'a ActionMetadata, Box<dyn Error>> {
     if let Some(metadata) = schema.action_by_key(key) {
         return Ok(metadata);
     }
     if let Ok(id) = parse_u16(key) {
-        return schema
-            .action_by_id(id)
+        return schema.action_by_id(id)
             .ok_or_else(|| format!("action ID 0x{id:04X} is not present in the loaded schema").into());
     }
     Err(format!("unknown action key '{key}' in loaded schema").into())
 }
 
-fn resolve_parameter<'a>(
-    schema: Option<&'a HostSchema>,
-    key: &str,
-    type_override: Option<CliParameterType>,
-) -> Result<ResolvedParameter<'a>, Box<dyn Error>> {
+fn resolve_parameter<'a>(schema: Option<&'a HostSchema>, key: &str, type_override: Option<CliParameterType>) -> Result<ResolvedParameter<'a>, Box<dyn Error>> {
     if let Some(schema) = schema {
         if let Some(metadata) = schema.parameter_by_key(key) {
             let schema_type = metadata.parameter_type()?;
@@ -311,39 +307,22 @@ fn resolve_parameter<'a>(
                     return Err(format!(
                         "parameter {} type mismatch: schema={}, CLI={override_type:?}",
                         metadata.symbol, metadata.type_name
-                    )
-                    .into());
+                    ).into());
                 }
             }
-            return Ok(ResolvedParameter {
-                id: metadata.id,
-                ty: schema_type,
-                metadata: Some(metadata),
-            });
+            return Ok(ResolvedParameter { id: metadata.id, ty: schema_type, metadata: Some(metadata) });
         }
-
         if let Ok(id) = parse_u16(key) {
             if let Some(metadata) = schema.parameter_by_id(id) {
-                let schema_type = metadata.parameter_type()?;
-                return Ok(ResolvedParameter {
-                    id,
-                    ty: schema_type,
-                    metadata: Some(metadata),
-                });
+                return Ok(ResolvedParameter { id, ty: metadata.parameter_type()?, metadata: Some(metadata) });
             }
             if let Some(override_type) = type_override {
-                return Ok(ResolvedParameter {
-                    id,
-                    ty: override_type.into(),
-                    metadata: None,
-                });
+                return Ok(ResolvedParameter { id, ty: override_type.into(), metadata: None });
             }
             return Err(format!(
                 "parameter ID 0x{id:04X} is not present in the loaded schema; use --type for raw access"
-            )
-            .into());
+            ).into());
         }
-
         return Err(format!("unknown parameter key '{key}' in loaded schema").into());
     }
 
@@ -351,33 +330,22 @@ fn resolve_parameter<'a>(
         format!("parameter '{key}' requires --schema; without a schema only numeric IDs are accepted")
     })?;
     let ty = type_override.ok_or("--type is required for raw numeric parameter access without --schema")?;
-    Ok(ResolvedParameter {
-        id,
-        ty: ty.into(),
-        metadata: None,
-    })
+    Ok(ResolvedParameter { id, ty: ty.into(), metadata: None })
 }
 
 fn resolve_action(schema: Option<&HostSchema>, key: &str) -> Result<(u16, String), Box<dyn Error>> {
     if let Some(schema) = schema {
         if let Some(action) = schema.action_by_key(key) {
-            return Ok((
-                action.id,
-                action.name.as_deref().unwrap_or(&action.symbol).to_owned(),
-            ));
+            return Ok((action.id, action.name.as_deref().unwrap_or(&action.symbol).to_owned()));
         }
         if let Ok(id) = parse_u16(key) {
             if let Some(action) = schema.action_by_id(id) {
-                return Ok((
-                    id,
-                    action.name.as_deref().unwrap_or(&action.symbol).to_owned(),
-                ));
+                return Ok((id, action.name.as_deref().unwrap_or(&action.symbol).to_owned()));
             }
             return Ok((id, format!("0x{id:04X}")));
         }
         return Err(format!("unknown action key '{key}' in loaded schema").into());
     }
-
     let id = parse_u16(key).map_err(|_| {
         format!("action '{key}' requires --schema; without a schema only numeric IDs are accepted")
     })?;
@@ -413,14 +381,23 @@ fn parse_parameter_value(ty: ParameterType, text: &str) -> Result<ParameterValue
     })
 }
 
+fn print_schema_info(key: &str, path: &std::path::Path, schema: &HostSchema) {
+    println!("key: {key}");
+    println!("path: {}", path.display());
+    println!("schema_version: {}", schema.schema_version);
+    println!("protocol: {}", schema.protocol);
+    println!("source_repository: {}", schema.source.repository);
+    println!("source_git_sha: {}", schema.source.git_sha);
+    println!("parameter_schema: {}", schema.source.parameter_schema);
+    println!("parameters: {}", schema.parameters.len());
+    println!("actions: {}", schema.actions.len());
+}
+
 fn print_parameter_list(schema: &HostSchema) {
     for parameter in &schema.parameters {
         let key = parameter.name.as_deref().unwrap_or(&parameter.symbol);
         let unit = parameter.unit.as_deref().unwrap_or("");
-        println!(
-            "0x{:04X}  {:<28} {:<8} {:<2} {}",
-            parameter.id, key, parameter.type_name, parameter.access, unit
-        );
+        println!("0x{:04X}  {:<28} {:<8} {:<2} {}", parameter.id, key, parameter.type_name, parameter.access, unit);
     }
 }
 
@@ -433,53 +410,30 @@ fn print_action_list(schema: &HostSchema) {
 
 fn print_parameter_info(parameter: &ParameterMetadata) {
     println!("symbol: {}", parameter.symbol);
-    if let Some(name) = parameter.name.as_deref() {
-        println!("name: {name}");
-    }
+    if let Some(name) = parameter.name.as_deref() { println!("name: {name}"); }
     println!("id: 0x{:04X}", parameter.id);
     println!("type: {}", parameter.type_name);
     println!("access: {}", parameter.access);
-    if let Some(unit) = parameter.unit.as_deref() {
-        println!("unit: {unit}");
-    }
-    if let Some(write_state) = parameter.write_state.as_deref() {
-        println!("write_state: {write_state}");
-    }
+    if let Some(unit) = parameter.unit.as_deref() { println!("unit: {unit}"); }
+    if let Some(write_state) = parameter.write_state.as_deref() { println!("write_state: {write_state}"); }
     if let Some(range) = parameter.range.as_ref() {
-        if let Some(min) = range.min {
-            println!("min: {}{}", format_schema_number(min), if range.exclusive_min { " (exclusive)" } else { "" });
-        }
-        if let Some(max) = range.max {
-            println!("max: {}{}", format_schema_number(max), if range.exclusive_max { " (exclusive)" } else { "" });
-        }
-        if let Some(symbol) = range.max_symbol.as_deref() {
-            println!("max_symbol: {symbol}");
-        }
-        if let Some(binding) = range.max_binding.as_deref() {
-            println!("max_binding: {binding}");
-        }
-        if !range.max_bindings.is_empty() {
-            println!("max_bindings: {}", range.max_bindings.join(", "));
-        }
+        if let Some(min) = range.min { println!("min: {}{}", format_schema_number(min), if range.exclusive_min { " (exclusive)" } else { "" }); }
+        if let Some(max) = range.max { println!("max: {}{}", format_schema_number(max), if range.exclusive_max { " (exclusive)" } else { "" }); }
+        if let Some(symbol) = range.max_symbol.as_deref() { println!("max_symbol: {symbol}"); }
+        if let Some(binding) = range.max_binding.as_deref() { println!("max_binding: {binding}"); }
+        if !range.max_bindings.is_empty() { println!("max_bindings: {}", range.max_bindings.join(", ")); }
     }
     if !parameter.allowed.is_empty() {
-        let values = parameter.allowed.iter().copied().map(format_schema_number).collect::<Vec<_>>();
-        println!("allowed: {}", values.join(", "));
+        println!("allowed: {}", parameter.allowed.iter().copied().map(format_schema_number).collect::<Vec<_>>().join(", "));
     }
-    if !parameter.allowed_symbols.is_empty() {
-        println!("allowed_symbols: {}", parameter.allowed_symbols.join(", "));
-    }
-    if let Some(scale) = parameter.plot_scale {
-        println!("plot_scale: {scale}");
-    }
+    if !parameter.allowed_symbols.is_empty() { println!("allowed_symbols: {}", parameter.allowed_symbols.join(", ")); }
+    if let Some(scale) = parameter.plot_scale { println!("plot_scale: {scale}"); }
     println!("description: {}", parameter.description);
 }
 
 fn print_action_info(action: &ActionMetadata) {
     println!("symbol: {}", action.symbol);
-    if let Some(name) = action.name.as_deref() {
-        println!("name: {name}");
-    }
+    if let Some(name) = action.name.as_deref() { println!("name: {name}"); }
     println!("id: 0x{:04X}", action.id);
     println!("description: {}", action.description);
 }

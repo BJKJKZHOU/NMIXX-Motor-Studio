@@ -6,12 +6,16 @@
 
 mod connection;
 mod schema;
+mod schema_store;
 mod session;
 
 pub use connection::DEFAULT_USB_BAUD;
 pub use schema::{
     ActionMetadata, HostSchema, ParameterMetadata, RangeMetadata, SchemaError, SchemaNumber,
     SchemaSource,
+};
+pub use schema_store::{
+    SchemaStore, SchemaStoreError, StoredSchema, schema_store_key,
 };
 pub use session::{DeviceSession, SessionError, SessionEvent};
 
