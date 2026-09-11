@@ -6,8 +6,8 @@ use std::time::Duration;
 
 use clap::{Parser, Subcommand, ValueEnum};
 use nmixx_app::{
-    AxdrStatus, DEFAULT_USB_BAUD, DeviceSession, HostSchema, ParameterMetadata, ParameterType,
-    ParameterValue, PositionValue, SessionEvent,
+    ActionMetadata, AxdrStatus, DEFAULT_USB_BAUD, DeviceSession, HostSchema, ParameterMetadata,
+    ParameterType, ParameterValue, PositionValue, SchemaNumber, SessionEvent,
 };
 
 #[derive(Debug, Parser)]
@@ -36,23 +36,15 @@ enum Command {
         #[command(subcommand)]
         command: DeviceCommand,
     },
-    /// Read or write a firmware Parameter by symbol, Host name, or numeric ID.
+    /// Read, write, or inspect firmware Parameters.
     Param {
         #[command(subcommand)]
         command: ParamCommand,
     },
     /// Trigger a firmware Action by symbol, Host name, or numeric ID.
     Action {
-        /// Action key: schema symbol/name, decimal ID, or 0x-prefixed hexadecimal ID.
-        key: String,
-
-        /// Return after the Action is accepted instead of waiting for completion.
-        #[arg(long)]
-        no_wait: bool,
-
-        /// Completion wait timeout in seconds.
-        #[arg(long, default_value_t = 30)]
-        timeout: u64,
+        #[command(subcommand)]
+        command: ActionCommand,
     },
 }
 
@@ -64,6 +56,13 @@ enum DeviceCommand {
 
 #[derive(Debug, Subcommand)]
 enum ParamCommand {
+    /// List Parameters from the loaded Host schema.
+    List,
+    /// Show metadata for one Parameter.
+    Info {
+        /// Parameter key: schema symbol/name, decimal ID, or 0x-prefixed hexadecimal ID.
+        key: String,
+    },
     /// Read one Parameter.
     Get {
         /// Parameter key: schema symbol/name, decimal ID, or 0x-prefixed hexadecimal ID.
@@ -84,6 +83,30 @@ enum ParamCommand {
         /// Parameter type override. Required for numeric IDs when no schema is loaded.
         #[arg(long = "type", value_enum)]
         ty: Option<CliParameterType>,
+    },
+}
+
+#[derive(Debug, Subcommand)]
+enum ActionCommand {
+    /// List Actions from the loaded Host schema.
+    List,
+    /// Show metadata for one Action.
+    Info {
+        /// Action key: schema symbol/name, decimal ID, or 0x-prefixed hexadecimal ID.
+        key: String,
+    },
+    /// Start an Action.
+    Start {
+        /// Action key: schema symbol/name, decimal ID, or 0x-prefixed hexadecimal ID.
+        key: String,
+
+        /// Return after the Action is accepted instead of waiting for completion.
+        #[arg(long)]
+        no_wait: bool,
+
+        /// Completion wait timeout in seconds.
+        #[arg(long, default_value_t = 30)]
+        timeout: u64,
     },
 }
 
@@ -140,85 +163,138 @@ fn run() -> Result<(), Box<dyn Error>> {
                 println!("{port}");
             }
         }
-        Command::Param { command } => {
-            let session = open_session(port.as_deref(), baud)?;
-            match command {
-                ParamCommand::Get { key, ty } => {
-                    let parameter = resolve_parameter(schema.as_ref(), &key, ty)?;
-                    let value = session.parameter_read(parameter.id, parameter.ty)?;
-                    print_parameter_value(parameter.metadata, parameter.id, value);
-                }
-                ParamCommand::Set { key, value, ty } => {
-                    let parameter = resolve_parameter(schema.as_ref(), &key, ty)?;
-                    if let Some(metadata) = parameter.metadata {
-                        if metadata.access != "rw" {
-                            return Err(format!(
-                                "parameter {} (0x{:04X}) is not writable (access={})",
-                                metadata.symbol, metadata.id, metadata.access
-                            )
-                            .into());
-                        }
-                    }
-                    let value = parse_parameter_value(parameter.ty, &value)?;
-                    session.parameter_write(parameter.id, value)?;
-                    println!("OK");
-                }
+        Command::Param { command } => match command {
+            ParamCommand::List => {
+                let schema = require_schema(schema.as_ref())?;
+                print_parameter_list(schema);
             }
-        }
-        Command::Action {
-            key,
-            no_wait,
-            timeout,
-        } => {
-            let (action_id, action_label) = resolve_action(schema.as_ref(), &key)?;
-            let session = open_session(port.as_deref(), baud)?;
-            let events = if no_wait {
-                None
-            } else {
-                Some(session.subscribe()?)
-            };
-            let handle = session.action_start(action_id)?;
-            println!(
-                "accepted txn={} action={} (0x{action_id:04X})",
-                handle.txn.get(),
-                action_label
-            );
+            ParamCommand::Info { key } => {
+                let schema = require_schema(schema.as_ref())?;
+                let metadata = resolve_parameter_metadata(schema, &key)?;
+                print_parameter_info(metadata);
+            }
+            ParamCommand::Get { key, ty } => {
+                let session = open_session(port.as_deref(), baud)?;
+                let parameter = resolve_parameter(schema.as_ref(), &key, ty)?;
+                let value = session.parameter_read(parameter.id, parameter.ty)?;
+                print_parameter_value(parameter.metadata, parameter.id, value);
+            }
+            ParamCommand::Set { key, value, ty } => {
+                let session = open_session(port.as_deref(), baud)?;
+                let parameter = resolve_parameter(schema.as_ref(), &key, ty)?;
+                if let Some(metadata) = parameter.metadata {
+                    if metadata.access != "rw" {
+                        return Err(format!(
+                            "parameter {} (0x{:04X}) is not writable (access={})",
+                            metadata.symbol, metadata.id, metadata.access
+                        )
+                        .into());
+                    }
+                }
+                let value = parse_parameter_value(parameter.ty, &value)?;
+                session.parameter_write(parameter.id, value)?;
+                println!("OK");
+            }
+        },
+        Command::Action { command } => match command {
+            ActionCommand::List => {
+                let schema = require_schema(schema.as_ref())?;
+                print_action_list(schema);
+            }
+            ActionCommand::Info { key } => {
+                let schema = require_schema(schema.as_ref())?;
+                let metadata = resolve_action_metadata(schema, &key)?;
+                print_action_info(metadata);
+            }
+            ActionCommand::Start {
+                key,
+                no_wait,
+                timeout,
+            } => {
+                let (action_id, action_label) = resolve_action(schema.as_ref(), &key)?;
+                let session = open_session(port.as_deref(), baud)?;
+                let events = if no_wait {
+                    None
+                } else {
+                    Some(session.subscribe()?)
+                };
+                let handle = session.action_start(action_id)?;
+                println!(
+                    "accepted txn={} action={} (0x{action_id:04X})",
+                    handle.txn.get(),
+                    action_label
+                );
 
-            if let Some(events) = events {
-                loop {
-                    match events.recv_timeout(Duration::from_secs(timeout)) {
-                        Ok(SessionEvent::ActionCompleted {
-                            handle: completed,
-                            status,
-                        }) if completed == handle => {
-                            match status {
-                                AxdrStatus::Ok => println!("completed OK"),
-                                other => println!("completed {other:?}"),
+                if let Some(events) = events {
+                    loop {
+                        match events.recv_timeout(Duration::from_secs(timeout)) {
+                            Ok(SessionEvent::ActionCompleted {
+                                handle: completed,
+                                status,
+                            }) if completed == handle => {
+                                match status {
+                                    AxdrStatus::Ok => println!("completed OK"),
+                                    other => println!("completed {other:?}"),
+                                }
+                                break;
                             }
-                            break;
-                        }
-                        Ok(_) => continue,
-                        Err(RecvTimeoutError::Timeout) => {
-                            return Err(format!(
-                                "action {action_label} (0x{action_id:04X}) completion timed out after {timeout}s"
-                            )
-                            .into());
-                        }
-                        Err(RecvTimeoutError::Disconnected) => {
-                            return Err("device session closed while waiting for action".into());
+                            Ok(_) => continue,
+                            Err(RecvTimeoutError::Timeout) => {
+                                return Err(format!(
+                                    "action {action_label} (0x{action_id:04X}) completion timed out after {timeout}s"
+                                )
+                                .into());
+                            }
+                            Err(RecvTimeoutError::Disconnected) => {
+                                return Err("device session closed while waiting for action".into());
+                            }
                         }
                     }
                 }
             }
-        }
+        },
     }
 
     Ok(())
 }
 
+fn require_schema(schema: Option<&HostSchema>) -> Result<&HostSchema, Box<dyn Error>> {
+    schema.ok_or_else(|| "--schema is required for this command".into())
+}
+
 fn open_session(port: Option<&str>, baud: u32) -> Result<DeviceSession, Box<dyn Error>> {
     let port = port.ok_or("--port is required for this command")?;
     Ok(DeviceSession::open_usb(port, baud)?)
+}
+
+fn resolve_parameter_metadata<'a>(
+    schema: &'a HostSchema,
+    key: &str,
+) -> Result<&'a ParameterMetadata, Box<dyn Error>> {
+    if let Some(metadata) = schema.parameter_by_key(key) {
+        return Ok(metadata);
+    }
+    if let Ok(id) = parse_u16(key) {
+        return schema
+            .parameter_by_id(id)
+            .ok_or_else(|| format!("parameter ID 0x{id:04X} is not present in the loaded schema").into());
+    }
+    Err(format!("unknown parameter key '{key}' in loaded schema").into())
+}
+
+fn resolve_action_metadata<'a>(
+    schema: &'a HostSchema,
+    key: &str,
+) -> Result<&'a ActionMetadata, Box<dyn Error>> {
+    if let Some(metadata) = schema.action_by_key(key) {
+        return Ok(metadata);
+    }
+    if let Ok(id) = parse_u16(key) {
+        return schema
+            .action_by_id(id)
+            .ok_or_else(|| format!("action ID 0x{id:04X} is not present in the loaded schema").into());
+    }
+    Err(format!("unknown action key '{key}' in loaded schema").into())
 }
 
 fn resolve_parameter<'a>(
@@ -335,6 +411,84 @@ fn parse_parameter_value(ty: ParameterType, text: &str) -> Result<ParameterValue
         }
         ParameterType::Action => return Err("Action is not a value Parameter type".into()),
     })
+}
+
+fn print_parameter_list(schema: &HostSchema) {
+    for parameter in &schema.parameters {
+        let key = parameter.name.as_deref().unwrap_or(&parameter.symbol);
+        let unit = parameter.unit.as_deref().unwrap_or("");
+        println!(
+            "0x{:04X}  {:<28} {:<8} {:<2} {}",
+            parameter.id, key, parameter.type_name, parameter.access, unit
+        );
+    }
+}
+
+fn print_action_list(schema: &HostSchema) {
+    for action in &schema.actions {
+        let key = action.name.as_deref().unwrap_or(&action.symbol);
+        println!("0x{:04X}  {}", action.id, key);
+    }
+}
+
+fn print_parameter_info(parameter: &ParameterMetadata) {
+    println!("symbol: {}", parameter.symbol);
+    if let Some(name) = parameter.name.as_deref() {
+        println!("name: {name}");
+    }
+    println!("id: 0x{:04X}", parameter.id);
+    println!("type: {}", parameter.type_name);
+    println!("access: {}", parameter.access);
+    if let Some(unit) = parameter.unit.as_deref() {
+        println!("unit: {unit}");
+    }
+    if let Some(write_state) = parameter.write_state.as_deref() {
+        println!("write_state: {write_state}");
+    }
+    if let Some(range) = parameter.range.as_ref() {
+        if let Some(min) = range.min {
+            println!("min: {}{}", format_schema_number(min), if range.exclusive_min { " (exclusive)" } else { "" });
+        }
+        if let Some(max) = range.max {
+            println!("max: {}{}", format_schema_number(max), if range.exclusive_max { " (exclusive)" } else { "" });
+        }
+        if let Some(symbol) = range.max_symbol.as_deref() {
+            println!("max_symbol: {symbol}");
+        }
+        if let Some(binding) = range.max_binding.as_deref() {
+            println!("max_binding: {binding}");
+        }
+        if !range.max_bindings.is_empty() {
+            println!("max_bindings: {}", range.max_bindings.join(", "));
+        }
+    }
+    if !parameter.allowed.is_empty() {
+        let values = parameter.allowed.iter().copied().map(format_schema_number).collect::<Vec<_>>();
+        println!("allowed: {}", values.join(", "));
+    }
+    if !parameter.allowed_symbols.is_empty() {
+        println!("allowed_symbols: {}", parameter.allowed_symbols.join(", "));
+    }
+    if let Some(scale) = parameter.plot_scale {
+        println!("plot_scale: {scale}");
+    }
+    println!("description: {}", parameter.description);
+}
+
+fn print_action_info(action: &ActionMetadata) {
+    println!("symbol: {}", action.symbol);
+    if let Some(name) = action.name.as_deref() {
+        println!("name: {name}");
+    }
+    println!("id: 0x{:04X}", action.id);
+    println!("description: {}", action.description);
+}
+
+fn format_schema_number(value: SchemaNumber) -> String {
+    match value {
+        SchemaNumber::Integer(value) => value.to_string(),
+        SchemaNumber::Float(value) => value.to_string(),
+    }
 }
 
 fn print_parameter_value(metadata: Option<&ParameterMetadata>, id: u16, value: ParameterValue) {
