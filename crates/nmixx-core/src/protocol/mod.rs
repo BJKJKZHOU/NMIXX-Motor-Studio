@@ -3,6 +3,7 @@ mod ids;
 mod parameter;
 mod router;
 mod status;
+mod stream;
 mod transaction;
 
 pub use action::{
@@ -19,6 +20,10 @@ pub use router::{
     ActionCompleteFrame, DecodeError, InboundFrame, ResponseFrame, decode_inbound,
 };
 pub use status::AxdrStatus;
+pub use stream::{
+    FastDataFrame, NormalDataFrame, SequenceStatus, SequenceTracker, StreamDecodeError,
+    decode_fast_data, decode_normal_data,
+};
 pub use transaction::{
     PendingRequest, TransactionError, TransactionId, TransactionTable,
 };
