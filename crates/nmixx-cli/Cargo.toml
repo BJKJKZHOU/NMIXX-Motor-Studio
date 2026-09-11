@@ -11,4 +11,5 @@ name = "nmixxctl"
 path = "src/main.rs"
 
 [dependencies]
+clap.workspace = true
 nmixx-app = { path = "../nmixx-app" }

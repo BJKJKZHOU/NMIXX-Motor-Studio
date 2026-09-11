@@ -14,5 +14,6 @@ authors = ["ZHOUHENG"]
 rust-version = "1.85"
 
 [workspace.dependencies]
+clap = { version = "4.6.6", features = ["derive"] }
 serial2 = "0.2.38"
 thiserror = "2"

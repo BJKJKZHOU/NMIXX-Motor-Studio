@@ -4,6 +4,14 @@
 //! this layer. A `DeviceSession` owns one transport and exposes shared
 //! application-facing access to that device.
 
+mod connection;
 mod session;
 
+pub use connection::DEFAULT_USB_BAUD;
 pub use session::{DeviceSession, SessionError, SessionEvent};
+
+// These are application-facing domain value types. Clients import them from
+// `nmixx-app`; they do not depend on `nmixx-core` directly.
+pub use nmixx_core::protocol::{
+    ActionHandle, AxdrStatus, ParameterType, ParameterValue, PositionValue,
+};
