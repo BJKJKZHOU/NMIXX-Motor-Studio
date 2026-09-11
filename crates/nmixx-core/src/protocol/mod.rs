@@ -1,12 +1,27 @@
+mod action;
 mod ids;
+mod parameter;
 mod router;
 mod status;
+mod transaction;
 
+pub use action::{
+    ActionError, ActionHandle, ActionState, ActionTracker, PARAM_ACTION_TYPE,
+    build_action_start, build_action_start_default, parse_action_accept,
+};
 pub use ids::*;
+pub use parameter::{
+    ParameterError, ParameterType, ParameterValue, PositionValue,
+    build_parameter_read, build_parameter_read_default, build_parameter_write,
+    parse_parameter_read, parse_parameter_write,
+};
 pub use router::{
     ActionCompleteFrame, DecodeError, InboundFrame, ResponseFrame, decode_inbound,
 };
 pub use status::AxdrStatus;
+pub use transaction::{
+    PendingRequest, TransactionError, TransactionId, TransactionTable,
+};
 
 pub const NODE_ID_DEFAULT: u8 = 1;
 
