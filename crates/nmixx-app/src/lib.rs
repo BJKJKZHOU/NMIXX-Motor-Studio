@@ -1,6 +1,9 @@
 //! Application semantics for NMIXX Motor Studio.
 //!
-//! This crate intentionally starts small. Device primitives stay in `nmixx-core`;
-//! GUI, CLI and future automation clients should converge on this layer.
+//! Device primitives stay in `nmixx-core`; GUI, CLI and automation converge on
+//! this layer. A `DeviceSession` owns one transport and exposes shared
+//! application-facing access to that device.
 
-pub struct Application;
+mod session;
+
+pub use session::{DeviceSession, SessionError, SessionEvent};

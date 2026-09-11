@@ -8,3 +8,4 @@ rust-version.workspace = true
 
 [dependencies]
 nmixx-core = { path = "../nmixx-core" }
+thiserror.workspace = true

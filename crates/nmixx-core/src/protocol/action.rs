@@ -75,7 +75,7 @@ impl ActionTracker {
     }
 
     pub fn accepted(&mut self, handle: ActionHandle) {
-        if let Some(state) = self.states.get_mut(&handle) {
+        if let Some(state @ ActionState::AwaitingAcceptance) = self.states.get_mut(&handle) {
             *state = ActionState::Running;
         }
     }
@@ -113,6 +113,16 @@ mod tests {
         tracker.accepted(handle);
         assert_eq!(tracker.state(handle), Some(ActionState::Running));
         tracker.complete(&ActionCompleteFrame { txn: 3, action_id: 0x1102, status: AxdrStatus::Ok }).unwrap();
+        assert_eq!(tracker.state(handle), Some(ActionState::Completed(AxdrStatus::Ok)));
+    }
+
+    #[test]
+    fn late_accept_does_not_overwrite_early_completion() {
+        let handle = ActionHandle { txn: TransactionId::from_raw(4), action_id: 0x1004 };
+        let mut tracker = ActionTracker::default();
+        tracker.track(handle);
+        tracker.complete(&ActionCompleteFrame { txn: 4, action_id: 0x1004, status: AxdrStatus::Ok }).unwrap();
+        tracker.accepted(handle);
         assert_eq!(tracker.state(handle), Some(ActionState::Completed(AxdrStatus::Ok)));
     }
 }
