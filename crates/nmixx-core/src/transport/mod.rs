@@ -1,8 +1,12 @@
+mod usb_cdc;
+
 use std::time::Duration;
 
 use thiserror::Error;
 
 use crate::wire::CanFdFrame;
+
+pub use usb_cdc::UsbCdcTransport;
 
 #[derive(Debug, Error)]
 pub enum TransportError {

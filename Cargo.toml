@@ -14,4 +14,5 @@ authors = ["ZHOUHENG"]
 rust-version = "1.85"
 
 [workspace.dependencies]
+serial2 = "0.2.38"
 thiserror = "2"

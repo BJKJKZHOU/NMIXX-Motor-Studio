@@ -1,7 +1,11 @@
 mod ids;
+mod router;
 mod status;
 
 pub use ids::*;
+pub use router::{
+    ActionCompleteFrame, DecodeError, InboundFrame, ResponseFrame, decode_inbound,
+};
 pub use status::AxdrStatus;
 
 pub const NODE_ID_DEFAULT: u8 = 1;
