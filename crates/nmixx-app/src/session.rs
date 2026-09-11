@@ -9,11 +9,14 @@ use std::thread::{self, JoinHandle};
 use std::time::{Duration, Instant};
 
 use nmixx_core::protocol::{
-    ActionHandle, ActionTracker, AxdrStatus, InboundFrame, MSG_PARAMETER, NODE_ID_DEFAULT,
-    PARAM_READ, PARAM_WRITE, ParameterType, ParameterValue, ResponseFrame, TransactionError,
-    TransactionId, TransactionTable, build_action_start_default, build_parameter_read_default,
-    build_parameter_write, decode_inbound, parse_action_accept, parse_parameter_read,
-    parse_parameter_write,
+    ActionHandle, ActionTracker, AxdrStatus, InboundFrame, MSG_PARAMETER, MSG_PLOT,
+    NODE_ID_DEFAULT, PARAM_READ, PARAM_WRITE, PLOT_CONFIG, PLOT_START, PLOT_STOP,
+    ParameterType, ParameterValue, ResponseFrame, TransactionError, TransactionId,
+    TransactionTable, build_action_start_default, build_parameter_read_default,
+    build_parameter_write, build_plot_config_default, build_plot_start_default,
+    build_plot_stop_default, decode_inbound, parse_action_accept, parse_parameter_read,
+    parse_parameter_write, parse_plot_config_response, parse_plot_start_response,
+    parse_plot_stop_response,
 };
 use nmixx_core::transport::{FrameTransport, TransportError};
 use nmixx_core::wire::CanFdFrame;
@@ -49,6 +52,8 @@ pub enum SessionError {
     Parameter(String),
     #[error("action operation failed: {0}")]
     Action(String),
+    #[error("Plot operation failed: {0}")]
+    Plot(String),
 }
 
 enum Command {
@@ -65,6 +70,20 @@ enum Command {
     ActionStart {
         action_id: u16,
         reply: mpsc::Sender<Result<ActionHandle, SessionError>>,
+    },
+    PlotConfig {
+        group: u8,
+        config_id: u8,
+        parameters: Vec<u16>,
+        reply: mpsc::Sender<Result<(), SessionError>>,
+    },
+    PlotStart {
+        group_mask: u8,
+        reply: mpsc::Sender<Result<(), SessionError>>,
+    },
+    PlotStop {
+        group_mask: u8,
+        reply: mpsc::Sender<Result<(), SessionError>>,
     },
     Subscribe {
         subscriber: mpsc::Sender<SessionEvent>,
@@ -145,6 +164,49 @@ impl DeviceSession {
         reply_rx.recv().map_err(|_| SessionError::Closed)?
     }
 
+    pub fn plot_config(
+        &self,
+        group: u8,
+        config_id: u8,
+        parameters: &[u16],
+    ) -> Result<(), SessionError> {
+        let (reply_tx, reply_rx) = mpsc::channel();
+        self.inner
+            .commands
+            .send(Command::PlotConfig {
+                group,
+                config_id,
+                parameters: parameters.to_vec(),
+                reply: reply_tx,
+            })
+            .map_err(|_| SessionError::Closed)?;
+        reply_rx.recv().map_err(|_| SessionError::Closed)?
+    }
+
+    pub fn plot_start(&self, group_mask: u8) -> Result<(), SessionError> {
+        let (reply_tx, reply_rx) = mpsc::channel();
+        self.inner
+            .commands
+            .send(Command::PlotStart {
+                group_mask,
+                reply: reply_tx,
+            })
+            .map_err(|_| SessionError::Closed)?;
+        reply_rx.recv().map_err(|_| SessionError::Closed)?
+    }
+
+    pub fn plot_stop(&self, group_mask: u8) -> Result<(), SessionError> {
+        let (reply_tx, reply_rx) = mpsc::channel();
+        self.inner
+            .commands
+            .send(Command::PlotStop {
+                group_mask,
+                reply: reply_tx,
+            })
+            .map_err(|_| SessionError::Closed)?;
+        reply_rx.recv().map_err(|_| SessionError::Closed)?
+    }
+
     pub fn subscribe(&self) -> Result<mpsc::Receiver<SessionEvent>, SessionError> {
         let (tx, rx) = mpsc::channel();
         self.inner
@@ -194,6 +256,20 @@ impl Worker {
             }
             Command::ActionStart { action_id, reply } => {
                 let _ = reply.send(self.action_start(action_id));
+            }
+            Command::PlotConfig {
+                group,
+                config_id,
+                parameters,
+                reply,
+            } => {
+                let _ = reply.send(self.plot_config(group, config_id, &parameters));
+            }
+            Command::PlotStart { group_mask, reply } => {
+                let _ = reply.send(self.plot_start(group_mask));
+            }
+            Command::PlotStop { group_mask, reply } => {
+                let _ = reply.send(self.plot_stop(group_mask));
             }
             Command::Subscribe { subscriber } => self.subscribers.push(subscriber),
             Command::Shutdown => {}
@@ -250,6 +326,48 @@ impl Worker {
             .map_err(|error| SessionError::Action(error.to_string()))?;
         self.actions.accepted(handle);
         Ok(handle)
+    }
+
+    fn plot_config(
+        &mut self,
+        group: u8,
+        config_id: u8,
+        parameters: &[u16],
+    ) -> Result<(), SessionError> {
+        let txn = self.transactions.allocate(MSG_PLOT, PLOT_CONFIG)?;
+        let frame = build_plot_config_default(txn, group, config_id, parameters)
+            .map_err(|error| SessionError::Plot(error.to_string()))?;
+        if let Err(error) = self.transport.send(&frame) {
+            self.transactions.cancel(txn);
+            return Err(error.into());
+        }
+        let response = self.wait_response(txn, REQUEST_TIMEOUT)?;
+        parse_plot_config_response(&response, group, config_id, parameters)
+            .map_err(|error| SessionError::Plot(error.to_string()))
+    }
+
+    fn plot_start(&mut self, group_mask: u8) -> Result<(), SessionError> {
+        let txn = self.transactions.allocate(MSG_PLOT, PLOT_START)?;
+        let frame = build_plot_start_default(txn, group_mask)
+            .map_err(|error| SessionError::Plot(error.to_string()))?;
+        if let Err(error) = self.transport.send(&frame) {
+            self.transactions.cancel(txn);
+            return Err(error.into());
+        }
+        let response = self.wait_response(txn, REQUEST_TIMEOUT)?;
+        parse_plot_start_response(&response).map_err(|error| SessionError::Plot(error.to_string()))
+    }
+
+    fn plot_stop(&mut self, group_mask: u8) -> Result<(), SessionError> {
+        let txn = self.transactions.allocate(MSG_PLOT, PLOT_STOP)?;
+        let frame = build_plot_stop_default(txn, group_mask)
+            .map_err(|error| SessionError::Plot(error.to_string()))?;
+        if let Err(error) = self.transport.send(&frame) {
+            self.transactions.cancel(txn);
+            return Err(error.into());
+        }
+        let response = self.wait_response(txn, REQUEST_TIMEOUT)?;
+        parse_plot_stop_response(&response).map_err(|error| SessionError::Plot(error.to_string()))
     }
 
     fn wait_response(
