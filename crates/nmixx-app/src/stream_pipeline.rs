@@ -238,6 +238,6 @@ mod tests {
         let report = runtime.ingest_normal(&frame).unwrap();
         assert_eq!(report.samples_received, 1);
         assert_eq!(report.samples_stored, 0);
-        assert!(runtime.snapshot().is_empty());
+        assert_eq!(runtime.snapshot().sample_count(), 0);
     }
 }
