@@ -1,4 +1,3 @@
-use std::collections::VecDeque;
 use std::time::Duration;
 
 use thiserror::Error;
@@ -35,10 +34,13 @@ impl StreamConfig {
             return Err(StreamError::InvalidConfig("history is too large"));
         }
 
-        Ok(samples.ceil() as usize)
+        let samples = samples.ceil() as usize;
+        if samples == 0 {
+            return Err(StreamError::InvalidConfig("history is shorter than one sample"));
+        }
+        Ok(samples)
     }
 
-    /// Approximate in-memory payload size used by the current f32 sample store.
     pub fn estimated_ram_bytes(&self) -> Result<usize, StreamError> {
         self.capacity_samples()?
             .checked_mul(self.channel_count)
@@ -62,28 +64,40 @@ pub enum StreamError {
 #[derive(Debug, Clone, PartialEq)]
 pub struct StreamSnapshot {
     pub config: StreamConfig,
-    pub samples: Vec<Vec<f32>>,
+    /// Sample-major flat engineering values: sample0[ch0..], sample1[ch0..], ...
+    pub values: Vec<f32>,
 }
 
 impl StreamSnapshot {
+    pub fn sample_count(&self) -> usize {
+        self.values.len() / self.config.channel_count
+    }
+
     pub fn duration(&self) -> Duration {
-        if self.config.sample_rate_hz == 0 {
-            return Duration::ZERO;
+        Duration::from_secs_f64(self.sample_count() as f64 / f64::from(self.config.sample_rate_hz))
+    }
+
+    pub fn sample(&self, index: usize) -> Option<&[f32]> {
+        if index >= self.sample_count() {
+            return None;
         }
-        Duration::from_secs_f64(self.samples.len() as f64 / f64::from(self.config.sample_rate_hz))
+        let start = index * self.config.channel_count;
+        Some(&self.values[start..start + self.config.channel_count])
     }
 }
 
 /// RAM-only stream history/capture runtime.
 ///
-/// `Live` keeps a rolling history and overwrites the oldest samples when full.
-/// `capture()` clears history and records a finite interval without overwriting
-/// its beginning; once the target is reached the session becomes `Paused`.
-/// Nothing in this type writes to disk. Exporters consume `snapshot()` later.
+/// Storage is one fixed flat allocation. Steady-state acquisition performs no
+/// per-sample heap allocation. `Live` overwrites the oldest sample when full;
+/// `capture()` clears history, records a finite interval, then pauses without
+/// overwriting the capture start. Disk I/O is intentionally outside this type.
 pub struct StreamSession {
     config: StreamConfig,
     capacity_samples: usize,
-    samples: VecDeque<Vec<f32>>,
+    storage: Vec<f32>,
+    oldest_sample: usize,
+    sample_len: usize,
     state: StreamState,
     capture_target: Option<usize>,
 }
@@ -91,10 +105,15 @@ pub struct StreamSession {
 impl StreamSession {
     pub fn new(config: StreamConfig) -> Result<Self, StreamError> {
         let capacity_samples = config.capacity_samples()?;
+        let values = capacity_samples
+            .checked_mul(config.channel_count)
+            .ok_or(StreamError::InvalidConfig("stream buffer size overflows usize"))?;
         Ok(Self {
             config,
             capacity_samples,
-            samples: VecDeque::with_capacity(capacity_samples),
+            storage: vec![0.0; values],
+            oldest_sample: 0,
+            sample_len: 0,
             state: StreamState::Stopped,
             capture_target: None,
         })
@@ -109,11 +128,11 @@ impl StreamSession {
     }
 
     pub fn len(&self) -> usize {
-        self.samples.len()
+        self.sample_len
     }
 
     pub fn is_empty(&self) -> bool {
-        self.samples.is_empty()
+        self.sample_len == 0
     }
 
     pub fn capacity_samples(&self) -> usize {
@@ -141,14 +160,26 @@ impl StreamSession {
     }
 
     pub fn clear(&mut self) {
-        self.samples.clear();
+        self.oldest_sample = 0;
+        self.sample_len = 0;
     }
 
     pub fn capture(&mut self, duration: Duration) -> Result<(), StreamError> {
         if duration.is_zero() {
             return Err(StreamError::InvalidCaptureDuration);
         }
-        let requested = (duration.as_secs_f64() * f64::from(self.config.sample_rate_hz)).ceil() as usize;
+
+        let requested_f = duration.as_secs_f64() * f64::from(self.config.sample_rate_hz);
+        if !requested_f.is_finite() || requested_f > usize::MAX as f64 {
+            return Err(StreamError::CaptureTooLong {
+                requested: usize::MAX,
+                capacity: self.capacity_samples,
+            });
+        }
+        let requested = requested_f.ceil() as usize;
+        if requested == 0 {
+            return Err(StreamError::InvalidCaptureDuration);
+        }
         if requested > self.capacity_samples {
             return Err(StreamError::CaptureTooLong {
                 requested,
@@ -174,21 +205,16 @@ impl StreamSession {
 
         match self.state {
             StreamState::Stopped | StreamState::Paused => return Ok(false),
-            StreamState::Live => {
-                if self.samples.len() == self.capacity_samples {
-                    self.samples.pop_front();
-                }
-                self.samples.push_back(sample.to_vec());
-            }
+            StreamState::Live => self.push_live(sample),
             StreamState::Capturing => {
                 let target = self.capture_target.expect("capturing state must have target");
-                if self.samples.len() >= target {
+                if self.sample_len >= target {
                     self.state = StreamState::Paused;
                     self.capture_target = None;
                     return Ok(false);
                 }
-                self.samples.push_back(sample.to_vec());
-                if self.samples.len() == target {
+                self.push_without_overwrite(sample);
+                if self.sample_len == target {
                     self.state = StreamState::Paused;
                     self.capture_target = None;
                 }
@@ -199,10 +225,38 @@ impl StreamSession {
     }
 
     pub fn snapshot(&self) -> StreamSnapshot {
+        let mut values = Vec::with_capacity(self.sample_len * self.config.channel_count);
+        for logical in 0..self.sample_len {
+            let physical = (self.oldest_sample + logical) % self.capacity_samples;
+            let start = physical * self.config.channel_count;
+            values.extend_from_slice(&self.storage[start..start + self.config.channel_count]);
+        }
         StreamSnapshot {
             config: self.config.clone(),
-            samples: self.samples.iter().cloned().collect(),
+            values,
         }
+    }
+
+    fn push_live(&mut self, sample: &[f32]) {
+        if self.sample_len < self.capacity_samples {
+            self.push_without_overwrite(sample);
+            return;
+        }
+
+        self.write_physical(self.oldest_sample, sample);
+        self.oldest_sample = (self.oldest_sample + 1) % self.capacity_samples;
+    }
+
+    fn push_without_overwrite(&mut self, sample: &[f32]) {
+        debug_assert!(self.sample_len < self.capacity_samples);
+        let physical = (self.oldest_sample + self.sample_len) % self.capacity_samples;
+        self.write_physical(physical, sample);
+        self.sample_len += 1;
+    }
+
+    fn write_physical(&mut self, sample_index: usize, sample: &[f32]) {
+        let start = sample_index * self.config.channel_count;
+        self.storage[start..start + self.config.channel_count].copy_from_slice(sample);
     }
 }
 
@@ -227,9 +281,9 @@ mod tests {
         }
 
         let snapshot = stream.snapshot();
-        assert_eq!(snapshot.samples.len(), 4);
-        assert_eq!(snapshot.samples[0], vec![2.0, -2.0]);
-        assert_eq!(snapshot.samples[3], vec![5.0, -5.0]);
+        assert_eq!(snapshot.sample_count(), 4);
+        assert_eq!(snapshot.sample(0).unwrap(), &[2.0, -2.0]);
+        assert_eq!(snapshot.sample(3).unwrap(), &[5.0, -5.0]);
     }
 
     #[test]
@@ -239,7 +293,7 @@ mod tests {
         stream.push_sample(&[1.0, 2.0]).unwrap();
         stream.pause();
         assert!(!stream.push_sample(&[3.0, 4.0]).unwrap());
-        assert_eq!(stream.snapshot().samples, vec![vec![1.0, 2.0]]);
+        assert_eq!(stream.snapshot().sample(0).unwrap(), &[1.0, 2.0]);
     }
 
     #[test]
@@ -249,7 +303,9 @@ mod tests {
         stream.push_sample(&[1.0, 2.0]).unwrap();
         stream.clear();
         stream.push_sample(&[3.0, 4.0]).unwrap();
-        assert_eq!(stream.snapshot().samples, vec![vec![3.0, 4.0]]);
+        let snapshot = stream.snapshot();
+        assert_eq!(snapshot.sample_count(), 1);
+        assert_eq!(snapshot.sample(0).unwrap(), &[3.0, 4.0]);
         assert_eq!(stream.state(), StreamState::Live);
     }
 
@@ -264,8 +320,11 @@ mod tests {
         stream.push_sample(&[1.0, 2.0]).unwrap();
         stream.push_sample(&[3.0, 4.0]).unwrap();
 
+        let snapshot = stream.snapshot();
         assert_eq!(stream.state(), StreamState::Paused);
-        assert_eq!(stream.snapshot().samples, vec![vec![1.0, 2.0], vec![3.0, 4.0]]);
+        assert_eq!(snapshot.sample_count(), 2);
+        assert_eq!(snapshot.sample(0).unwrap(), &[1.0, 2.0]);
+        assert_eq!(snapshot.sample(1).unwrap(), &[3.0, 4.0]);
     }
 
     #[test]
