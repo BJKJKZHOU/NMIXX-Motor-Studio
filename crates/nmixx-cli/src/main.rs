@@ -1,12 +1,13 @@
 use std::error::Error;
+use std::path::PathBuf;
 use std::str::FromStr;
 use std::sync::mpsc::RecvTimeoutError;
 use std::time::Duration;
 
 use clap::{Parser, Subcommand, ValueEnum};
 use nmixx_app::{
-    AxdrStatus, DEFAULT_USB_BAUD, DeviceSession, ParameterType, ParameterValue,
-    PositionValue, SessionEvent,
+    AxdrStatus, DEFAULT_USB_BAUD, DeviceSession, HostSchema, ParameterMetadata, ParameterType,
+    ParameterValue, PositionValue, SessionEvent,
 };
 
 #[derive(Debug, Parser)]
@@ -20,6 +21,10 @@ struct Cli {
     #[arg(long, global = true, default_value_t = DEFAULT_USB_BAUD)]
     baud: u32,
 
+    /// Firmware Host schema exported from Parameter/parameter.yaml.
+    #[arg(long, global = true)]
+    schema: Option<PathBuf>,
+
     #[command(subcommand)]
     command: Command,
 }
@@ -31,16 +36,15 @@ enum Command {
         #[command(subcommand)]
         command: DeviceCommand,
     },
-    /// Read or write a firmware Parameter by ID.
+    /// Read or write a firmware Parameter by symbol, Host name, or numeric ID.
     Param {
         #[command(subcommand)]
         command: ParamCommand,
     },
-    /// Trigger a firmware Action by ID.
+    /// Trigger a firmware Action by symbol, Host name, or numeric ID.
     Action {
-        /// Action ID, decimal or 0x-prefixed hexadecimal.
-        #[arg(value_parser = parse_u16)]
-        id: u16,
+        /// Action key: schema symbol/name, decimal ID, or 0x-prefixed hexadecimal ID.
+        key: String,
 
         /// Return after the Action is accepted instead of waiting for completion.
         #[arg(long)]
@@ -62,19 +66,24 @@ enum DeviceCommand {
 enum ParamCommand {
     /// Read one Parameter.
     Get {
-        #[arg(value_parser = parse_u16)]
-        id: u16,
-        #[arg(value_enum)]
-        ty: CliParameterType,
+        /// Parameter key: schema symbol/name, decimal ID, or 0x-prefixed hexadecimal ID.
+        key: String,
+
+        /// Parameter type override. Required for numeric IDs when no schema is loaded.
+        #[arg(long = "type", value_enum)]
+        ty: Option<CliParameterType>,
     },
     /// Write one Parameter.
     Set {
-        #[arg(value_parser = parse_u16)]
-        id: u16,
-        #[arg(value_enum)]
-        ty: CliParameterType,
+        /// Parameter key: schema symbol/name, decimal ID, or 0x-prefixed hexadecimal ID.
+        key: String,
+
         /// Value text. Position uses `turns,theta`, for example `-2,1.5`.
         value: String,
+
+        /// Parameter type override. Required for numeric IDs when no schema is loaded.
+        #[arg(long = "type", value_enum)]
+        ty: Option<CliParameterType>,
     },
 }
 
@@ -101,6 +110,12 @@ impl From<CliParameterType> for ParameterType {
     }
 }
 
+struct ResolvedParameter<'a> {
+    id: u16,
+    ty: ParameterType,
+    metadata: Option<&'a ParameterMetadata>,
+}
+
 fn main() {
     if let Err(error) = run() {
         eprintln!("error: {error}");
@@ -109,7 +124,13 @@ fn main() {
 }
 
 fn run() -> Result<(), Box<dyn Error>> {
-    let Cli { port, baud, command } = Cli::parse();
+    let Cli {
+        port,
+        baud,
+        schema,
+        command,
+    } = Cli::parse();
+    let schema = schema.as_deref().map(HostSchema::load).transpose()?;
 
     match command {
         Command::Device {
@@ -122,26 +143,46 @@ fn run() -> Result<(), Box<dyn Error>> {
         Command::Param { command } => {
             let session = open_session(port.as_deref(), baud)?;
             match command {
-                ParamCommand::Get { id, ty } => {
-                    let value = session.parameter_read(id, ty.into())?;
-                    println!("{}", format_value(value));
+                ParamCommand::Get { key, ty } => {
+                    let parameter = resolve_parameter(schema.as_ref(), &key, ty)?;
+                    let value = session.parameter_read(parameter.id, parameter.ty)?;
+                    print_parameter_value(parameter.metadata, parameter.id, value);
                 }
-                ParamCommand::Set { id, ty, value } => {
-                    let value = parse_parameter_value(ty, &value)?;
-                    session.parameter_write(id, value)?;
+                ParamCommand::Set { key, value, ty } => {
+                    let parameter = resolve_parameter(schema.as_ref(), &key, ty)?;
+                    if let Some(metadata) = parameter.metadata {
+                        if metadata.access != "rw" {
+                            return Err(format!(
+                                "parameter {} (0x{:04X}) is not writable (access={})",
+                                metadata.symbol, metadata.id, metadata.access
+                            )
+                            .into());
+                        }
+                    }
+                    let value = parse_parameter_value(parameter.ty, &value)?;
+                    session.parameter_write(parameter.id, value)?;
                     println!("OK");
                 }
             }
         }
         Command::Action {
-            id,
+            key,
             no_wait,
             timeout,
         } => {
+            let (action_id, action_label) = resolve_action(schema.as_ref(), &key)?;
             let session = open_session(port.as_deref(), baud)?;
-            let events = if no_wait { None } else { Some(session.subscribe()?) };
-            let handle = session.action_start(id)?;
-            println!("accepted txn={} action=0x{id:04X}", handle.txn.get());
+            let events = if no_wait {
+                None
+            } else {
+                Some(session.subscribe()?)
+            };
+            let handle = session.action_start(action_id)?;
+            println!(
+                "accepted txn={} action={} (0x{action_id:04X})",
+                handle.txn.get(),
+                action_label
+            );
 
             if let Some(events) = events {
                 loop {
@@ -159,7 +200,7 @@ fn run() -> Result<(), Box<dyn Error>> {
                         Ok(_) => continue,
                         Err(RecvTimeoutError::Timeout) => {
                             return Err(format!(
-                                "action 0x{id:04X} completion timed out after {timeout}s"
+                                "action {action_label} (0x{action_id:04X}) completion timed out after {timeout}s"
                             )
                             .into());
                         }
@@ -180,6 +221,93 @@ fn open_session(port: Option<&str>, baud: u32) -> Result<DeviceSession, Box<dyn 
     Ok(DeviceSession::open_usb(port, baud)?)
 }
 
+fn resolve_parameter<'a>(
+    schema: Option<&'a HostSchema>,
+    key: &str,
+    type_override: Option<CliParameterType>,
+) -> Result<ResolvedParameter<'a>, Box<dyn Error>> {
+    if let Some(schema) = schema {
+        if let Some(metadata) = schema.parameter_by_key(key) {
+            let schema_type = metadata.parameter_type()?;
+            if let Some(override_type) = type_override {
+                let override_type: ParameterType = override_type.into();
+                if override_type != schema_type {
+                    return Err(format!(
+                        "parameter {} type mismatch: schema={}, CLI={override_type:?}",
+                        metadata.symbol, metadata.type_name
+                    )
+                    .into());
+                }
+            }
+            return Ok(ResolvedParameter {
+                id: metadata.id,
+                ty: schema_type,
+                metadata: Some(metadata),
+            });
+        }
+
+        if let Ok(id) = parse_u16(key) {
+            if let Some(metadata) = schema.parameter_by_id(id) {
+                let schema_type = metadata.parameter_type()?;
+                return Ok(ResolvedParameter {
+                    id,
+                    ty: schema_type,
+                    metadata: Some(metadata),
+                });
+            }
+            if let Some(override_type) = type_override {
+                return Ok(ResolvedParameter {
+                    id,
+                    ty: override_type.into(),
+                    metadata: None,
+                });
+            }
+            return Err(format!(
+                "parameter ID 0x{id:04X} is not present in the loaded schema; use --type for raw access"
+            )
+            .into());
+        }
+
+        return Err(format!("unknown parameter key '{key}' in loaded schema").into());
+    }
+
+    let id = parse_u16(key).map_err(|_| {
+        format!("parameter '{key}' requires --schema; without a schema only numeric IDs are accepted")
+    })?;
+    let ty = type_override.ok_or("--type is required for raw numeric parameter access without --schema")?;
+    Ok(ResolvedParameter {
+        id,
+        ty: ty.into(),
+        metadata: None,
+    })
+}
+
+fn resolve_action(schema: Option<&HostSchema>, key: &str) -> Result<(u16, String), Box<dyn Error>> {
+    if let Some(schema) = schema {
+        if let Some(action) = schema.action_by_key(key) {
+            return Ok((
+                action.id,
+                action.name.as_deref().unwrap_or(&action.symbol).to_owned(),
+            ));
+        }
+        if let Ok(id) = parse_u16(key) {
+            if let Some(action) = schema.action_by_id(id) {
+                return Ok((
+                    id,
+                    action.name.as_deref().unwrap_or(&action.symbol).to_owned(),
+                ));
+            }
+            return Ok((id, format!("0x{id:04X}")));
+        }
+        return Err(format!("unknown action key '{key}' in loaded schema").into());
+    }
+
+    let id = parse_u16(key).map_err(|_| {
+        format!("action '{key}' requires --schema; without a schema only numeric IDs are accepted")
+    })?;
+    Ok((id, format!("0x{id:04X}")))
+}
+
 fn parse_u16(text: &str) -> Result<u16, String> {
     if let Some(hex) = text.strip_prefix("0x").or_else(|| text.strip_prefix("0X")) {
         u16::from_str_radix(hex, 16).map_err(|error| error.to_string())
@@ -188,15 +316,15 @@ fn parse_u16(text: &str) -> Result<u16, String> {
     }
 }
 
-fn parse_parameter_value(ty: CliParameterType, text: &str) -> Result<ParameterValue, String> {
+fn parse_parameter_value(ty: ParameterType, text: &str) -> Result<ParameterValue, String> {
     let parse = |name: &str| format!("invalid {name} value '{text}'");
     Ok(match ty {
-        CliParameterType::U8 => ParameterValue::U8(u8::from_str(text).map_err(|_| parse("u8"))?),
-        CliParameterType::I8 => ParameterValue::I8(i8::from_str(text).map_err(|_| parse("i8"))?),
-        CliParameterType::F32 => ParameterValue::F32(f32::from_str(text).map_err(|_| parse("f32"))?),
-        CliParameterType::I32 => ParameterValue::I32(i32::from_str(text).map_err(|_| parse("i32"))?),
-        CliParameterType::U32 => ParameterValue::U32(u32::from_str(text).map_err(|_| parse("u32"))?),
-        CliParameterType::Position => {
+        ParameterType::U8 => ParameterValue::U8(u8::from_str(text).map_err(|_| parse("u8"))?),
+        ParameterType::I8 => ParameterValue::I8(i8::from_str(text).map_err(|_| parse("i8"))?),
+        ParameterType::F32 => ParameterValue::F32(f32::from_str(text).map_err(|_| parse("f32"))?),
+        ParameterType::I32 => ParameterValue::I32(i32::from_str(text).map_err(|_| parse("i32"))?),
+        ParameterType::U32 => ParameterValue::U32(u32::from_str(text).map_err(|_| parse("u32"))?),
+        ParameterType::Position => {
             let Some((turns, theta)) = text.split_once(',') else {
                 return Err("position value must use turns,theta (for example -2,1.5)".into());
             };
@@ -205,7 +333,21 @@ fn parse_parameter_value(ty: CliParameterType, text: &str) -> Result<ParameterVa
                 theta: f32::from_str(theta.trim()).map_err(|_| parse("position theta"))?,
             })
         }
+        ParameterType::Action => return Err("Action is not a value Parameter type".into()),
     })
+}
+
+fn print_parameter_value(metadata: Option<&ParameterMetadata>, id: u16, value: ParameterValue) {
+    match metadata {
+        Some(metadata) => {
+            let label = metadata.name.as_deref().unwrap_or(&metadata.symbol);
+            match metadata.unit.as_deref() {
+                Some(unit) => println!("{label} (0x{id:04X}) = {} {unit}", format_value(value)),
+                None => println!("{label} (0x{id:04X}) = {}", format_value(value)),
+            }
+        }
+        None => println!("0x{id:04X} = {}", format_value(value)),
+    }
 }
 
 fn format_value(value: ParameterValue) -> String {
