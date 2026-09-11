@@ -9,6 +9,7 @@ mod schema;
 mod schema_store;
 mod session;
 mod stream;
+mod stream_pipeline;
 
 pub use connection::DEFAULT_USB_BAUD;
 pub use schema::{
@@ -21,6 +22,9 @@ pub use schema_store::{
 pub use session::{DeviceSession, SessionError, SessionEvent};
 pub use stream::{
     StreamConfig, StreamError, StreamSession, StreamSnapshot, StreamState,
+};
+pub use stream_pipeline::{
+    StreamIngestReport, StreamPipeline, StreamPipelineError, StreamWireMode,
 };
 
 // These are application-facing domain value types. Clients import them from
