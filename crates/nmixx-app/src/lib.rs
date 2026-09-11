@@ -5,9 +5,14 @@
 //! application-facing access to that device.
 
 mod connection;
+mod schema;
 mod session;
 
 pub use connection::DEFAULT_USB_BAUD;
+pub use schema::{
+    ActionMetadata, HostSchema, ParameterMetadata, RangeMetadata, SchemaError, SchemaNumber,
+    SchemaSource,
+};
 pub use session::{DeviceSession, SessionError, SessionEvent};
 
 // These are application-facing domain value types. Clients import them from

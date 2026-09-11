@@ -8,4 +8,6 @@ rust-version.workspace = true
 
 [dependencies]
 nmixx-core = { path = "../nmixx-core" }
+serde.workspace = true
 thiserror.workspace = true
+toml.workspace = true
