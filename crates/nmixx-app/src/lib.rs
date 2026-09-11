@@ -16,19 +16,16 @@ pub use schema::{
     ActionMetadata, HostSchema, ParameterMetadata, RangeMetadata, SchemaError, SchemaNumber,
     SchemaSource,
 };
-pub use schema_store::{
-    SchemaStore, SchemaStoreError, StoredSchema, schema_store_key,
-};
+pub use schema_store::{SchemaStore, SchemaStoreError, StoredSchema, schema_store_key};
 pub use session::{DeviceSession, SessionError, SessionEvent};
-pub use stream::{
-    StreamConfig, StreamError, StreamSession, StreamSnapshot, StreamState,
-};
+pub use stream::{StreamConfig, StreamError, StreamSession, StreamSnapshot, StreamState};
 pub use stream_pipeline::{
     StreamIngestReport, StreamPipeline, StreamPipelineError, StreamWireMode,
 };
 
-// These are application-facing domain value types. Clients import them from
-// `nmixx-app`; they do not depend on `nmixx-core` directly.
+// These are application-facing domain value types/constants. Clients import
+// them from `nmixx-app`; they do not depend on `nmixx-core` directly.
 pub use nmixx_core::protocol::{
-    ActionHandle, AxdrStatus, ParameterType, ParameterValue, PositionValue,
+    ActionHandle, AxdrStatus, PLOT_FAST_MASK, PLOT_GROUP_FAST, PLOT_GROUP_NORMAL,
+    PLOT_NORMAL_MASK, ParameterType, ParameterValue, PositionValue, SequenceStatus,
 };
