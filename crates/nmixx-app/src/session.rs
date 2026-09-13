@@ -10,12 +10,13 @@ use std::time::{Duration, Instant};
 
 use nmixx_core::protocol::{
     ActionError, ActionHandle, ActionTracker, AxdrStatus, InboundFrame, MSG_PARAMETER, MSG_PLOT,
-    NODE_ID_DEFAULT, PARAM_READ, PARAM_WRITE, PLOT_CONFIG, PLOT_START, PLOT_STOP, ParameterType,
-    ParameterValue, ResponseFrame, TransactionError, TransactionId, TransactionTable,
-    build_action_start_default, build_parameter_read_default, build_parameter_write,
-    build_plot_config_default, build_plot_start_default, build_plot_stop_default, decode_inbound,
-    parse_action_accept, parse_parameter_read, parse_parameter_write, parse_plot_config_response,
-    parse_plot_start_response, parse_plot_stop_response,
+    NODE_ID_DEFAULT, PARAM_READ, PARAM_WRITE, PLOT_CAPS, PLOT_CONFIG, PLOT_START, PLOT_STOP,
+    ParameterType, ParameterValue, PlotCapabilitiesPage, ResponseFrame, TransactionError,
+    TransactionId, TransactionTable, build_action_start_default, build_parameter_read_default,
+    build_parameter_write, build_plot_caps_default, build_plot_config_default,
+    build_plot_start_default, build_plot_stop_default, decode_inbound, parse_action_accept,
+    parse_parameter_read, parse_parameter_write, parse_plot_caps_response,
+    parse_plot_config_response, parse_plot_start_response, parse_plot_stop_response,
 };
 use nmixx_core::transport::{FrameTransport, TransportError};
 use nmixx_core::wire::CanFdFrame;
@@ -26,10 +27,7 @@ const REQUEST_TIMEOUT: Duration = Duration::from_secs(2);
 
 #[derive(Debug, Clone)]
 pub enum SessionEvent {
-    ActionCompleted {
-        handle: ActionHandle,
-        status: AxdrStatus,
-    },
+    ActionCompleted { handle: ActionHandle, status: AxdrStatus },
     DeviceEvent(CanFdFrame),
     FastData(CanFdFrame),
     NormalData(CanFdFrame),
@@ -56,37 +54,14 @@ pub enum SessionError {
 }
 
 enum Command {
-    ParameterRead {
-        id: u16,
-        ty: ParameterType,
-        reply: mpsc::Sender<Result<ParameterValue, SessionError>>,
-    },
-    ParameterWrite {
-        id: u16,
-        value: ParameterValue,
-        reply: mpsc::Sender<Result<(), SessionError>>,
-    },
-    ActionStart {
-        action_id: u16,
-        reply: mpsc::Sender<Result<ActionHandle, SessionError>>,
-    },
-    PlotConfig {
-        group: u8,
-        config_id: u8,
-        parameters: Vec<u16>,
-        reply: mpsc::Sender<Result<(), SessionError>>,
-    },
-    PlotStart {
-        group_mask: u8,
-        reply: mpsc::Sender<Result<(), SessionError>>,
-    },
-    PlotStop {
-        group_mask: u8,
-        reply: mpsc::Sender<Result<(), SessionError>>,
-    },
-    Subscribe {
-        subscriber: mpsc::Sender<SessionEvent>,
-    },
+    ParameterRead { id: u16, ty: ParameterType, reply: mpsc::Sender<Result<ParameterValue, SessionError>> },
+    ParameterWrite { id: u16, value: ParameterValue, reply: mpsc::Sender<Result<(), SessionError>> },
+    ActionStart { action_id: u16, reply: mpsc::Sender<Result<ActionHandle, SessionError>> },
+    PlotConfig { group: u8, config_id: u8, parameters: Vec<u16>, reply: mpsc::Sender<Result<(), SessionError>> },
+    PlotStart { group_mask: u8, reply: mpsc::Sender<Result<(), SessionError>> },
+    PlotStop { group_mask: u8, reply: mpsc::Sender<Result<(), SessionError>> },
+    PlotCapabilities { start: u8, reply: mpsc::Sender<Result<PlotCapabilitiesPage, SessionError>> },
+    Subscribe { subscriber: mpsc::Sender<SessionEvent> },
     Shutdown,
 }
 
@@ -116,13 +91,7 @@ impl DeviceSession {
             .name("nmixx-device-session".into())
             .spawn(move || Worker::new(transport).run(command_rx))
             .expect("failed to spawn NMIXX device-session worker");
-
-        Self {
-            inner: Arc::new(SessionInner {
-                commands: command_tx,
-                worker: Mutex::new(Some(worker)),
-            }),
-        }
+        Self { inner: Arc::new(SessionInner { commands: command_tx, worker: Mutex::new(Some(worker)) }) }
     }
 
     pub fn parameter_read(&self, id: u16, ty: ParameterType) -> Result<ParameterValue, SessionError> {
@@ -158,6 +127,12 @@ impl DeviceSession {
     pub fn plot_stop(&self, group_mask: u8) -> Result<(), SessionError> {
         let (reply_tx, reply_rx) = mpsc::channel();
         self.inner.commands.send(Command::PlotStop { group_mask, reply: reply_tx }).map_err(|_| SessionError::Closed)?;
+        reply_rx.recv().map_err(|_| SessionError::Closed)?
+    }
+
+    pub fn plot_capabilities_page(&self, start: u8) -> Result<PlotCapabilitiesPage, SessionError> {
+        let (reply_tx, reply_rx) = mpsc::channel();
+        self.inner.commands.send(Command::PlotCapabilities { start, reply: reply_tx }).map_err(|_| SessionError::Closed)?;
         reply_rx.recv().map_err(|_| SessionError::Closed)?
     }
 
@@ -199,6 +174,7 @@ impl Worker {
             Command::PlotConfig { group, config_id, parameters, reply } => { let _ = reply.send(self.plot_config(group, config_id, &parameters)); }
             Command::PlotStart { group_mask, reply } => { let _ = reply.send(self.plot_start(group_mask)); }
             Command::PlotStop { group_mask, reply } => { let _ = reply.send(self.plot_stop(group_mask)); }
+            Command::PlotCapabilities { start, reply } => { let _ = reply.send(self.plot_capabilities_page(start)); }
             Command::Subscribe { subscriber } => self.subscribers.push(subscriber),
             Command::Shutdown => {}
         }
@@ -224,14 +200,12 @@ impl Worker {
         let txn = self.transactions.allocate(MSG_PARAMETER, PARAM_WRITE)?;
         let handle = ActionHandle { txn, action_id };
         self.actions.track(handle);
-
         let frame = build_action_start_default(txn, action_id)?;
         if let Err(error) = self.transport.send(&frame) {
             self.transactions.cancel(txn);
             self.actions.remove(handle);
             return Err(error.into());
         }
-
         let response = match self.wait_response(txn, REQUEST_TIMEOUT) {
             Ok(response) => response,
             Err(error) => { self.actions.remove(handle); return Err(error); }
@@ -266,6 +240,14 @@ impl Worker {
         if let Err(error) = self.transport.send(&frame) { self.transactions.cancel(txn); return Err(error.into()); }
         let response = self.wait_response(txn, REQUEST_TIMEOUT)?;
         parse_plot_stop_response(&response).map_err(|error| SessionError::Plot(error.to_string()))
+    }
+
+    fn plot_capabilities_page(&mut self, start: u8) -> Result<PlotCapabilitiesPage, SessionError> {
+        let txn = self.transactions.allocate(MSG_PLOT, PLOT_CAPS)?;
+        let frame = build_plot_caps_default(txn, start).map_err(|error| SessionError::Plot(error.to_string()))?;
+        if let Err(error) = self.transport.send(&frame) { self.transactions.cancel(txn); return Err(error.into()); }
+        let response = self.wait_response(txn, REQUEST_TIMEOUT)?;
+        parse_plot_caps_response(&response, start).map_err(|error| SessionError::Plot(error.to_string()))
     }
 
     fn wait_response(&mut self, txn: TransactionId, timeout: Duration) -> Result<ResponseFrame, SessionError> {
