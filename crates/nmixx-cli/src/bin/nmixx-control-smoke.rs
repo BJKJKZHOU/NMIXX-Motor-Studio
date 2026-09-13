@@ -1,18 +1,19 @@
 use std::error::Error;
 
 use clap::Parser;
-use nmixx_app::{DEFAULT_USB_BAUD, DeviceSession, ParameterType, ParameterValue};
+use nmixx_app::{DEFAULT_USB_BAUD, DeviceSession, ParameterType, ParameterValue, SessionError};
 
 /// Current AxDr_L IDs used only by this hardware bring-up smoke test.
 const PARAM_MOTOR_PP: u16 = 0x0101;
 const PARAM_MOTOR_STATE: u16 = 0x0710;
+const ACTION_IDENT_ABORT: u16 = 0x1103;
 const ACTION_PROTECTION_CLEAR: u16 = 0x1201;
 const MOTOR_STATE_DISABLED: u8 = 0;
 
 #[derive(Debug, Parser)]
 #[command(
     name = "nmixx-control-smoke",
-    about = "Safe Parameter WRITE and synchronous Action smoke test for AxDr_L"
+    about = "Safe Parameter WRITE and Action response smoke test for AxDr_L"
 )]
 struct Args {
     /// AxDr_L USB CDC serial port, e.g. /dev/ttyACM0 or COM7.
@@ -82,17 +83,38 @@ fn run() -> Result<(), Box<dyn Error>> {
         "accepted/completed synchronously: txn={} action=0x{:04X}",
         handle.txn.get(), handle.action_id
     );
+    println!("PASS: synchronous Action response");
+
+    println!("Rejected Action: ACTION_IDENT_ABORT (0x{ACTION_IDENT_ABORT:04X})");
+    match session.action_start(ACTION_IDENT_ABORT) {
+        Err(SessionError::Action(message)) if message.contains("ErrState") => {
+            println!("rejected as expected: {message}");
+        }
+        Err(other) => {
+            return Err(format!(
+                "ACTION_IDENT_ABORT failed with unexpected Host error: {other}"
+            )
+            .into());
+        }
+        Ok(handle) => {
+            return Err(format!(
+                "ACTION_IDENT_ABORT unexpectedly succeeded: txn={} action=0x{:04X}",
+                handle.txn.get(), handle.action_id
+            )
+            .into());
+        }
+    }
+    println!("PASS: Action ERR_STATE rejection path");
 
     let state_after = read_u8(&session, PARAM_MOTOR_STATE)?;
     if state_after != MOTOR_STATE_DISABLED {
         return Err(format!(
-            "motor state changed unexpectedly after protection clear: {state_after}"
+            "motor state changed unexpectedly during safe control smoke: {state_after}"
         )
         .into());
     }
 
-    println!("PASS: synchronous Action response");
-    println!("PASS: safe Parameter WRITE and synchronous Action handling are working");
+    println!("PASS: safe Parameter WRITE and Action handling are working");
     Ok(())
 }
 
