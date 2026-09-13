@@ -26,6 +26,6 @@ pub use stream_pipeline::{
 // These are application-facing domain value types/constants. Clients import
 // them from `nmixx-app`; they do not depend on `nmixx-core` directly.
 pub use nmixx_core::protocol::{
-    ActionHandle, AxdrStatus, PLOT_FAST_MASK, PLOT_GROUP_FAST, PLOT_GROUP_NORMAL,
+    ActionError, ActionHandle, AxdrStatus, PLOT_FAST_MASK, PLOT_GROUP_FAST, PLOT_GROUP_NORMAL,
     PLOT_NORMAL_MASK, ParameterType, ParameterValue, PositionValue, SequenceStatus,
 };
