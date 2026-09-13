@@ -1,7 +1,10 @@
 use std::error::Error;
 
 use clap::Parser;
-use nmixx_app::{DEFAULT_USB_BAUD, DeviceSession, ParameterType, ParameterValue, SessionError};
+use nmixx_app::{
+    ActionError, AxdrStatus, DEFAULT_USB_BAUD, DeviceSession, ParameterType, ParameterValue,
+    SessionError,
+};
 
 /// Current AxDr_L IDs used only by this hardware bring-up smoke test.
 const PARAM_MOTOR_PP: u16 = 0x0101;
@@ -60,7 +63,6 @@ fn run() -> Result<(), Box<dyn Error>> {
     session.parameter_write(PARAM_MOTOR_PP, ParameterValue::U8(test_pp))?;
     let readback = read_u8(&session, PARAM_MOTOR_PP)?;
     if readback != test_pp {
-        // Best effort restore before returning the mismatch.
         let _ = session.parameter_write(PARAM_MOTOR_PP, ParameterValue::U8(original_pp));
         return Err(format!("write readback mismatch: expected {test_pp}, got {readback}").into());
     }
@@ -87,8 +89,8 @@ fn run() -> Result<(), Box<dyn Error>> {
 
     println!("Rejected Action: ACTION_IDENT_ABORT (0x{ACTION_IDENT_ABORT:04X})");
     match session.action_start(ACTION_IDENT_ABORT) {
-        Err(SessionError::Action(message)) if message.contains("ErrState") => {
-            println!("rejected as expected: {message}");
+        Err(SessionError::Action(ActionError::Status(AxdrStatus::ErrState))) => {
+            println!("rejected as expected: ErrState");
         }
         Err(other) => {
             return Err(format!(
