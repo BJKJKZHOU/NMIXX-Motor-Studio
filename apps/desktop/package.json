@@ -1,0 +1,25 @@
+{
+  "name": "nmixx-motor-studio-desktop",
+  "private": true,
+  "version": "0.1.0",
+  "type": "module",
+  "scripts": {
+    "dev": "vite --host 127.0.0.1 --port 1420",
+    "build": "vite build",
+    "tauri": "tauri"
+  },
+  "dependencies": {
+    "@tauri-apps/api": "2.11.1",
+    "@vscode-elements/elements": "2.5.1",
+    "@vscode/codicons": "0.0.46-24",
+    "split.js": "1.6.5",
+    "uplot": "1.6.32"
+  },
+  "devDependencies": {
+    "@sveltejs/vite-plugin-svelte": "7.3.0",
+    "@tauri-apps/cli": "2.11.4",
+    "svelte": "5.57.0",
+    "typescript": "^5.9.2",
+    "vite": "8.3.0"
+  }
+}

@@ -1,0 +1,110 @@
+:root {
+  font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif;
+  font-size: 13px;
+  color: #cccccc;
+  background: #1e1e1e;
+
+  --vscode-font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif;
+  --vscode-font-size: 13px;
+  --vscode-foreground: #cccccc;
+  --vscode-disabledForeground: #6f6f6f;
+  --vscode-focusBorder: #61799f;
+  --vscode-editor-background: #1e1e1e;
+  --vscode-editor-foreground: #cccccc;
+  --vscode-sideBar-background: #181818;
+  --vscode-sideBar-foreground: #cccccc;
+  --vscode-input-background: #303643;
+  --vscode-input-foreground: #d7d7d7;
+  --vscode-input-border: #3b4351;
+  --vscode-dropdown-background: #2d333f;
+  --vscode-dropdown-foreground: #d7d7d7;
+  --vscode-dropdown-border: #424a57;
+  --vscode-button-background: #40506a;
+  --vscode-button-foreground: #f1f1f1;
+  --vscode-button-hoverBackground: #4a5d7a;
+  --vscode-button-secondaryBackground: #2d3035;
+  --vscode-button-secondaryForeground: #cccccc;
+  --vscode-button-secondaryHoverBackground: #373b41;
+  --vscode-checkbox-background: #2d333f;
+  --vscode-checkbox-border: #555d69;
+  --vscode-checkbox-foreground: #d7d7d7;
+  --vscode-list-hoverBackground: #24282f;
+  --vscode-list-activeSelectionBackground: #30394a;
+  --vscode-list-activeSelectionForeground: #eeeeee;
+}
+
+* { box-sizing: border-box; }
+html, body, #app { margin: 0; width: 100%; height: 100%; overflow: hidden; }
+button { font: inherit; }
+
+.workbench {
+  width: 100%;
+  height: 100%;
+  display: grid;
+  grid-template-rows: 35px minmax(0, 1fr) 22px;
+  background: #1e1e1e;
+  color: #cccccc;
+}
+
+.titlebar {
+  display: flex;
+  align-items: center;
+  padding: 0 10px 0 13px;
+  border-bottom: 1px solid #2b2b2b;
+  background: #181818;
+  user-select: none;
+}
+.brand { font-size: 12px; font-weight: 600; color: #d8d8d8; }
+.device-summary { margin-left: auto; color: #9b9b9b; font-size: 12px; }
+.status-dot { display: inline-block; width: 7px; height: 7px; margin-right: 6px; border-radius: 50%; background: #7b9b84; }
+
+.body { min-height: 0; display: grid; grid-template-columns: 48px minmax(0, 1fr); }
+.activity-bar { display: flex; flex-direction: column; align-items: stretch; background: #181818; border-right: 1px solid #2b2b2b; }
+.activity { height: 48px; border: 0; border-left: 2px solid transparent; color: #858585; background: transparent; cursor: default; font-size: 21px; }
+.activity:hover { color: #c3c3c3; background: #202020; }
+.activity.active { color: #e0e0e0; border-left-color: #7e8fa9; }
+.activity-spacer { flex: 1; }
+
+.main-area { min-width: 0; min-height: 0; display: grid; grid-template-rows: 36px minmax(0, 1fr); }
+.page-toolbar { display: flex; align-items: center; padding: 0 8px 0 12px; background: #202020; border-bottom: 1px solid #303030; }
+.page-title { font-size: 11px; color: #a6a6a6; letter-spacing: .5px; }
+.toolbar-actions { margin-left: auto; display: flex; gap: 5px; align-items: center; }
+vscode-button { --vscode-button-border: transparent; }
+
+.scope-shell { min-height: 0; display: flex; background: #1e1e1e; }
+.scope-sidebar { min-width: 0; overflow: auto; background: #181818; border-right: 1px solid #2b2b2b; }
+.scope-workspace { min-width: 0; min-height: 0; display: grid; grid-template-rows: 35px 34px minmax(0, 1fr); background: #1e1e1e; }
+.gutter { background: #252525; }
+.gutter:hover { background: #4a5669; }
+.gutter.gutter-horizontal { cursor: col-resize; }
+
+.side-section { border-bottom: 1px solid #2c2c2c; padding-bottom: 8px; }
+.section-heading { height: 28px; display: flex; align-items: center; padding: 0 10px; color: #a7a7a7; font-size: 11px; font-weight: 600; }
+.channel-list { display: flex; flex-direction: column; }
+.channel-row { min-height: 28px; display: grid; grid-template-columns: 24px minmax(0, 1fr) 42px 54px; align-items: center; padding: 0 7px; cursor: default; }
+.channel-row:hover { background: #242424; }
+.channel-name { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; color: #d0d0d0; font-family: "SFMono-Regular", Consolas, "Liberation Mono", monospace; font-size: 12px; }
+.channel-unit, .channel-mode { color: #858585; font-size: 11px; text-align: right; }
+.channel-mode { color: #9ba8bb; }
+.channel-mode.normal-only { color: #8b8b8b; }
+
+.property-grid { display: grid; grid-template-columns: 1fr auto; gap: 8px 12px; padding: 2px 11px 8px; color: #858585; font-size: 12px; }
+.property-grid strong { color: #c7c7c7; font-family: "SFMono-Regular", Consolas, "Liberation Mono", monospace; font-size: 11px; font-weight: 400; }
+
+.editor-tabs { display: flex; align-items: stretch; background: #181818; border-bottom: 1px solid #2b2b2b; }
+.editor-tab { min-width: 116px; display: flex; align-items: center; gap: 7px; padding: 0 12px; color: #949494; background: #181818; border-right: 1px solid #2b2b2b; }
+.editor-tab.active { color: #d4d4d4; background: #1e1e1e; border-top: 1px solid #74859e; }
+
+.plot-header { display: flex; align-items: center; gap: 18px; padding: 0 12px; border-bottom: 1px solid #2b2b2b; color: #a2a2a2; font-size: 12px; }
+.trace-key { display: flex; align-items: center; gap: 6px; }
+.trace-mark { width: 13px; height: 2px; display: inline-block; }
+.trace-mark.ia { background: #7aa2c8; }
+.trace-mark.iq { background: #c8b77a; }
+.value { color: #d0d0d0; font-family: "SFMono-Regular", Consolas, "Liberation Mono", monospace; }
+.plot-meta { margin-left: auto; color: #777; }
+.plot-host { min-width: 0; min-height: 0; overflow: hidden; padding: 8px 8px 4px 4px; }
+.uplot { font-family: "SFMono-Regular", Consolas, "Liberation Mono", monospace; }
+.uplot .u-title, .uplot .u-legend { color: #cccccc; }
+
+.statusbar { display: flex; align-items: center; gap: 15px; padding: 0 8px; background: #24272d; border-top: 1px solid #30343a; color: #b9b9b9; font-size: 11px; user-select: none; }
+.status-spacer { flex: 1; }
