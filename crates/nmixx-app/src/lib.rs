@@ -5,6 +5,7 @@
 //! application-facing access to that device.
 
 mod connection;
+mod plot_capabilities;
 mod schema;
 mod schema_store;
 mod scope;
@@ -13,6 +14,9 @@ mod stream;
 mod stream_pipeline;
 
 pub use connection::DEFAULT_USB_BAUD;
+pub use plot_capabilities::{
+    DevicePlotCapabilities, DevicePlotChannel, PlotCapabilitiesError, PlotChannelInfo,
+};
 pub use schema::{
     ActionMetadata, HostSchema, ParameterMetadata, RangeMetadata, SchemaError, SchemaNumber,
     SchemaSource,
@@ -28,6 +32,7 @@ pub use stream_pipeline::{
 // These are application-facing domain value types/constants. Clients import
 // them from `nmixx-app`; they do not depend on `nmixx-core` directly.
 pub use nmixx_core::protocol::{
-    ActionError, ActionHandle, AxdrStatus, PLOT_FAST_MASK, PLOT_GROUP_FAST, PLOT_GROUP_NORMAL,
-    PLOT_NORMAL_MASK, ParameterType, ParameterValue, PositionValue, SequenceStatus,
+    ActionError, ActionHandle, AxdrStatus, PLOT_CAP_FAST, PLOT_CAP_NORMAL, PLOT_FAST_MASK,
+    PLOT_GROUP_FAST, PLOT_GROUP_NORMAL, PLOT_NORMAL_MASK, ParameterType, ParameterValue,
+    PositionValue, SequenceStatus,
 };
