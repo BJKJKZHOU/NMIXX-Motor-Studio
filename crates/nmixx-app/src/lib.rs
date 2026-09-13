@@ -7,6 +7,7 @@
 mod connection;
 mod schema;
 mod schema_store;
+mod scope;
 mod session;
 mod stream;
 mod stream_pipeline;
@@ -17,6 +18,7 @@ pub use schema::{
     SchemaSource,
 };
 pub use schema_store::{SchemaStore, SchemaStoreError, StoredSchema, schema_store_key};
+pub use scope::{ScopeChannel, ScopeConfig, ScopeError, ScopeSession, ScopeStatus};
 pub use session::{DeviceSession, SessionError, SessionEvent};
 pub use stream::{StreamConfig, StreamError, StreamSession, StreamSnapshot, StreamState};
 pub use stream_pipeline::{
