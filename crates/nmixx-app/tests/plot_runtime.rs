@@ -20,6 +20,12 @@ struct ScriptedTransport {
     state: ScriptState,
 }
 
+impl ScriptedTransport {
+    fn new(state: ScriptState) -> Self {
+        Self { state }
+    }
+}
+
 impl FrameTransport for ScriptedTransport {
     fn send(&mut self, frame: &CanFdFrame) -> Result<(), TransportError> {
         self.state.sent.lock().unwrap().push(frame.clone());
