@@ -18,10 +18,12 @@ pub use parameter::{
     parse_parameter_read, parse_parameter_write,
 };
 pub use plot::{
-    PLOT_FAST_MASK, PLOT_GROUP_FAST, PLOT_GROUP_NORMAL, PLOT_NORMAL_MASK, PlotError,
-    build_plot_config, build_plot_config_default, build_plot_start, build_plot_start_default,
-    build_plot_stop, build_plot_stop_default, parse_plot_config_response,
-    parse_plot_start_response, parse_plot_stop_response,
+    PLOT_CAP_END, PLOT_CAP_FAST, PLOT_CAP_NORMAL, PLOT_FAST_MASK, PLOT_GROUP_FAST,
+    PLOT_GROUP_NORMAL, PLOT_NORMAL_MASK, PlotCapabilitiesPage, PlotCapabilityEntry, PlotError,
+    build_plot_caps, build_plot_caps_default, build_plot_config, build_plot_config_default,
+    build_plot_start, build_plot_start_default, build_plot_stop, build_plot_stop_default,
+    parse_plot_caps_response, parse_plot_config_response, parse_plot_start_response,
+    parse_plot_stop_response,
 };
 pub use router::{
     ActionCompleteFrame, DecodeError, InboundFrame, ResponseFrame, decode_inbound,
