@@ -1,73 +1,277 @@
 <script lang="ts">
   import { onMount } from "svelte";
+  import { invoke } from "@tauri-apps/api/core";
   import Split from "split.js";
   import uPlot from "uplot";
 
+  type PlotChannel = {
+    id: number;
+    symbol: string;
+    unit?: string;
+    supportsFast: boolean;
+    supportsNormal: boolean;
+    fastScale?: number;
+  };
+
+  type ConnectionInfo = {
+    port: string;
+    fastMaxChannels: number;
+    normalMaxChannels: number;
+    fastBlockSamples: number;
+    fastRateHz: number;
+    normalRateHz: number;
+    channels: PlotChannel[];
+  };
+
+  type ScopeChannel = { id: number; symbol: string; unit?: string };
+  type ScopeConfig = {
+    sampleRateHz: number;
+    historySeconds: number;
+    channels: ScopeChannel[];
+  };
+
+  type ScopeSnapshot = {
+    sampleRateHz: number;
+    sampleCount: number;
+    lostFrames: number;
+    state: string;
+    times: number[];
+    series: number[][];
+  };
+
   let plotHost: HTMLDivElement;
   let plot: uPlot | undefined;
+  let split: Split.Instance | undefined;
+  let resizeObserver: ResizeObserver | undefined;
+  let refreshTimer: ReturnType<typeof setInterval> | undefined;
+  let snapshotBusy = false;
 
-  const channels = [
-    { name: "PARAM_ADC_IA", unit: "A", mode: "FAST", checked: true },
-    { name: "PARAM_RUN_IQ", unit: "A", mode: "FAST", checked: true },
-    { name: "PARAM_ADC_IB", unit: "A", mode: "FAST", checked: false },
-    { name: "PARAM_ADC_VBUS", unit: "V", mode: "NORMAL", checked: false },
-    { name: "PARAM_RUN_THETA_E", unit: "rad", mode: "FAST", checked: false },
+  let ports: string[] = [];
+  let port = "/dev/ttyACM1";
+  let schemaPath = "../../../AxDr_L_Motor/build/host/axdr-host-schema.toml";
+  let connection: ConnectionInfo | undefined;
+  let scopeConfig: ScopeConfig | undefined;
+  let selectedIds = new Set<number>();
+  let snapshot: ScopeSnapshot | undefined;
+  let busy = false;
+  let errorText = "";
+
+  const traceColors = [
+    "#7aa2c8",
+    "#c8b77a",
+    "#9b8ac8",
+    "#7fa68a",
+    "#c28b73",
+    "#aa829a",
+    "#79a6ad",
+    "#91a77b",
   ];
 
-  function buildMockData(): uPlot.AlignedData {
-    const x: number[] = [];
-    const ia: number[] = [];
-    const iq: number[] = [];
-    for (let i = 0; i <= 2000; i += 1) {
-      const t = i / 200;
-      x.push(t);
-      ia.push(0.72 * Math.sin(t * 18.3) + 0.08 * Math.sin(t * 73));
-      iq.push(0.52 + 0.22 * Math.sin(t * 5.2 + 0.8));
+  function channelMode(channel: PlotChannel): string {
+    if (channel.supportsFast && channel.supportsNormal) return "FAST+N";
+    if (channel.supportsFast) return "FAST";
+    return "NORMAL";
+  }
+
+  function setError(error: unknown) {
+    errorText = error instanceof Error ? error.message : String(error);
+  }
+
+  async function refreshPorts() {
+    try {
+      ports = await invoke<string[]>("device_list");
+      if (ports.length > 0 && !ports.includes(port)) port = ports[0];
+    } catch (error) {
+      setError(error);
     }
-    return [x, ia, iq];
+  }
+
+  async function connect() {
+    busy = true;
+    errorText = "";
+    try {
+      connection = await invoke<ConnectionInfo>("device_connect", {
+        port,
+        schemaPath,
+        baud: 115200,
+      });
+      scopeConfig = undefined;
+      snapshot = undefined;
+      const defaults = connection.channels.filter((channel) => channel.supportsFast).slice(0, 2);
+      selectedIds = new Set(defaults.map((channel) => channel.id));
+      rebuildPlot([]);
+    } catch (error) {
+      connection = undefined;
+      scopeConfig = undefined;
+      setError(error);
+    } finally {
+      busy = false;
+    }
+  }
+
+  async function disconnect() {
+    try {
+      await invoke("device_disconnect");
+    } catch (error) {
+      setError(error);
+    }
+    connection = undefined;
+    scopeConfig = undefined;
+    snapshot = undefined;
+    selectedIds = new Set();
+    rebuildPlot([]);
+  }
+
+  function toggleChannel(id: number) {
+    if (!connection) return;
+    const next = new Set(selectedIds);
+    if (next.has(id)) {
+      next.delete(id);
+    } else {
+      if (next.size >= connection.fastMaxChannels) return;
+      next.add(id);
+    }
+    selectedIds = next;
+    scopeConfig = undefined;
+    snapshot = undefined;
+  }
+
+  async function configureScope(): Promise<boolean> {
+    if (scopeConfig) return true;
+    if (selectedIds.size === 0) {
+      errorText = "Select at least one FAST channel.";
+      return false;
+    }
+    try {
+      scopeConfig = await invoke<ScopeConfig>("scope_configure", {
+        parameterIds: Array.from(selectedIds),
+        historySeconds: 10.0,
+      });
+      rebuildPlot(scopeConfig.channels);
+      return true;
+    } catch (error) {
+      setError(error);
+      return false;
+    }
+  }
+
+  async function runScope() {
+    errorText = "";
+    if (!(await configureScope())) return;
+    try {
+      await invoke("scope_live");
+      await refreshSnapshot();
+    } catch (error) {
+      setError(error);
+    }
+  }
+
+  async function pauseScope() {
+    if (!scopeConfig) return;
+    try {
+      await invoke("scope_pause");
+      await refreshSnapshot();
+    } catch (error) {
+      setError(error);
+    }
+  }
+
+  async function clearScope() {
+    if (!scopeConfig) return;
+    try {
+      await invoke("scope_clear");
+      await refreshSnapshot();
+    } catch (error) {
+      setError(error);
+    }
+  }
+
+  async function refreshSnapshot() {
+    if (!scopeConfig || snapshotBusy) return;
+    snapshotBusy = true;
+    try {
+      snapshot = await invoke<ScopeSnapshot>("scope_snapshot", {
+        windowSeconds: 0.5,
+        maxPoints: 2500,
+      });
+      const data: uPlot.AlignedData = [snapshot.times, ...snapshot.series];
+      plot?.setData(data);
+    } catch (error) {
+      setError(error);
+    } finally {
+      snapshotBusy = false;
+    }
+  }
+
+  function rebuildPlot(channels: ScopeChannel[]) {
+    if (!plotHost) return;
+    const rect = plotHost.getBoundingClientRect();
+    plot?.destroy();
+    const series: uPlot.Series[] = [
+      {},
+      ...channels.map((channel, index) => ({
+        label: channel.symbol,
+        stroke: traceColors[index % traceColors.length],
+        width: 1.25,
+      })),
+    ];
+    const empty: uPlot.AlignedData = [[], ...channels.map(() => [])];
+    plot = new uPlot(
+      {
+        width: Math.max(420, Math.floor(rect.width)),
+        height: Math.max(260, Math.floor(rect.height)),
+        legend: { show: false },
+        cursor: { drag: { x: true, y: false } },
+        scales: { x: { time: false } },
+        axes: [
+          { stroke: "#8c8c8c", grid: { stroke: "#2a2d2e", width: 1 }, ticks: { stroke: "#3a3d41" } },
+          { stroke: "#8c8c8c", grid: { stroke: "#2a2d2e", width: 1 }, ticks: { stroke: "#3a3d41" } },
+        ],
+        series,
+      },
+      empty,
+      plotHost,
+    );
+  }
+
+  function resizePlot() {
+    if (!plot || !plotHost) return;
+    const rect = plotHost.getBoundingClientRect();
+    plot.setSize({
+      width: Math.max(420, Math.floor(rect.width)),
+      height: Math.max(260, Math.floor(rect.height)),
+    });
+  }
+
+  function latestValue(index: number): string {
+    if (!snapshot || !scopeConfig || snapshot.series[index]?.length === 0) return "—";
+    const values = snapshot.series[index];
+    const value = values[values.length - 1];
+    const unit = scopeConfig.channels[index]?.unit ?? "";
+    return `${value.toFixed(3)}${unit ? ` ${unit}` : ""}`;
   }
 
   onMount(() => {
-    const split = Split(["#scope-sidebar", "#scope-workspace"], {
-      sizes: [23, 77],
-      minSize: [210, 420],
+    split = Split(["#scope-sidebar", "#scope-workspace"], {
+      sizes: [25, 75],
+      minSize: [260, 420],
       gutterSize: 4,
       snapOffset: 0,
+      onDrag: resizePlot,
     });
 
-    const makePlot = () => {
-      const rect = plotHost.getBoundingClientRect();
-      plot?.destroy();
-      plot = new uPlot(
-        {
-          width: Math.max(420, Math.floor(rect.width)),
-          height: Math.max(260, Math.floor(rect.height)),
-          legend: { show: false },
-          cursor: { drag: { x: true, y: false } },
-          scales: { x: { time: false } },
-          axes: [
-            { stroke: "#8c8c8c", grid: { stroke: "#2a2d2e", width: 1 }, ticks: { stroke: "#3a3d41" } },
-            { stroke: "#8c8c8c", grid: { stroke: "#2a2d2e", width: 1 }, ticks: { stroke: "#3a3d41" } },
-          ],
-          series: [
-            {},
-            { label: "Ia", stroke: "#7aa2c8", width: 1.4 },
-            { label: "Iq", stroke: "#c8b77a", width: 1.4 },
-          ],
-        },
-        buildMockData(),
-        plotHost,
-      );
-    };
-
-    makePlot();
-    const observer = new ResizeObserver(makePlot);
-    observer.observe(plotHost);
+    rebuildPlot([]);
+    resizeObserver = new ResizeObserver(resizePlot);
+    resizeObserver.observe(plotHost);
+    refreshTimer = setInterval(refreshSnapshot, 50);
+    refreshPorts();
 
     return () => {
-      observer.disconnect();
+      if (refreshTimer) clearInterval(refreshTimer);
+      resizeObserver?.disconnect();
       plot?.destroy();
-      split.destroy();
+      split?.destroy();
+      invoke("device_disconnect").catch(() => undefined);
     };
   });
 </script>
@@ -75,7 +279,10 @@
 <div class="workbench">
   <header class="titlebar">
     <div class="brand">NMIXX Motor Studio</div>
-    <div class="device-summary"><span class="status-dot"></span> AxDr_L · /dev/ttyACM1</div>
+    <div class="device-summary">
+      <span class:connected={!!connection} class="status-dot"></span>
+      {connection ? `${connection.port} · Connected` : "Disconnected"}
+    </div>
   </header>
 
   <div class="body">
@@ -92,45 +299,62 @@
       <section class="page-toolbar">
         <div class="page-title">SCOPE</div>
         <div class="toolbar-actions">
-          <vscode-button><i class="codicon codicon-play"></i>&nbsp;Run</vscode-button>
-          <vscode-button secondary><i class="codicon codicon-debug-pause"></i>&nbsp;Pause</vscode-button>
-          <vscode-button secondary>Capture</vscode-button>
-          <vscode-button secondary>Clear</vscode-button>
+          <vscode-button disabled={!connection || selectedIds.size === 0} onclick={runScope}><i class="codicon codicon-play"></i>&nbsp;Run</vscode-button>
+          <vscode-button secondary disabled={!scopeConfig} onclick={pauseScope}><i class="codicon codicon-debug-pause"></i>&nbsp;Pause</vscode-button>
+          <vscode-button secondary disabled={!scopeConfig} onclick={clearScope}>Clear</vscode-button>
         </div>
       </section>
 
       <div class="scope-shell">
         <aside id="scope-sidebar" class="scope-sidebar">
+          <section class="side-section connection-section">
+            <div class="section-heading">CONNECTION</div>
+            <div class="connection-form">
+              <label>Port</label>
+              <div class="field-row">
+                <input bind:value={port} class="compact-input" list="device-ports" />
+                <datalist id="device-ports">{#each ports as item}<option value={item}></option>{/each}</datalist>
+                <vscode-button secondary onclick={refreshPorts} title="Refresh ports"><i class="codicon codicon-refresh"></i></vscode-button>
+              </div>
+              <label>HostSchema</label>
+              <input bind:value={schemaPath} class="compact-input mono" />
+              <div class="connection-actions">
+                {#if connection}
+                  <vscode-button secondary onclick={disconnect}>Disconnect</vscode-button>
+                {:else}
+                  <vscode-button disabled={busy} onclick={connect}>Connect</vscode-button>
+                {/if}
+              </div>
+              {#if errorText}<div class="error-text">{errorText}</div>{/if}
+            </div>
+          </section>
+
           <section class="side-section">
             <div class="section-heading">CHANNELS</div>
             <div class="channel-list">
-              {#each channels as channel}
-                <label class="channel-row">
-                  <vscode-checkbox checked={channel.checked || undefined}></vscode-checkbox>
-                  <span class="channel-name">{channel.name}</span>
-                  <span class="channel-unit">{channel.unit}</span>
-                  <span class:normal-only={channel.mode === "NORMAL"} class="channel-mode">{channel.mode}</span>
-                </label>
-              {/each}
+              {#if connection}
+                {#each connection.channels as channel}
+                  <label class:disabled-row={!channel.supportsFast} class="channel-row" onclick={() => channel.supportsFast && toggleChannel(channel.id)}>
+                    <vscode-checkbox checked={selectedIds.has(channel.id) || undefined} disabled={!channel.supportsFast}></vscode-checkbox>
+                    <span class="channel-name">{channel.symbol}</span>
+                    <span class="channel-unit">{channel.unit ?? ""}</span>
+                    <span class:normal-only={!channel.supportsFast} class="channel-mode">{channelMode(channel)}</span>
+                  </label>
+                {/each}
+              {:else}
+                <div class="empty-hint">Connect a device to discover Plot channels.</div>
+              {/if}
             </div>
           </section>
 
           <section class="side-section acquisition">
             <div class="section-heading">ACQUISITION</div>
             <div class="property-grid">
-              <span>Mode</span><strong>LIVE</strong>
-              <span>FAST Rate</span><strong>20.0 kHz</strong>
-              <span>History</span><strong>10.000 s</strong>
-              <span>Channels</span><strong>2 / 8</strong>
-            </div>
-          </section>
-
-          <section class="side-section device-info">
-            <div class="section-heading">DEVICE</div>
-            <div class="property-grid">
-              <span>State</span><strong>DISABLED</strong>
-              <span>Transport</span><strong>USB CDC</strong>
-              <span>Node</span><strong>1</strong>
+              <span>State</span><strong>{snapshot?.state ?? "STOPPED"}</strong>
+              <span>FAST Rate</span><strong>{connection ? `${(connection.fastRateHz / 1000).toFixed(1)} kHz` : "—"}</strong>
+              <span>History</span><strong>{scopeConfig ? `${scopeConfig.historySeconds.toFixed(3)} s` : "10.000 s"}</strong>
+              <span>Channels</span><strong>{selectedIds.size} / {connection?.fastMaxChannels ?? "—"}</strong>
+              <span>Block</span><strong>{connection?.fastBlockSamples ?? "—"}</strong>
             </div>
           </section>
         </aside>
@@ -140,9 +364,18 @@
             <div class="editor-tab active"><i class="codicon codicon-graph-line"></i> Scope</div>
           </div>
           <div class="plot-header">
-            <div class="trace-key"><span class="trace-mark ia"></span>Ia <span class="value">-0.184 A</span></div>
-            <div class="trace-key"><span class="trace-mark iq"></span>Iq <span class="value">0.617 A</span></div>
-            <div class="plot-meta">200000 samples · loss 0</div>
+            {#if scopeConfig}
+              {#each scopeConfig.channels as channel, index}
+                <div class="trace-key">
+                  <span class="trace-mark" style={`background:${traceColors[index % traceColors.length]}`}></span>
+                  {channel.symbol}
+                  <span class="value">{latestValue(index)}</span>
+                </div>
+              {/each}
+            {:else}
+              <div class="plot-placeholder">Select FAST channels and press Run.</div>
+            {/if}
+            <div class="plot-meta">{snapshot?.sampleCount ?? 0} samples · loss {snapshot?.lostFrames ?? 0}</div>
           </div>
           <div bind:this={plotHost} class="plot-host"></div>
         </section>
@@ -151,12 +384,12 @@
   </div>
 
   <footer class="statusbar">
-    <div><i class="codicon codicon-plug"></i> /dev/ttyACM1</div>
-    <div>DISABLED</div>
-    <div>FAST 20 kHz</div>
-    <div>2 / 8 ch</div>
-    <div>loss 0</div>
+    <div><i class="codicon codicon-plug"></i> {connection?.port ?? "No device"}</div>
+    <div>{snapshot?.state ?? "STOPPED"}</div>
+    <div>{connection ? `FAST ${connection.fastRateHz / 1000} kHz` : "FAST —"}</div>
+    <div>{selectedIds.size} / {connection?.fastMaxChannels ?? "—"} ch</div>
+    <div>loss {snapshot?.lostFrames ?? 0}</div>
     <div class="status-spacer"></div>
-    <div>AxDr_L</div>
+    <div>{connection ? "AxDr_L" : "NMIXX"}</div>
   </footer>
 </div>

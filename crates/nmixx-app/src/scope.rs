@@ -251,6 +251,11 @@ impl ScopeSession {
         let shared = self.shared.lock().map_err(|_| ScopeError::Closed)?;
         Ok(shared.pipeline.snapshot())
     }
+
+    pub fn snapshot_tail(&self, max_samples: usize) -> Result<StreamSnapshot, ScopeError> {
+        let shared = self.shared.lock().map_err(|_| ScopeError::Closed)?;
+        Ok(shared.pipeline.snapshot_tail(max_samples))
+    }
 }
 
 impl Drop for ScopeSession {

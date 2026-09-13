@@ -35,7 +35,7 @@
 
 * { box-sizing: border-box; }
 html, body, #app { margin: 0; width: 100%; height: 100%; overflow: hidden; }
-button { font: inherit; }
+button, input { font: inherit; }
 
 .workbench {
   width: 100%;
@@ -56,7 +56,8 @@ button { font: inherit; }
 }
 .brand { font-size: 12px; font-weight: 600; color: #d8d8d8; }
 .device-summary { margin-left: auto; color: #9b9b9b; font-size: 12px; }
-.status-dot { display: inline-block; width: 7px; height: 7px; margin-right: 6px; border-radius: 50%; background: #7b9b84; }
+.status-dot { display: inline-block; width: 7px; height: 7px; margin-right: 6px; border-radius: 50%; background: #666; }
+.status-dot.connected { background: #7b9b84; }
 
 .body { min-height: 0; display: grid; grid-template-columns: 48px minmax(0, 1fr); }
 .activity-bar { display: flex; flex-direction: column; align-items: stretch; background: #181818; border-right: 1px solid #2b2b2b; }
@@ -80,13 +81,34 @@ vscode-button { --vscode-button-border: transparent; }
 
 .side-section { border-bottom: 1px solid #2c2c2c; padding-bottom: 8px; }
 .section-heading { height: 28px; display: flex; align-items: center; padding: 0 10px; color: #a7a7a7; font-size: 11px; font-weight: 600; }
+.connection-form { display: grid; gap: 6px; padding: 1px 9px 8px; }
+.connection-form label { color: #858585; font-size: 11px; }
+.field-row { display: grid; grid-template-columns: minmax(0, 1fr) 30px; gap: 5px; }
+.compact-input {
+  width: 100%;
+  min-width: 0;
+  height: 27px;
+  padding: 3px 7px;
+  border: 1px solid var(--vscode-input-border);
+  border-radius: 2px;
+  outline: none;
+  color: var(--vscode-input-foreground);
+  background: var(--vscode-input-background);
+}
+.compact-input:focus { border-color: var(--vscode-focusBorder); }
+.compact-input.mono { font-family: "SFMono-Regular", Consolas, "Liberation Mono", monospace; font-size: 11px; }
+.connection-actions { display: flex; justify-content: flex-end; padding-top: 2px; }
+.error-text { padding: 4px 6px; border-left: 2px solid #b35d5d; background: #2b2020; color: #d7a6a6; font-size: 11px; line-height: 1.4; word-break: break-word; }
+
 .channel-list { display: flex; flex-direction: column; }
 .channel-row { min-height: 28px; display: grid; grid-template-columns: 24px minmax(0, 1fr) 42px 54px; align-items: center; padding: 0 7px; cursor: default; }
 .channel-row:hover { background: #242424; }
+.channel-row.disabled-row { opacity: .58; }
 .channel-name { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; color: #d0d0d0; font-family: "SFMono-Regular", Consolas, "Liberation Mono", monospace; font-size: 12px; }
 .channel-unit, .channel-mode { color: #858585; font-size: 11px; text-align: right; }
 .channel-mode { color: #9ba8bb; }
 .channel-mode.normal-only { color: #8b8b8b; }
+.empty-hint { padding: 5px 10px 9px; color: #757575; font-size: 11px; line-height: 1.45; }
 
 .property-grid { display: grid; grid-template-columns: 1fr auto; gap: 8px 12px; padding: 2px 11px 8px; color: #858585; font-size: 12px; }
 .property-grid strong { color: #c7c7c7; font-family: "SFMono-Regular", Consolas, "Liberation Mono", monospace; font-size: 11px; font-weight: 400; }
@@ -95,13 +117,12 @@ vscode-button { --vscode-button-border: transparent; }
 .editor-tab { min-width: 116px; display: flex; align-items: center; gap: 7px; padding: 0 12px; color: #949494; background: #181818; border-right: 1px solid #2b2b2b; }
 .editor-tab.active { color: #d4d4d4; background: #1e1e1e; border-top: 1px solid #74859e; }
 
-.plot-header { display: flex; align-items: center; gap: 18px; padding: 0 12px; border-bottom: 1px solid #2b2b2b; color: #a2a2a2; font-size: 12px; }
-.trace-key { display: flex; align-items: center; gap: 6px; }
-.trace-mark { width: 13px; height: 2px; display: inline-block; }
-.trace-mark.ia { background: #7aa2c8; }
-.trace-mark.iq { background: #c8b77a; }
+.plot-header { display: flex; align-items: center; gap: 18px; padding: 0 12px; border-bottom: 1px solid #2b2b2b; color: #a2a2a2; font-size: 12px; overflow: hidden; }
+.trace-key { display: flex; align-items: center; gap: 6px; white-space: nowrap; }
+.trace-mark { width: 13px; height: 2px; display: inline-block; flex: 0 0 auto; }
 .value { color: #d0d0d0; font-family: "SFMono-Regular", Consolas, "Liberation Mono", monospace; }
-.plot-meta { margin-left: auto; color: #777; }
+.plot-meta { margin-left: auto; color: #777; white-space: nowrap; }
+.plot-placeholder { color: #777; }
 .plot-host { min-width: 0; min-height: 0; overflow: hidden; padding: 8px 8px 4px 4px; }
 .uplot { font-family: "SFMono-Regular", Consolas, "Liberation Mono", monospace; }
 .uplot .u-title, .uplot .u-legend { color: #cccccc; }
