@@ -5,9 +5,9 @@ use std::time::Duration;
 use thiserror::Error;
 
 use crate::{
-    DeviceSession, PLOT_FAST_MASK, PLOT_GROUP_FAST, SessionError, SessionEvent, StreamConfig,
-    StreamError, StreamPipeline, StreamPipelineError, StreamSession, StreamSnapshot, StreamState,
-    StreamWireMode,
+    DevicePlotCapabilities, DeviceSession, HostSchema, PLOT_FAST_MASK, PLOT_GROUP_FAST, SessionError,
+    SessionEvent, StreamConfig, StreamError, StreamPipeline, StreamPipelineError, StreamSession,
+    StreamSnapshot, StreamState, StreamWireMode,
 };
 
 #[derive(Debug, Clone, PartialEq)]
@@ -36,8 +36,14 @@ pub struct ScopeStatus {
 
 #[derive(Debug, Error)]
 pub enum ScopeError {
-    #[error("Scope requires 1..=8 FAST channels, got {0}")]
-    InvalidChannelCount(usize),
+    #[error("Scope requires at least one FAST channel")]
+    EmptyChannels,
+    #[error("Scope selected {actual} FAST channels but device supports at most {max}")]
+    TooManyChannels { actual: usize, max: usize },
+    #[error("parameter 0x{0:04X} is not reported by device Plot capabilities")]
+    UnknownChannel(u16),
+    #[error("parameter 0x{0:04X} is not FAST-capable on this device")]
+    NotFastCapable(u16),
     #[error("Scope channel {0} has invalid FAST plot scale")]
     InvalidScale(String),
     #[error(transparent)]
@@ -68,9 +74,55 @@ pub struct ScopeSession {
 }
 
 impl ScopeSession {
+    pub fn from_fast_capabilities(
+        session: DeviceSession,
+        capabilities: &DevicePlotCapabilities,
+        schema: &HostSchema,
+        parameter_ids: &[u16],
+        history: Duration,
+        config_id: u8,
+    ) -> Result<Self, ScopeError> {
+        if parameter_ids.is_empty() {
+            return Err(ScopeError::EmptyChannels);
+        }
+        if parameter_ids.len() > capabilities.fast_max_channels as usize {
+            return Err(ScopeError::TooManyChannels {
+                actual: parameter_ids.len(),
+                max: capabilities.fast_max_channels as usize,
+            });
+        }
+
+        let mut channels = Vec::with_capacity(parameter_ids.len());
+        for id in parameter_ids {
+            let capability = capabilities.channel(*id).ok_or(ScopeError::UnknownChannel(*id))?;
+            if !capability.supports_fast() {
+                return Err(ScopeError::NotFastCapable(*id));
+            }
+            let metadata = schema.parameter_by_id(*id);
+            channels.push(ScopeChannel {
+                id: *id,
+                symbol: metadata
+                    .map(|value| value.symbol.clone())
+                    .unwrap_or_else(|| format!("0x{id:04X}")),
+                unit: metadata.and_then(|value| value.unit.clone()),
+                scale: capability.fast_scale,
+            });
+        }
+
+        Self::new(
+            session,
+            ScopeConfig {
+                config_id,
+                sample_rate_hz: capabilities.fast_rate_hz,
+                history,
+                channels,
+            },
+        )
+    }
+
     pub fn new(session: DeviceSession, config: ScopeConfig) -> Result<Self, ScopeError> {
-        if !(1..=8).contains(&config.channels.len()) {
-            return Err(ScopeError::InvalidChannelCount(config.channels.len()));
+        if config.channels.is_empty() {
+            return Err(ScopeError::EmptyChannels);
         }
         for channel in &config.channels {
             if !channel.scale.is_finite() || channel.scale <= 0.0 {
@@ -94,10 +146,7 @@ impl ScopeSession {
             stream,
         )?;
 
-        let shared = Arc::new(Mutex::new(SharedState {
-            pipeline,
-            lost_frames: 0,
-        }));
+        let shared = Arc::new(Mutex::new(SharedState { pipeline, lost_frames: 0 }));
         let events = session.subscribe()?;
         let (command_tx, command_rx) = mpsc::channel();
         let worker_shared = Arc::clone(&shared);
@@ -107,13 +156,7 @@ impl ScopeSession {
             .spawn(move || scope_worker(worker_session, events, command_rx, worker_shared))
             .map_err(|_| ScopeError::Closed)?;
 
-        Ok(Self {
-            session,
-            config,
-            shared,
-            command_tx,
-            worker: Some(worker),
-        })
+        Ok(Self { session, config, shared, command_tx, worker: Some(worker) })
     }
 
     pub fn config(&self) -> &ScopeConfig {
@@ -121,11 +164,18 @@ impl ScopeSession {
     }
 
     pub fn live(&self) -> Result<(), ScopeError> {
-        {
+        let already_live = {
             let mut shared = self.shared.lock().map_err(|_| ScopeError::Closed)?;
-            shared.pipeline.reset_sequence();
-            shared.lost_frames = 0;
-            shared.pipeline.stream_mut().live();
+            let already_live = shared.pipeline.stream().state() == StreamState::Live;
+            if !already_live {
+                shared.pipeline.reset_sequence();
+                shared.lost_frames = 0;
+                shared.pipeline.stream_mut().live();
+            }
+            already_live
+        };
+        if already_live {
+            return Ok(());
         }
         if let Err(error) = self.session.plot_start(PLOT_FAST_MASK) {
             if let Ok(mut shared) = self.shared.lock() {
@@ -141,14 +191,20 @@ impl ScopeSession {
     }
 
     pub fn pause(&self) -> Result<(), ScopeError> {
-        self.session.plot_stop(PLOT_FAST_MASK)?;
+        let state = self.shared.lock().map_err(|_| ScopeError::Closed)?.pipeline.stream().state();
+        if matches!(state, StreamState::Live | StreamState::Capturing) {
+            self.session.plot_stop(PLOT_FAST_MASK)?;
+        }
         let mut shared = self.shared.lock().map_err(|_| ScopeError::Closed)?;
         shared.pipeline.stream_mut().pause();
         Ok(())
     }
 
     pub fn stop(&self) -> Result<(), ScopeError> {
-        self.session.plot_stop(PLOT_FAST_MASK)?;
+        let state = self.shared.lock().map_err(|_| ScopeError::Closed)?.pipeline.stream().state();
+        if matches!(state, StreamState::Live | StreamState::Capturing) {
+            self.session.plot_stop(PLOT_FAST_MASK)?;
+        }
         let mut shared = self.shared.lock().map_err(|_| ScopeError::Closed)?;
         shared.pipeline.stream_mut().stop();
         Ok(())
@@ -161,11 +217,16 @@ impl ScopeSession {
     }
 
     pub fn capture(&self, duration: Duration) -> Result<(), ScopeError> {
-        {
+        let was_running = {
             let mut shared = self.shared.lock().map_err(|_| ScopeError::Closed)?;
+            let was_running = matches!(shared.pipeline.stream().state(), StreamState::Live | StreamState::Capturing);
             shared.pipeline.reset_sequence();
             shared.lost_frames = 0;
             shared.pipeline.stream_mut().capture(duration)?;
+            was_running
+        };
+        if was_running {
+            return Ok(());
         }
         if let Err(error) = self.session.plot_start(PLOT_FAST_MASK) {
             if let Ok(mut shared) = self.shared.lock() {
@@ -194,7 +255,10 @@ impl ScopeSession {
 
 impl Drop for ScopeSession {
     fn drop(&mut self) {
-        let _ = self.session.plot_stop(PLOT_FAST_MASK);
+        let state = self.shared.lock().ok().map(|shared| shared.pipeline.stream().state());
+        if matches!(state, Some(StreamState::Live | StreamState::Capturing)) {
+            let _ = self.session.plot_stop(PLOT_FAST_MASK);
+        }
         let _ = self.command_tx.send(ScopeCommand::Shutdown);
         if let Some(worker) = self.worker.take() {
             let _ = worker.join();
@@ -220,8 +284,7 @@ fn scope_worker(
                     match state.pipeline.ingest_fast(&frame) {
                         Ok(report) => {
                             state.lost_frames = report.lost_frames_total;
-                            state.pipeline.stream().state() == StreamState::Paused
-                                && report.samples_stored > 0
+                            state.pipeline.stream().state() == StreamState::Paused && report.samples_stored > 0
                         }
                         Err(_) => false,
                     }
@@ -234,24 +297,5 @@ fn scope_worker(
             Err(mpsc::RecvTimeoutError::Timeout) => {}
             Err(mpsc::RecvTimeoutError::Disconnected) => break,
         }
-    }
-}
-
-#[cfg(test)]
-mod tests {
-    use super::*;
-
-    #[test]
-    fn rejects_invalid_scope_channel_count() {
-        let config = ScopeConfig {
-            config_id: 1,
-            sample_rate_hz: 20_000,
-            history: Duration::from_secs(1),
-            channels: Vec::new(),
-        };
-        assert!(matches!(
-            config.channels.len(),
-            0
-        ));
     }
 }
