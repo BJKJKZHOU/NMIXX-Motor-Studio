@@ -1,6 +1,6 @@
 use std::collections::VecDeque;
 use std::sync::{Arc, Mutex};
-use std::time::Duration;
+use std::time::{Duration, Instant};
 
 use nmixx_app::{DeviceSession, SessionEvent};
 use nmixx_core::protocol::{
@@ -46,6 +46,21 @@ fn plot_response(txn: u8, op: u8, data: &[u8]) -> CanFdFrame {
     let mut payload = vec![txn, MSG_PLOT, op, AxdrStatus::Ok as u8];
     payload.extend_from_slice(data);
     CanFdFrame::new(can_id(MSG_RESPONSE, NODE_ID_DEFAULT), &payload).unwrap()
+}
+
+fn fast_frame(sequence: u16) -> CanFdFrame {
+    CanFdFrame::new(
+        can_id(MSG_FAST_DATA, NODE_ID_DEFAULT),
+        &[
+            sequence as u8,
+            (sequence >> 8) as u8,
+            7,
+            1,
+            sequence as u8,
+            0,
+        ],
+    )
+    .unwrap()
 }
 
 #[test]
@@ -100,4 +115,34 @@ fn plot_config_start_stream_and_stop_share_single_session_owner() {
     );
     assert_eq!(&sent[1].data()[..3], &[2, PLOT_START, PLOT_FAST_MASK]);
     assert_eq!(&sent[2].data()[..3], &[3, PLOT_STOP, PLOT_FAST_MASK]);
+}
+
+#[test]
+fn fast_burst_is_dispatched_without_per_frame_poll_delay() {
+    const FRAME_COUNT: usize = 8;
+
+    let state = ScriptState::default();
+    {
+        let mut incoming = state.incoming.lock().unwrap();
+        for sequence in 0..FRAME_COUNT as u16 {
+            incoming.push_back(Ok(fast_frame(sequence)));
+        }
+    }
+
+    let session = DeviceSession::spawn(Box::new(ScriptedTransport::new(state)));
+    let events = session.subscribe().unwrap();
+    let start = Instant::now();
+
+    for _ in 0..FRAME_COUNT {
+        assert!(matches!(
+            events.recv_timeout(Duration::from_millis(100)).unwrap(),
+            SessionEvent::FastData(_)
+        ));
+    }
+
+    // The previous worker inserted one 20 ms command wait before every frame,
+    // so 8 frames required about 160 ms. Keep a generous threshold to avoid
+    // making this a scheduler-sensitive microbenchmark while still catching
+    // that regression.
+    assert!(start.elapsed() < Duration::from_millis(100));
 }
