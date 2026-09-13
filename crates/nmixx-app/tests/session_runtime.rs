@@ -2,7 +2,9 @@ use std::collections::VecDeque;
 use std::sync::{Arc, Mutex};
 use std::time::Duration;
 
-use nmixx_app::{AxdrStatus, DeviceSession, ParameterType, ParameterValue, SessionError, SessionEvent};
+use nmixx_app::{
+    ActionError, AxdrStatus, DeviceSession, ParameterType, ParameterValue, SessionError, SessionEvent,
+};
 use nmixx_core::protocol::{
     EVENT_ACTION_COMPLETE, EVENT_NOTIFY, MSG_EVENT, MSG_PARAMETER, MSG_RESPONSE, NODE_ID_DEFAULT,
     PARAM_READ, PARAM_WRITE, can_id,
@@ -170,6 +172,24 @@ fn action_completion_can_arrive_before_accept_response() {
         }
         other => panic!("unexpected session event: {other:?}"),
     }
+}
+
+#[test]
+fn action_rejection_preserves_domain_status() {
+    let state = ScriptState::default();
+    let action_id = 0x1103;
+    state.respond_on_send(vec![Ok(response(
+        1,
+        PARAM_WRITE,
+        AxdrStatus::ErrState,
+        &[action_id as u8, (action_id >> 8) as u8],
+    ))]);
+
+    let session = DeviceSession::spawn(Box::new(ScriptedTransport::new(state)));
+    assert!(matches!(
+        session.action_start(action_id),
+        Err(SessionError::Action(ActionError::Status(AxdrStatus::ErrState)))
+    ));
 }
 
 #[test]
