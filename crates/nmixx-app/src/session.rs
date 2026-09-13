@@ -9,14 +9,13 @@ use std::thread::{self, JoinHandle};
 use std::time::{Duration, Instant};
 
 use nmixx_core::protocol::{
-    ActionHandle, ActionTracker, AxdrStatus, InboundFrame, MSG_PARAMETER, MSG_PLOT,
-    NODE_ID_DEFAULT, PARAM_READ, PARAM_WRITE, PLOT_CONFIG, PLOT_START, PLOT_STOP,
-    ParameterType, ParameterValue, ResponseFrame, TransactionError, TransactionId,
-    TransactionTable, build_action_start_default, build_parameter_read_default,
-    build_parameter_write, build_plot_config_default, build_plot_start_default,
-    build_plot_stop_default, decode_inbound, parse_action_accept, parse_parameter_read,
-    parse_parameter_write, parse_plot_config_response, parse_plot_start_response,
-    parse_plot_stop_response,
+    ActionHandle, ActionTracker, AxdrStatus, InboundFrame, MSG_PARAMETER, MSG_PLOT, NODE_ID_DEFAULT,
+    PARAM_READ, PARAM_WRITE, PLOT_CONFIG, PLOT_START, PLOT_STOP, ParameterType, ParameterValue,
+    ResponseFrame, TransactionError, TransactionId, TransactionTable, build_action_start_default,
+    build_parameter_read_default, build_parameter_write, build_plot_config_default,
+    build_plot_start_default, build_plot_stop_default, decode_inbound, parse_action_accept,
+    parse_parameter_read, parse_parameter_write, parse_plot_config_response,
+    parse_plot_start_response, parse_plot_stop_response,
 };
 use nmixx_core::transport::{FrameTransport, TransportError};
 use nmixx_core::wire::CanFdFrame;
@@ -52,7 +51,7 @@ pub enum SessionError {
     Parameter(String),
     #[error("action operation failed: {0}")]
     Action(String),
-    #[error("Plot operation failed: {0}")]
+    #[error("plot operation failed: {0}")]
     Plot(String),
 }
 
@@ -236,13 +235,22 @@ impl Worker {
 
     fn run(mut self, commands: mpsc::Receiver<Command>) {
         loop {
-            match commands.recv_timeout(RX_POLL) {
-                Ok(Command::Shutdown) | Err(mpsc::RecvTimeoutError::Disconnected) => break,
-                Ok(command) => self.handle_command(command),
-                Err(mpsc::RecvTimeoutError::Timeout) => {
-                    let _ = self.poll_one(RX_POLL);
+            // Commands are checked before every transport receive. Under a
+            // continuous FAST stream this keeps control latency bounded to one
+            // frame, while avoiding the old 20 ms command wait before each RX.
+            match commands.try_recv() {
+                Ok(Command::Shutdown) | Err(mpsc::TryRecvError::Disconnected) => break,
+                Ok(command) => {
+                    self.handle_command(command);
+                    continue;
                 }
+                Err(mpsc::TryRecvError::Empty) => {}
             }
+
+            // Block only in the transport when idle. If a frame arrives, the
+            // next loop iteration immediately checks commands and receives the
+            // next frame; there is no per-frame RX_POLL delay.
+            let _ = self.poll_one(RX_POLL);
         }
     }
 
@@ -355,7 +363,8 @@ impl Worker {
             return Err(error.into());
         }
         let response = self.wait_response(txn, REQUEST_TIMEOUT)?;
-        parse_plot_start_response(&response).map_err(|error| SessionError::Plot(error.to_string()))
+        parse_plot_start_response(&response)
+            .map_err(|error| SessionError::Plot(error.to_string()))
     }
 
     fn plot_stop(&mut self, group_mask: u8) -> Result<(), SessionError> {
@@ -367,7 +376,8 @@ impl Worker {
             return Err(error.into());
         }
         let response = self.wait_response(txn, REQUEST_TIMEOUT)?;
-        parse_plot_stop_response(&response).map_err(|error| SessionError::Plot(error.to_string()))
+        parse_plot_stop_response(&response)
+            .map_err(|error| SessionError::Plot(error.to_string()))
     }
 
     fn wait_response(
