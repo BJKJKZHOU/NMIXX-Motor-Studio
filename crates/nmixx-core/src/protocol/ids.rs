@@ -14,3 +14,4 @@ pub const EVENT_ACTION_COMPLETE: u8 = 0x03;
 pub const PLOT_CONFIG: u8 = 0x01;
 pub const PLOT_START: u8 = 0x02;
 pub const PLOT_STOP: u8 = 0x03;
+pub const PLOT_CAPS: u8 = 0x04;
