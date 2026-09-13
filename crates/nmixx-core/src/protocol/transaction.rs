@@ -2,7 +2,7 @@ use std::collections::HashMap;
 
 use thiserror::Error;
 
-use super::{AxdrStatus, ResponseFrame};
+use super::ResponseFrame;
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
 pub struct TransactionId(u8);
@@ -36,8 +36,6 @@ pub enum TransactionError {
         actual_message: u8,
         actual_op: u8,
     },
-    #[error("AXDR request failed with status {0:?}")]
-    Status(AxdrStatus),
 }
 
 #[derive(Debug)]
@@ -69,6 +67,11 @@ impl TransactionTable {
         self.pending.remove(&txn.0);
     }
 
+    /// Matches and consumes a pending transaction.
+    ///
+    /// Transaction ownership ends once txn/message/op match. AXDR response
+    /// status is domain semantics and must be interpreted by the Parameter,
+    /// Action or Plot parser rather than by this generic transaction layer.
     pub fn complete(&mut self, response: &ResponseFrame) -> Result<TransactionId, TransactionError> {
         let Some(expected) = self.pending.get(&response.txn).copied() else {
             return Err(TransactionError::Unknown(response.txn));
@@ -83,9 +86,6 @@ impl TransactionTable {
             });
         }
         self.pending.remove(&response.txn);
-        if response.status != AxdrStatus::Ok {
-            return Err(TransactionError::Status(response.status));
-        }
         Ok(TransactionId(response.txn))
     }
 
@@ -96,6 +96,7 @@ impl TransactionTable {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::protocol::AxdrStatus;
 
     fn response(txn: u8, message: u8, op: u8, status: AxdrStatus) -> ResponseFrame {
         ResponseFrame { txn, request_message: message, request_op: op, status, data: Vec::new() }
@@ -107,6 +108,17 @@ mod tests {
         let txn = table.allocate(0x07, 0x01).unwrap();
         assert_eq!(txn.get(), 1);
         table.complete(&response(1, 0x07, 0x01, AxdrStatus::Ok)).unwrap();
+        assert!(table.is_empty());
+    }
+
+    #[test]
+    fn matching_error_status_still_completes_transaction() {
+        let mut table = TransactionTable::default();
+        let txn = table.allocate(0x07, 0x02).unwrap();
+        assert_eq!(
+            table.complete(&response(1, 0x07, 0x02, AxdrStatus::ErrState)),
+            Ok(txn)
+        );
         assert!(table.is_empty());
     }
 
