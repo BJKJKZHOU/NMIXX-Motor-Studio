@@ -6,8 +6,8 @@ use std::time::Duration;
 
 use clap::Parser;
 use nmixx_app::{
-    DEFAULT_USB_BAUD, DeviceSession, HostSchema, ScopeChannel, ScopeConfig, ScopeSession,
-    StreamSnapshot, StreamState,
+    DEFAULT_USB_BAUD, DevicePlotCapabilities, DeviceSession, HostSchema, ScopeConfig, ScopeSession,
+    StreamSnapshot,
 };
 
 #[derive(Debug, Parser)]
@@ -24,13 +24,13 @@ struct Args {
     #[arg(long)]
     schema: PathBuf,
 
-    /// FAST Plot parameter keys. Maximum 8 channels.
-    #[arg(required = true, num_args = 1..=8)]
+    /// Parameter keys selected from runtime FAST capabilities. Omit to list available channels.
+    #[arg(num_args = 0..=8)]
     channels: Vec<String>,
 
-    /// FAST sample rate used by the firmware.
-    #[arg(long, default_value_t = 20_000)]
-    sample_rate: u32,
+    /// Explicitly list runtime Plot capabilities and exit.
+    #[arg(long)]
+    list: bool,
 
     /// RAM rolling-history capacity in seconds.
     #[arg(long, default_value_t = 10.0)]
@@ -58,24 +58,35 @@ fn run() -> Result<(), Box<dyn Error>> {
     }
 
     let schema = HostSchema::load(&args.schema)?;
-    let channels = resolve_channels(&schema, &args.channels)?;
     let session = DeviceSession::open_usb(&args.port, args.baud)?;
-    let scope = ScopeSession::new(
+    let capabilities = DevicePlotCapabilities::discover(&session)?;
+
+    if args.list || args.channels.is_empty() {
+        print_capabilities(&capabilities, &schema);
+        if args.channels.is_empty() {
+            println!();
+            println!("select one or more FAST-capable parameters to start Scope");
+        }
+        return Ok(());
+    }
+
+    let parameter_ids = resolve_parameter_ids(&schema, &args.channels)?;
+    let scope = ScopeSession::from_fast_capabilities(
         session,
-        ScopeConfig {
-            config_id: args.config_id,
-            sample_rate_hz: args.sample_rate,
-            history: Duration::from_secs_f64(args.history),
-            channels,
-        },
+        &capabilities,
+        &schema,
+        &parameter_ids,
+        Duration::from_secs_f64(args.history),
+        args.config_id,
     )?;
 
     println!("NMIXX Scope");
     println!("port: {} @ {}", args.port, args.baud);
     println!(
-        "FAST: {} channel(s) @ {} Hz, {:.3} s RAM history",
+        "FAST: {} channel(s) @ {} Hz, block={}, {:.3} s RAM history",
         scope.config().channels.len(),
         scope.config().sample_rate_hz,
+        capabilities.fast_block_samples,
         scope.config().history.as_secs_f64()
     );
     for (index, channel) in scope.config().channels.iter().enumerate() {
@@ -85,11 +96,7 @@ fn run() -> Result<(), Box<dyn Error>> {
             channel.symbol,
             channel.id,
             channel.scale,
-            channel
-                .unit
-                .as_deref()
-                .map(|unit| format!(" {unit}"))
-                .unwrap_or_default()
+            channel.unit.as_deref().map(|unit| format!(" {unit}")).unwrap_or_default()
         );
     }
     println!("type 'help' for commands");
@@ -97,27 +104,58 @@ fn run() -> Result<(), Box<dyn Error>> {
     repl(&scope)
 }
 
-fn resolve_channels(schema: &HostSchema, keys: &[String]) -> Result<Vec<ScopeChannel>, Box<dyn Error>> {
-    let mut channels = Vec::with_capacity(keys.len());
-    for key in keys {
-        let parameter = schema
-            .parameter_by_key(key)
-            .or_else(|| parse_u16(key).ok().and_then(|id| schema.parameter_by_id(id)))
-            .ok_or_else(|| format!("unknown Scope parameter '{key}'"))?;
-        let scale = parameter
-            .plot_scale
-            .ok_or_else(|| format!("{} has no plot_scale in HostSchema", parameter.symbol))?;
-        if !scale.is_finite() || scale <= 0.0 || scale > f32::MAX as f64 {
-            return Err(format!("{} has invalid FAST plot_scale {scale}", parameter.symbol).into());
-        }
-        channels.push(ScopeChannel {
-            id: parameter.id,
-            symbol: parameter.symbol.clone(),
-            unit: parameter.unit.clone(),
-            scale: scale as f32,
-        });
+fn print_capabilities(capabilities: &DevicePlotCapabilities, schema: &HostSchema) {
+    println!("Plot capabilities");
+    println!(
+        "FAST:   max_channels={} rate={} Hz block_samples={}",
+        capabilities.fast_max_channels,
+        capabilities.fast_rate_hz,
+        capabilities.fast_block_samples
+    );
+    println!(
+        "NORMAL: max_channels={} rate={} Hz",
+        capabilities.normal_max_channels,
+        capabilities.normal_rate_hz
+    );
+    println!();
+    println!("ID      Variable                     FAST       NORMAL  Unit");
+    println!("---------------------------------------------------------------");
+    for channel in capabilities.with_schema(schema) {
+        let label = channel
+            .name
+            .as_deref()
+            .or(channel.symbol.as_deref())
+            .map(str::to_owned)
+            .unwrap_or_else(|| format!("0x{:04X}", channel.id));
+        let fast = match channel.fast_scale {
+            Some(scale) => format!("yes/{scale:g}"),
+            None => "-".to_owned(),
+        };
+        println!(
+            "0x{:04X}  {:<28} {:<10} {:<7} {}",
+            channel.id,
+            label,
+            fast,
+            if channel.supports_normal { "yes" } else { "-" },
+            channel.unit.as_deref().unwrap_or("")
+        );
     }
-    Ok(channels)
+}
+
+fn resolve_parameter_ids(schema: &HostSchema, keys: &[String]) -> Result<Vec<u16>, Box<dyn Error>> {
+    let mut ids = Vec::with_capacity(keys.len());
+    for key in keys {
+        if let Some(parameter) = schema.parameter_by_key(key) {
+            ids.push(parameter.id);
+            continue;
+        }
+        if let Ok(id) = parse_u16(key) {
+            ids.push(id);
+            continue;
+        }
+        return Err(format!("unknown Scope parameter '{key}'").into());
+    }
+    Ok(ids)
 }
 
 fn repl(scope: &ScopeSession) -> Result<(), Box<dyn Error>> {
@@ -127,14 +165,10 @@ fn repl(scope: &ScopeSession) -> Result<(), Box<dyn Error>> {
     loop {
         print!("scope> ");
         io::stdout().flush()?;
-        let Some(line) = lines.next() else {
-            break;
-        };
+        let Some(line) = lines.next() else { break; };
         let line = line?;
         let mut words = line.split_whitespace();
-        let Some(command) = words.next() else {
-            continue;
-        };
+        let Some(command) = words.next() else { continue; };
 
         match command.to_ascii_lowercase().as_str() {
             "help" | "?" => print_help(),
@@ -213,11 +247,7 @@ fn export_csv(scope: &ScopeSession, path: &Path) -> Result<(), Box<dyn Error>> {
     Ok(())
 }
 
-fn write_snapshot_csv(
-    snapshot: &StreamSnapshot,
-    config: &ScopeConfig,
-    path: &Path,
-) -> Result<(), Box<dyn Error>> {
+fn write_snapshot_csv(snapshot: &StreamSnapshot, config: &ScopeConfig, path: &Path) -> Result<(), Box<dyn Error>> {
     let mut file = File::create(path)?;
     write!(file, "time_s")?;
     for channel in &config.channels {
@@ -258,15 +288,5 @@ fn parse_u16(text: &str) -> Result<u16, Box<dyn Error>> {
         Ok(u16::from_str_radix(hex, 16)?)
     } else {
         Ok(text.parse()?)
-    }
-}
-
-#[allow(dead_code)]
-fn _state_name(state: StreamState) -> &'static str {
-    match state {
-        StreamState::Stopped => "STOPPED",
-        StreamState::Live => "LIVE",
-        StreamState::Capturing => "CAPTURING",
-        StreamState::Paused => "PAUSED",
     }
 }
