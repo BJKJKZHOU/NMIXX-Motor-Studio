@@ -1,10 +1,7 @@
 use std::error::Error;
-use std::time::Duration;
 
 use clap::Parser;
-use nmixx_app::{
-    AxdrStatus, DEFAULT_USB_BAUD, DeviceSession, ParameterType, ParameterValue, SessionEvent,
-};
+use nmixx_app::{DEFAULT_USB_BAUD, DeviceSession, ParameterType, ParameterValue};
 
 /// Current AxDr_L IDs used only by this hardware bring-up smoke test.
 const PARAM_MOTOR_PP: u16 = 0x0101;
@@ -15,7 +12,7 @@ const MOTOR_STATE_DISABLED: u8 = 0;
 #[derive(Debug, Parser)]
 #[command(
     name = "nmixx-control-smoke",
-    about = "Safe Parameter WRITE and Action lifecycle smoke test for AxDr_L"
+    about = "Safe Parameter WRITE and synchronous Action smoke test for AxDr_L"
 )]
 struct Args {
     /// AxDr_L USB CDC serial port, e.g. /dev/ttyACM0 or COM7.
@@ -25,10 +22,6 @@ struct Args {
     /// Serial line rate. USB CDC ACM normally ignores this, but the host API requires one.
     #[arg(long, default_value_t = DEFAULT_USB_BAUD)]
     baud: u32,
-
-    /// Maximum time to wait for asynchronous Action completion.
-    #[arg(long, default_value_t = 2000)]
-    action_timeout_ms: u64,
 }
 
 fn main() {
@@ -43,7 +36,6 @@ fn run() -> Result<(), Box<dyn Error>> {
 
     println!("opening {} @ {}", args.port, args.baud);
     let session = DeviceSession::open_usb(&args.port, args.baud)?;
-    let events = session.subscribe()?;
 
     let state = read_u8(&session, PARAM_MOTOR_STATE)?;
     println!("PARAM_MOTOR_STATE (0x{PARAM_MOTOR_STATE:04X}) = {state}");
@@ -83,32 +75,13 @@ fn run() -> Result<(), Box<dyn Error>> {
     println!("PASS: Parameter WRITE/readback/restore");
 
     println!(
-        "Action lifecycle: ACTION_PROTECTION_CLEAR (0x{ACTION_PROTECTION_CLEAR:04X})"
+        "Synchronous Action: ACTION_PROTECTION_CLEAR (0x{ACTION_PROTECTION_CLEAR:04X})"
     );
     let handle = session.action_start(ACTION_PROTECTION_CLEAR)?;
-    println!("accepted: txn={} action=0x{:04X}", handle.txn.get(), handle.action_id);
-
-    let timeout = Duration::from_millis(args.action_timeout_ms);
-    loop {
-        match events.recv_timeout(timeout)? {
-            SessionEvent::ActionCompleted {
-                handle: completed,
-                status,
-            } if completed == handle => {
-                if status != AxdrStatus::Ok {
-                    return Err(format!("Action completed with status {status:?}").into());
-                }
-                println!("completed: status={status:?}");
-                break;
-            }
-            SessionEvent::ActionCompleted { .. }
-            | SessionEvent::DeviceEvent(_)
-            | SessionEvent::FastData(_)
-            | SessionEvent::NormalData(_) => {
-                // Ignore unrelated asynchronous traffic while waiting for this Action.
-            }
-        }
-    }
+    println!(
+        "accepted/completed synchronously: txn={} action=0x{:04X}",
+        handle.txn.get(), handle.action_id
+    );
 
     let state_after = read_u8(&session, PARAM_MOTOR_STATE)?;
     if state_after != MOTOR_STATE_DISABLED {
@@ -118,8 +91,8 @@ fn run() -> Result<(), Box<dyn Error>> {
         .into());
     }
 
-    println!("PASS: Action accepted/completed lifecycle");
-    println!("PASS: safe Parameter WRITE and Action lifecycle are working");
+    println!("PASS: synchronous Action response");
+    println!("PASS: safe Parameter WRITE and synchronous Action handling are working");
     Ok(())
 }
 
