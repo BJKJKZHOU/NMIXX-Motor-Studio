@@ -13,7 +13,14 @@ use nmixx_core::wire::CanFdFrame;
 #[derive(Clone, Default)]
 struct ScriptState {
     incoming: Arc<Mutex<VecDeque<Result<CanFdFrame, TransportError>>>>,
+    on_send: Arc<Mutex<VecDeque<Vec<Result<CanFdFrame, TransportError>>>>>,
     sent: Arc<Mutex<Vec<CanFdFrame>>>,
+}
+
+impl ScriptState {
+    fn respond_on_send(&self, frames: Vec<Result<CanFdFrame, TransportError>>) {
+        self.on_send.lock().unwrap().push_back(frames);
+    }
 }
 
 struct ScriptedTransport {
@@ -29,6 +36,9 @@ impl ScriptedTransport {
 impl FrameTransport for ScriptedTransport {
     fn send(&mut self, frame: &CanFdFrame) -> Result<(), TransportError> {
         self.state.sent.lock().unwrap().push(frame.clone());
+        if let Some(frames) = self.state.on_send.lock().unwrap().pop_front() {
+            self.state.incoming.lock().unwrap().extend(frames);
+        }
         Ok(())
     }
 
@@ -67,11 +77,7 @@ fn parameter_read_round_trip_uses_session_runtime() {
     let state = ScriptState::default();
     let mut read_data = vec![0x10, 0x01, ParameterType::F32 as u8];
     read_data.extend_from_slice(&0.147f32.to_le_bytes());
-    state
-        .incoming
-        .lock()
-        .unwrap()
-        .push_back(Ok(response(1, PARAM_READ, AxdrStatus::Ok, &read_data)));
+    state.respond_on_send(vec![Ok(response(1, PARAM_READ, AxdrStatus::Ok, &read_data))]);
 
     let session = DeviceSession::spawn(Box::new(ScriptedTransport::new(state.clone())));
     let value = session
@@ -92,11 +98,7 @@ fn parameter_read_round_trip_uses_session_runtime() {
 #[test]
 fn parameter_write_round_trip_uses_session_runtime() {
     let state = ScriptState::default();
-    state
-        .incoming
-        .lock()
-        .unwrap()
-        .push_back(Ok(response(1, PARAM_WRITE, AxdrStatus::Ok, &[0x01, 0x01])));
+    state.respond_on_send(vec![Ok(response(1, PARAM_WRITE, AxdrStatus::Ok, &[0x01, 0x01]))]);
 
     let session = DeviceSession::spawn(Box::new(ScriptedTransport::new(state.clone())));
     session
@@ -114,23 +116,20 @@ fn parameter_write_round_trip_uses_session_runtime() {
 #[test]
 fn async_event_is_dispatched_while_waiting_for_parameter_response() {
     let state = ScriptState::default();
-    state.incoming.lock().unwrap().push_back(Ok(
-        CanFdFrame::new(
-            can_id(MSG_EVENT, NODE_ID_DEFAULT),
-            &[EVENT_NOTIFY, 0, 0, 0],
-        )
-        .unwrap(),
-    ));
-    state
-        .incoming
-        .lock()
-        .unwrap()
-        .push_back(Ok(response(
+    let event = CanFdFrame::new(
+        can_id(MSG_EVENT, NODE_ID_DEFAULT),
+        &[EVENT_NOTIFY, 0, 0, 0],
+    )
+    .unwrap();
+    state.respond_on_send(vec![
+        Ok(event),
+        Ok(response(
             1,
             PARAM_READ,
             AxdrStatus::Ok,
             &[0x10, 0x07, ParameterType::U8 as u8, 0],
-        )));
+        )),
+    ]);
 
     let session = DeviceSession::spawn(Box::new(ScriptedTransport::new(state)));
     let events = session.subscribe().unwrap();
@@ -147,21 +146,15 @@ fn async_event_is_dispatched_while_waiting_for_parameter_response() {
 fn action_completion_can_arrive_before_accept_response() {
     let state = ScriptState::default();
     let action_id = 0x1001;
-    state
-        .incoming
-        .lock()
-        .unwrap()
-        .push_back(Ok(action_complete(1, action_id, AxdrStatus::Ok)));
-    state
-        .incoming
-        .lock()
-        .unwrap()
-        .push_back(Ok(response(
+    state.respond_on_send(vec![
+        Ok(action_complete(1, action_id, AxdrStatus::Ok)),
+        Ok(response(
             1,
             PARAM_WRITE,
             AxdrStatus::Ok,
             &[action_id as u8, (action_id >> 8) as u8],
-        )));
+        )),
+    ]);
 
     let session = DeviceSession::spawn(Box::new(ScriptedTransport::new(state)));
     let events = session.subscribe().unwrap();
@@ -182,23 +175,19 @@ fn action_completion_can_arrive_before_accept_response() {
 #[test]
 fn timeout_cancels_pending_transaction_and_next_request_can_succeed() {
     let state = ScriptState::default();
-    let session = DeviceSession::spawn(Box::new(ScriptedTransport::new(state.clone())));
+    state.respond_on_send(vec![]);
+    state.respond_on_send(vec![Ok(response(
+        2,
+        PARAM_READ,
+        AxdrStatus::Ok,
+        &[0x10, 0x07, ParameterType::U8 as u8, 0],
+    ))]);
+    let session = DeviceSession::spawn(Box::new(ScriptedTransport::new(state)));
 
     assert!(matches!(
         session.parameter_read(0x0710, ParameterType::U8),
         Err(SessionError::Timeout)
     ));
-
-    state
-        .incoming
-        .lock()
-        .unwrap()
-        .push_back(Ok(response(
-            2,
-            PARAM_READ,
-            AxdrStatus::Ok,
-            &[0x10, 0x07, ParameterType::U8 as u8, 0],
-        )));
 
     assert_eq!(
         session.parameter_read(0x0710, ParameterType::U8).unwrap(),
@@ -209,27 +198,24 @@ fn timeout_cancels_pending_transaction_and_next_request_can_succeed() {
 #[test]
 fn malformed_response_does_not_poison_following_request() {
     let state = ScriptState::default();
-    state.incoming.lock().unwrap().push_back(Ok(
-        CanFdFrame::new(can_id(MSG_RESPONSE, NODE_ID_DEFAULT), &[1, MSG_PARAMETER, PARAM_READ])
-            .unwrap(),
-    ));
+    let malformed = CanFdFrame::new(
+        can_id(MSG_RESPONSE, NODE_ID_DEFAULT),
+        &[1, MSG_PARAMETER, PARAM_READ],
+    )
+    .unwrap();
+    state.respond_on_send(vec![Ok(malformed)]);
+    state.respond_on_send(vec![Ok(response(
+        2,
+        PARAM_READ,
+        AxdrStatus::Ok,
+        &[0x10, 0x07, ParameterType::U8 as u8, 0],
+    ))]);
 
-    let session = DeviceSession::spawn(Box::new(ScriptedTransport::new(state.clone())));
+    let session = DeviceSession::spawn(Box::new(ScriptedTransport::new(state)));
     assert!(matches!(
         session.parameter_read(0x0710, ParameterType::U8),
         Err(SessionError::Decode(_))
     ));
-
-    state
-        .incoming
-        .lock()
-        .unwrap()
-        .push_back(Ok(response(
-            2,
-            PARAM_READ,
-            AxdrStatus::Ok,
-            &[0x10, 0x07, ParameterType::U8 as u8, 0],
-        )));
 
     assert_eq!(
         session.parameter_read(0x0710, ParameterType::U8).unwrap(),
