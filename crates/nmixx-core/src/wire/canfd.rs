@@ -50,6 +50,10 @@ impl CanFdFrame {
 }
 
 pub fn canonical_data_len(required: usize) -> Result<usize, CanFdError> {
+    if required > MAX_CANFD_DATA_LEN {
+        return Err(CanFdError::PayloadTooLong(required));
+    }
+
     let len = match required {
         0..=8 => required,
         9..=12 => 12,
@@ -58,14 +62,14 @@ pub fn canonical_data_len(required: usize) -> Result<usize, CanFdError> {
         21..=24 => 24,
         25..=32 => 32,
         33..=48 => 48,
-        49..=64 => 64,
-        _ => return Err(CanFdError::PayloadTooLong(required)),
+        49..=MAX_CANFD_DATA_LEN => MAX_CANFD_DATA_LEN,
+        _ => unreachable!("payload length was validated against CAN FD maximum"),
     };
     Ok(len)
 }
 
 pub fn is_canonical_data_len(len: usize) -> bool {
-    matches!(len, 0..=8 | 12 | 16 | 20 | 24 | 32 | 48 | 64)
+    matches!(len, 0..=8 | 12 | 16 | 20 | 24 | 32 | 48 | MAX_CANFD_DATA_LEN)
 }
 
 #[cfg(test)]
@@ -79,8 +83,8 @@ mod tests {
         assert_eq!(canonical_data_len(9), Ok(12));
         assert_eq!(canonical_data_len(19), Ok(20));
         assert_eq!(canonical_data_len(33), Ok(48));
-        assert_eq!(canonical_data_len(64), Ok(64));
-        assert!(canonical_data_len(65).is_err());
+        assert_eq!(canonical_data_len(MAX_CANFD_DATA_LEN), Ok(MAX_CANFD_DATA_LEN));
+        assert!(canonical_data_len(MAX_CANFD_DATA_LEN + 1).is_err());
     }
 
     #[test]
