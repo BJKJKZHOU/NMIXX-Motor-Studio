@@ -13,6 +13,7 @@ use nmixx_core::wire::CanFdFrame;
 #[derive(Clone, Default)]
 struct ScriptState {
     incoming: Arc<Mutex<VecDeque<Result<CanFdFrame, TransportError>>>>,
+    on_send: Arc<Mutex<VecDeque<Vec<Result<CanFdFrame, TransportError>>>>>,
     sent: Arc<Mutex<Vec<CanFdFrame>>>,
 }
 
@@ -29,6 +30,9 @@ impl ScriptedTransport {
 impl FrameTransport for ScriptedTransport {
     fn send(&mut self, frame: &CanFdFrame) -> Result<(), TransportError> {
         self.state.sent.lock().unwrap().push(frame.clone());
+        if let Some(frames) = self.state.on_send.lock().unwrap().pop_front() {
+            self.state.incoming.lock().unwrap().extend(frames);
+        }
         Ok(())
     }
 
@@ -67,29 +71,25 @@ fn fast_frame(sequence: u16) -> CanFdFrame {
 fn plot_config_start_stream_and_stop_share_single_session_owner() {
     let state = ScriptState::default();
     let parameters = [0x0001, 0x0011];
-
-    state.incoming.lock().unwrap().push_back(Ok(plot_response(
-        1,
-        PLOT_CONFIG,
-        &[PLOT_GROUP_FAST, 7, 2, 0x01, 0x00, 0x11, 0x00],
-    )));
-    state
-        .incoming
-        .lock()
-        .unwrap()
-        .push_back(Ok(plot_response(2, PLOT_START, &[])));
-
     let fast = CanFdFrame::new(
         can_id(MSG_FAST_DATA, NODE_ID_DEFAULT),
         &[1, 0, 7, 2, 10, 0, 236, 255, 20, 0, 216, 255],
     )
     .unwrap();
-    state.incoming.lock().unwrap().push_back(Ok(fast.clone()));
-    state
-        .incoming
-        .lock()
-        .unwrap()
-        .push_back(Ok(plot_response(3, PLOT_STOP, &[])));
+
+    {
+        let mut on_send = state.on_send.lock().unwrap();
+        on_send.push_back(vec![Ok(plot_response(
+            1,
+            PLOT_CONFIG,
+            &[PLOT_GROUP_FAST, 7, 2, 0x01, 0x00, 0x11, 0x00],
+        ))]);
+        on_send.push_back(vec![
+            Ok(plot_response(2, PLOT_START, &[])),
+            Ok(fast.clone()),
+        ]);
+        on_send.push_back(vec![Ok(plot_response(3, PLOT_STOP, &[]))]);
+    }
 
     let session = DeviceSession::spawn(Box::new(ScriptedTransport::new(state.clone())));
     let events = session.subscribe().unwrap();
@@ -140,9 +140,5 @@ fn fast_burst_is_dispatched_without_per_frame_poll_delay() {
         ));
     }
 
-    // The previous worker inserted one 20 ms command wait before every frame,
-    // so 8 frames required about 160 ms. Keep a generous threshold to avoid
-    // making this a scheduler-sensitive microbenchmark while still catching
-    // that regression.
     assert!(start.elapsed() < Duration::from_millis(100));
 }
