@@ -128,7 +128,7 @@ fn print_capabilities(capabilities: &DevicePlotCapabilities, schema: &HostSchema
             .map(str::to_owned)
             .unwrap_or_else(|| format!("0x{:04X}", channel.id));
         let fast = match channel.fast_scale {
-            Some(scale) => format!("yes/{scale:g}"),
+            Some(scale) => format!("yes/{scale}"),
             None => "-".to_owned(),
         };
         println!(
