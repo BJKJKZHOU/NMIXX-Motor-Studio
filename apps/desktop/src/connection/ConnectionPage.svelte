@@ -9,20 +9,30 @@
   export let onError: (error: unknown) => void = () => undefined;
 
   let ports: string[] = [];
-  let port = "/dev/ttyACM1";
+  let port = "";
   let schemaPath = "../../../AxDr_L_Motor/build/host/axdr-host-schema.toml";
   let busy = false;
+
+  function preferredPort(candidates: string[], current: string): string {
+    if (current && candidates.includes(current)) return current;
+    return candidates.find((item) => /(?:ttyACM|ttyUSB|cu\.usb|tty\.usb)/i.test(item)) ?? candidates[0] ?? "";
+  }
 
   async function refreshPorts() {
     try {
       ports = await listDevices();
-      if (ports.length > 0 && !ports.includes(port)) port = ports[0];
+      port = preferredPort(ports, connection?.port ?? port);
     } catch (error) {
       onError(error);
     }
   }
 
   async function connect() {
+    if (!port) {
+      onError("No USB CDC device detected.");
+      return;
+    }
+
     busy = true;
     try {
       onConnected(await connectDevice(port, schemaPath, 115200));
@@ -55,7 +65,7 @@
       <div class="static-field">Serial / USB CDC</div>
       <label>Port</label>
       <div class="field-row">
-        <input bind:value={port} class="compact-input" list="device-ports" />
+        <input bind:value={port} class="compact-input" list="device-ports" placeholder="No USB CDC device detected" />
         <datalist id="device-ports">{#each ports as item}<option value={item}></option>{/each}</datalist>
         <vscode-button secondary onclick={refreshPorts} title="Refresh ports"><i class="codicon codicon-refresh"></i></vscode-button>
       </div>
@@ -63,7 +73,7 @@
       <input bind:value={schemaPath} class="compact-input mono" />
       <div class="connection-actions">
         {#if connection}<vscode-button secondary onclick={disconnect}>Disconnect</vscode-button>
-        {:else}<vscode-button disabled={busy} onclick={connect}>Connect</vscode-button>{/if}
+        {:else}<vscode-button disabled={busy || !port} onclick={connect}>Connect</vscode-button>{/if}
       </div>
     </div>
   </div>
