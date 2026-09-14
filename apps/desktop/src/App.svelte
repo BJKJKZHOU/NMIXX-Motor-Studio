@@ -74,7 +74,7 @@
       {#if activePage === "connection"}
         <ConnectionPage {connection} onConnected={(next) => setConnection(next)} onDisconnected={() => setConnection(undefined)} onError={setError} />
       {:else if activePage === "parameters"}
-        <div style="grid-row: 1 / -1; min-height: 0; display: grid;">
+        <div class="parameter-page-container">
           <ParameterTablePage {connection} onError={setError} />
         </div>
       {:else if activePage !== "analysis"}
@@ -101,3 +101,12 @@
     <div>{connection ? "AxDr_L" : "NMIXX"}</div>
   </footer>
 </div>
+
+<style>
+  .parameter-page-container {
+    grid-row: 1 / -1;
+    min-width: 0;
+    min-height: 0;
+    display: grid;
+  }
+</style>
