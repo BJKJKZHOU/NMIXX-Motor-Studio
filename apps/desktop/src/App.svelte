@@ -5,7 +5,7 @@
   import type { ConnectionInfo } from "./connection/types";
   import ScopePage from "./analysis/scope/ScopePage.svelte";
   import type { ScopeSummary } from "./analysis/scope/types";
-  import ParameterPage from "./parameters/ParameterPage.svelte";
+  import ParameterTablePage from "./parameters/ParameterTablePage.svelte";
 
   type Page = "connection" | "motor" | "encoder" | "limits" | "control" | "analysis" | "parameters" | "events" | "automation";
 
@@ -74,7 +74,7 @@
       {#if activePage === "connection"}
         <ConnectionPage {connection} onConnected={(next) => setConnection(next)} onDisconnected={() => setConnection(undefined)} onError={setError} />
       {:else if activePage === "parameters"}
-        <ParameterPage {connection} onError={setError} />
+        <ParameterTablePage {connection} onError={setError} />
       {:else if activePage !== "analysis"}
         <section class="page-toolbar"><div class="page-title">{pageTitle(activePage).toUpperCase()}</div></section>
         <section class="placeholder-page">
