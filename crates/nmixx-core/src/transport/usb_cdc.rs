@@ -39,6 +39,7 @@ impl UsbCdcTransport {
             .map(|ports| {
                 ports
                     .into_iter()
+                    .filter(|path| is_usb_serial_path(path))
                     .map(|path| path.to_string_lossy().into_owned())
                     .collect()
             })
@@ -68,6 +69,23 @@ impl UsbCdcTransport {
 
         Ok(())
     }
+}
+
+#[cfg(target_os = "linux")]
+fn is_usb_serial_path(path: &Path) -> bool {
+    let path = path.to_string_lossy();
+    path.starts_with("/dev/ttyACM") || path.starts_with("/dev/ttyUSB")
+}
+
+#[cfg(target_os = "macos")]
+fn is_usb_serial_path(path: &Path) -> bool {
+    let path = path.to_string_lossy();
+    path.starts_with("/dev/cu.usb") || path.starts_with("/dev/tty.usb")
+}
+
+#[cfg(any(target_os = "windows", not(any(target_os = "linux", target_os = "macos", target_os = "windows"))))]
+fn is_usb_serial_path(_path: &Path) -> bool {
+    true
 }
 
 impl FrameTransport for UsbCdcTransport {
