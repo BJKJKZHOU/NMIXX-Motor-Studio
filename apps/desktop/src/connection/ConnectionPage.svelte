@@ -61,19 +61,25 @@
   <div class="connection-card">
     <div class="connection-card-title">Transport</div>
     <div class="connection-form wide-form">
-      <label>Type</label>
+      <div class="connection-form-label">Type</div>
       <div class="static-field">Serial / USB CDC</div>
-      <label>Port</label>
+      <label for="connection-port">Port</label>
       <div class="field-row">
-        <input bind:value={port} class="compact-input" list="device-ports" placeholder="No USB CDC device detected" />
+        <input id="connection-port" bind:value={port} class="compact-input" list="device-ports" placeholder="No USB CDC device detected" />
         <datalist id="device-ports">{#each ports as item}<option value={item}></option>{/each}</datalist>
+        <!-- svelte-ignore a11y_click_events_have_key_events a11y_no_static_element_interactions -->
         <vscode-button secondary onclick={refreshPorts} title="Refresh ports"><i class="codicon codicon-refresh"></i></vscode-button>
       </div>
-      <label>HostSchema</label>
-      <input bind:value={schemaPath} class="compact-input mono" />
+      <label for="connection-schema">HostSchema</label>
+      <input id="connection-schema" bind:value={schemaPath} class="compact-input mono" />
       <div class="connection-actions">
-        {#if connection}<vscode-button secondary onclick={disconnect}>Disconnect</vscode-button>
-        {:else}<vscode-button disabled={busy || !port} onclick={connect}>Connect</vscode-button>{/if}
+        {#if connection}
+          <!-- svelte-ignore a11y_click_events_have_key_events a11y_no_static_element_interactions -->
+          <vscode-button secondary onclick={disconnect}>Disconnect</vscode-button>
+        {:else}
+          <!-- svelte-ignore a11y_click_events_have_key_events a11y_no_static_element_interactions -->
+          <vscode-button disabled={busy || !port} onclick={connect}>Connect</vscode-button>
+        {/if}
       </div>
     </div>
   </div>
@@ -91,3 +97,10 @@
     </div>
   </div>
 </section>
+
+<style>
+  .connection-form-label {
+    color: #858585;
+    font-size: 11px;
+  }
+</style>

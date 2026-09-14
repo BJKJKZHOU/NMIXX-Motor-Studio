@@ -149,6 +149,7 @@
     } catch (error) { onError(error); }
     finally { configuring = false; commandBusy = false; }
   }
+
   async function pause() {
     if (!scopeConfig || commandBusy) return;
     commandBusy = true;
@@ -156,6 +157,7 @@
     catch (error) { onError(error); }
     finally { commandBusy = false; }
   }
+
   async function clear() {
     if (!scopeConfig || commandBusy) return;
     commandBusy = true;
@@ -265,17 +267,28 @@
 </script>
 
 <section class="page-toolbar"><div class="page-title">ANALYSIS / SCOPE</div><div class="toolbar-actions">
+  <!-- svelte-ignore a11y_click_events_have_key_events a11y_no_static_element_interactions -->
   <vscode-button disabled={!connection || selectedIds.size === 0} onclick={run}><i class="codicon codicon-play"></i>&nbsp;Run</vscode-button>
+  <!-- svelte-ignore a11y_click_events_have_key_events a11y_no_static_element_interactions -->
   <vscode-button secondary disabled={!scopeConfig} onclick={pause}><i class="codicon codicon-debug-pause"></i>&nbsp;Pause</vscode-button>
+  <!-- svelte-ignore a11y_click_events_have_key_events a11y_no_static_element_interactions -->
   <vscode-button secondary title="Reset timebase and fit visible traces" onclick={autoFitPlot}>AUTO</vscode-button>
+  <!-- svelte-ignore a11y_click_events_have_key_events a11y_no_static_element_interactions -->
   <vscode-button secondary disabled={!scopeConfig} onclick={clear}>Clear</vscode-button>
 </div></section>
 <div class="scope-shell">
   <aside id="scope-sidebar" class="scope-sidebar">
     <section class="side-section"><div class="section-heading">CHANNELS</div><div class="channel-list">
       {#if connection}{#each connection.channels as channel}
-        <label class:disabled-row={!channel.supportsFast} class="channel-row" onclick={() => channel.supportsFast && toggleChannel(channel.id)}>
-          <vscode-checkbox checked={selectedIds.has(channel.id) || undefined} disabled={!channel.supportsFast}></vscode-checkbox>
+        <label class:disabled-row={!channel.supportsFast} class="channel-row" for={`scope-channel-${channel.id}`}>
+          <input
+            id={`scope-channel-${channel.id}`}
+            class="scope-channel-checkbox"
+            type="checkbox"
+            checked={selectedIds.has(channel.id)}
+            disabled={!channel.supportsFast}
+            onchange={() => toggleChannel(channel.id)}
+          />
           <span class="channel-name">{channel.symbol}</span><span class="channel-unit">{channel.unit ?? ""}</span><span class:normal-only={!channel.supportsFast} class="channel-mode">{channelMode(channel)}</span>
         </label>
       {/each}{:else}<div class="empty-hint">No device connected. Open Connection first to discover acquisition channels.</div>{/if}
