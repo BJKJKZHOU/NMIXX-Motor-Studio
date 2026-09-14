@@ -2,6 +2,7 @@
   import {
     FlexRender,
     columnFilteringFeature,
+    createColumnHelper,
     createFilteredRowModel,
     createSortedRowModel,
     createTable,
@@ -10,7 +11,6 @@
     rowSortingFeature,
     tableFeatures,
   } from "@tanstack/svelte-table";
-  import type { ColumnDef } from "@tanstack/svelte-table";
   import type { ConnectionInfo } from "../connection/types";
   import { listParameters, readParameter, readParameters, writeParameter } from "./api";
   import type { ParameterMetadata, ParameterValue } from "./types";
@@ -49,17 +49,18 @@
     sortedRowModel: createSortedRowModel(),
   });
 
-  const columns: Array<ColumnDef<typeof features, ParameterRow>> = [
-    { id: "id", accessorFn: (row) => row.meta.id, header: "ID" },
-    { id: "symbol", accessorFn: (row) => row.meta.symbol, header: "Symbol" },
-    { id: "name", accessorFn: (row) => row.meta.name ?? "", header: "Name" },
-    { id: "value", accessorFn: (row) => row.pending ? "…" : valueText(row.value), header: "Value" },
-    { id: "unit", accessorFn: (row) => row.meta.unit ?? "", header: "Unit" },
-    { id: "access", accessorFn: (row) => row.meta.access, header: "Access" },
-    { id: "type", accessorFn: (row) => row.meta.typeName, header: "Type" },
-    { id: "range", accessorFn: (row) => rangeText(row.meta), header: "Range" },
-    { id: "state", accessorFn: (row) => row.meta.writeState ?? "", header: "Write state" },
-  ];
+  const columnHelper = createColumnHelper<typeof features, ParameterRow>();
+  const columns = columnHelper.columns([
+    columnHelper.accessor((row) => row.meta.id, { id: "id", header: "ID" }),
+    columnHelper.accessor((row) => row.meta.symbol, { id: "symbol", header: "Symbol" }),
+    columnHelper.accessor((row) => row.meta.name ?? "", { id: "name", header: "Name" }),
+    columnHelper.accessor((row) => row.pending ? "…" : valueText(row.value), { id: "value", header: "Value" }),
+    columnHelper.accessor((row) => row.meta.unit ?? "", { id: "unit", header: "Unit" }),
+    columnHelper.accessor((row) => row.meta.access, { id: "access", header: "Access" }),
+    columnHelper.accessor((row) => row.meta.typeName, { id: "type", header: "Type" }),
+    columnHelper.accessor((row) => rangeText(row.meta), { id: "range", header: "Range" }),
+    columnHelper.accessor((row) => row.meta.writeState ?? "", { id: "state", header: "Write state" }),
+  ]);
 
   const table = createTable({
     features,
@@ -81,8 +82,8 @@
       readingValues = false;
       readDone = 0;
       readTotal = 0;
-      table.setGlobalFilter("");
       search = "";
+      table.setGlobalFilter("");
       return;
     }
 
@@ -309,7 +310,7 @@
           {#each table.getRowModel().rows as tableRow (tableRow.id)}
             {@const row = tableRow.original}
             <tr class:error-row={!!row.error} title={row.error ?? row.meta.description}>
-              {#each tableRow.getVisibleCells() as cell (cell.id)}
+              {#each tableRow.getAllCells() as cell (cell.id)}
                 <td class:parameter-value-column={cell.column.id === "value"}>
                   {#if cell.column.id === "id"}
                     <span class="mono parameter-id">0x{row.meta.id.toString(16).toUpperCase().padStart(4, "0")}</span>
@@ -365,7 +366,7 @@
   .tool-button { height: 27px; display: inline-flex; align-items: center; gap: 6px; padding: 0 9px; border: 1px solid #3a3d42; border-radius: 2px; background: #2a2d32; }
   .tool-button:not(:disabled):hover, .cell-action:not(:disabled):hover { background: #383c43; }
   .tool-button:disabled, .cell-action:disabled, .table-header-button:disabled { opacity: .5; }
-  .parameter-page { padding: 0; overflow: hidden; }
+  .parameter-page { min-height: 0; padding: 0; overflow: hidden; }
   .parameter-table-shell { width: 100%; height: 100%; overflow: auto; }
   .parameter-table { width: 100%; min-width: 1080px; border-collapse: separate; border-spacing: 0; table-layout: auto; font-size: 12px; }
   .parameter-table th { position: sticky; top: 0; z-index: 3; height: 30px; padding: 0; border-right: 1px solid #303030; border-bottom: 1px solid #3a3a3a; color: #a7a7a7; background: #202020; font-size: 11px; font-weight: 600; text-align: left; white-space: nowrap; }
