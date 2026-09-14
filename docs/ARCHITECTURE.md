@@ -46,16 +46,6 @@ Owns transport-independent device capabilities:
 
 It must not depend on UI, CLI, scripting language, commissioning workflow, or a specific test procedure.
 
-Suggested internal dependency direction:
-
-```text
-wire <- transport
-  ^        |
-  +--- protocol <- device
-```
-
-Protocol code may use the canonical frame model but must not know whether a frame arrived through USB CDC or native CAN FD.
-
 ### `nmixx-app`
 
 Owns host application semantics:
@@ -74,6 +64,67 @@ The Application API should expose domain concepts such as `parameter.get`, `moto
 GUI, CLI and automation are peers. They must not implement device protocol logic or duplicate application policy.
 
 A client may format values, render a progress bar, or compose a workflow, but it must not reimplement transaction matching, action completion handling, protection rules or transport framing.
+
+## Desktop GUI functional domains
+
+The desktop client is split by **functional domain and shared internal capability**, not by visual rectangles or one-file-per-widget rules.
+
+```text
+App shell
+  |
+  +-- Connection
+  |     +-- Serial
+  |     +-- CAN FD
+  |     +-- future transports
+  |
+  +-- Parameters
+  |     +-- full parameter table
+  |     +-- read/write/search/filter
+  |     +-- import/export
+  |
+  +-- Analysis
+  |     +-- shared acquisition
+  |     +-- Scope
+  |     +-- FFT
+  |     +-- Bode
+  |     +-- capture/export
+  |
+  +-- Motor
+  +-- Control
+  +-- Identification
+  +-- Events
+```
+
+`App.svelte` is the workbench shell. It owns navigation, global connection summary, global notifications and the status bar. Device and analysis behavior belongs in domain modules.
+
+### Parameter is a shared service, not one page
+
+The Parameter subsystem is the single source of truth for host-visible parameters. The generic Parameters page is an expert view over the complete registry, but domain pages reuse the same Parameter API:
+
+```text
+Parameter service
+      |
+      +--> Parameters table   (all parameters, direct read/write/import/export)
+      +--> Motor page         (motor-related parameter view)
+      +--> Control page       (algorithm, gains, limits, targets)
+      +--> other domain pages
+```
+
+A value such as motor resistance must not have separate storage or write paths in the generic table and the Motor page. Both views call the same Application API entry.
+
+### Analysis shares acquisition and plotting infrastructure
+
+Scope, FFT and Bode are related analysis functions, but not identical workflows. They share channel metadata, acquisition buffers, plotting, cursors, units and export infrastructure where practical.
+
+- **Scope** is the time-domain live/capture view.
+- **FFT** analyzes acquired data in the frequency domain.
+- **Bode** may own an excitation-and-measurement workflow, while still reusing acquisition and plot infrastructure.
+
+The GUI must not open its own transport or decode telemetry wire frames for any of these functions. Acquisition remains an Application Runtime capability.
+
+### Connection is transport-oriented
+
+Connection UI is a functional domain because the product will support more than one transport. Serial, native CAN FD and future transports present transport-specific configuration but converge on the same device/session API above them. The rest of the GUI must not assume that a connected device is represented by a serial port string.
 
 ## Concurrency and ownership
 
