@@ -46,6 +46,16 @@ Owns transport-independent device capabilities:
 
 It must not depend on UI, CLI, scripting language, commissioning workflow, or a specific test procedure.
 
+Suggested internal dependency direction:
+
+```text
+wire <- transport
+  ^        |
+  +--- protocol <- device
+```
+
+Protocol code may use the canonical frame model but must not know whether a frame arrived through USB CDC or native CAN FD.
+
 ### `nmixx-app`
 
 Owns host application semantics:
