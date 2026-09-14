@@ -46,6 +46,8 @@ pub enum ScopeError {
     NotFastCapable(u16),
     #[error("Scope channel {0} has invalid FAST plot scale")]
     InvalidScale(String),
+    #[error("Scope runtime failed: {0}")]
+    Runtime(String),
     #[error(transparent)]
     Session(#[from] SessionError),
     #[error(transparent)]
@@ -59,6 +61,7 @@ pub enum ScopeError {
 struct SharedState {
     pipeline: StreamPipeline,
     lost_frames: u64,
+    runtime_error: Option<String>,
 }
 
 enum ScopeCommand {
@@ -146,7 +149,11 @@ impl ScopeSession {
             stream,
         )?;
 
-        let shared = Arc::new(Mutex::new(SharedState { pipeline, lost_frames: 0 }));
+        let shared = Arc::new(Mutex::new(SharedState {
+            pipeline,
+            lost_frames: 0,
+            runtime_error: None,
+        }));
         let events = session.subscribe()?;
         let (command_tx, command_rx) = mpsc::channel();
         let worker_shared = Arc::clone(&shared);
@@ -166,6 +173,7 @@ impl ScopeSession {
     pub fn live(&self) -> Result<(), ScopeError> {
         let already_live = {
             let mut shared = self.shared.lock().map_err(|_| ScopeError::Closed)?;
+            ensure_runtime_ok(&shared)?;
             let already_live = shared.pipeline.stream().state() == StreamState::Live;
             if !already_live {
                 shared.pipeline.reset_sequence();
@@ -212,6 +220,7 @@ impl ScopeSession {
 
     pub fn clear(&self) -> Result<(), ScopeError> {
         let mut shared = self.shared.lock().map_err(|_| ScopeError::Closed)?;
+        ensure_runtime_ok(&shared)?;
         shared.pipeline.stream_mut().clear();
         Ok(())
     }
@@ -219,6 +228,7 @@ impl ScopeSession {
     pub fn capture(&self, duration: Duration) -> Result<(), ScopeError> {
         let was_running = {
             let mut shared = self.shared.lock().map_err(|_| ScopeError::Closed)?;
+            ensure_runtime_ok(&shared)?;
             let was_running = matches!(shared.pipeline.stream().state(), StreamState::Live | StreamState::Capturing);
             shared.pipeline.reset_sequence();
             shared.lost_frames = 0;
@@ -239,6 +249,7 @@ impl ScopeSession {
 
     pub fn status(&self) -> Result<ScopeStatus, ScopeError> {
         let shared = self.shared.lock().map_err(|_| ScopeError::Closed)?;
+        ensure_runtime_ok(&shared)?;
         Ok(ScopeStatus {
             state: shared.pipeline.stream().state(),
             samples: shared.pipeline.stream().len(),
@@ -249,6 +260,7 @@ impl ScopeSession {
 
     pub fn snapshot(&self) -> Result<StreamSnapshot, ScopeError> {
         let shared = self.shared.lock().map_err(|_| ScopeError::Closed)?;
+        ensure_runtime_ok(&shared)?;
         Ok(shared.pipeline.snapshot())
     }
 }
@@ -266,6 +278,13 @@ impl Drop for ScopeSession {
     }
 }
 
+fn ensure_runtime_ok(shared: &SharedState) -> Result<(), ScopeError> {
+    match &shared.runtime_error {
+        Some(error) => Err(ScopeError::Runtime(error.clone())),
+        None => Ok(()),
+    }
+}
+
 fn scope_worker(
     session: DeviceSession,
     events: mpsc::Receiver<SessionEvent>,
@@ -279,18 +298,29 @@ fn scope_worker(
 
         match events.recv_timeout(Duration::from_millis(20)) {
             Ok(SessionEvent::FastData(frame)) => {
-                let auto_pause = {
+                let (stop_plot, fatal) = {
                     let Ok(mut state) = shared.lock() else { break; };
                     match state.pipeline.ingest_fast(&frame) {
                         Ok(report) => {
                             state.lost_frames = report.lost_frames_total;
-                            state.pipeline.stream().state() == StreamState::Paused && report.samples_stored > 0
+                            (
+                                state.pipeline.stream().state() == StreamState::Paused
+                                    && report.samples_stored > 0,
+                                false,
+                            )
                         }
-                        Err(_) => false,
+                        Err(error) => {
+                            state.runtime_error = Some(error.to_string());
+                            state.pipeline.stream_mut().pause();
+                            (true, true)
+                        }
                     }
                 };
-                if auto_pause {
+                if stop_plot {
                     let _ = session.plot_stop(PLOT_FAST_MASK);
+                }
+                if fatal {
+                    break;
                 }
             }
             Ok(_) => {}
