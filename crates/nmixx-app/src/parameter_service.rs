@@ -51,14 +51,17 @@ impl ParameterService {
         Ok(self.session.parameter_read(id, ty)?)
     }
 
+    /// Convenience batch read. Each requested ID produces one independent result in input order.
+    /// A failed item does not discard successful values or stop the remaining reads.
     pub fn read_many(
         &self,
         ids: &[u16],
-    ) -> Result<Vec<(u16, ParameterValue)>, ParameterServiceError> {
-        ids.iter()
+    ) -> Result<Vec<(u16, Result<ParameterValue, ParameterServiceError>)>, ParameterServiceError> {
+        Ok(ids
+            .iter()
             .copied()
-            .map(|id| self.read(id).map(|value| (id, value)))
-            .collect()
+            .map(|id| (id, self.read(id)))
+            .collect())
     }
 
     pub fn write(&self, id: u16, value: ParameterValue) -> Result<(), ParameterServiceError> {

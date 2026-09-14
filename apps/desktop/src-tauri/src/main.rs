@@ -177,6 +177,14 @@ struct ParameterReadDto {
 
 #[derive(Debug, Serialize)]
 #[serde(rename_all = "camelCase")]
+struct ParameterReadResultDto {
+    id: u16,
+    value: Option<ParameterValueDto>,
+    error: Option<String>,
+}
+
+#[derive(Debug, Serialize)]
+#[serde(rename_all = "camelCase")]
 struct ScopeConfigDto {
     sample_rate_hz: u32,
     history_seconds: f64,
@@ -329,17 +337,24 @@ fn parameter_read(state: State<'_, Mutex<DesktopState>>, id: u16) -> Result<Para
 fn parameter_read_many(
     state: State<'_, Mutex<DesktopState>>,
     ids: Vec<u16>,
-) -> Result<Vec<ParameterReadDto>, String> {
+) -> Result<Vec<ParameterReadResultDto>, String> {
     let service = parameter_service(&state)?;
-    service
-        .read_many(&ids)
-        .map_err(|error| error.to_string())
-        .map(|values| {
-            values
-                .into_iter()
-                .map(|(id, value)| ParameterReadDto { id, value: value.into() })
-                .collect()
+    let values = service.read_many(&ids).map_err(|error| error.to_string())?;
+    Ok(values
+        .into_iter()
+        .map(|(id, result)| match result {
+            Ok(value) => ParameterReadResultDto {
+                id,
+                value: Some(value.into()),
+                error: None,
+            },
+            Err(error) => ParameterReadResultDto {
+                id,
+                value: None,
+                error: Some(error.to_string()),
+            },
         })
+        .collect())
 }
 
 #[tauri::command]

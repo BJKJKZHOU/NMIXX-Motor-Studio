@@ -41,3 +41,9 @@ export type ParameterRead = {
   id: number;
   value: ParameterValue;
 };
+
+export type ParameterReadResult = {
+  id: number;
+  value: ParameterValue | null;
+  error: string | null;
+};
