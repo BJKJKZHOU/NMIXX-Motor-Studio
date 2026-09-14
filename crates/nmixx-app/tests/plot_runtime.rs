@@ -2,7 +2,9 @@ use std::collections::VecDeque;
 use std::sync::{Arc, Mutex};
 use std::time::{Duration, Instant};
 
-use nmixx_app::{DeviceSession, SessionEvent};
+use nmixx_app::{
+    DeviceSession, ScopeChannel, ScopeConfig, ScopeError, ScopeSession, SessionEvent,
+};
 use nmixx_core::protocol::{
     AxdrStatus, MSG_FAST_DATA, MSG_PLOT, MSG_RESPONSE, NODE_ID_DEFAULT, PLOT_CONFIG,
     PLOT_FAST_MASK, PLOT_GROUP_FAST, PLOT_START, PLOT_STOP, can_id,
@@ -141,4 +143,65 @@ fn fast_burst_is_dispatched_without_per_frame_poll_delay() {
     }
 
     assert!(start.elapsed() < Duration::from_millis(100));
+}
+
+#[test]
+fn scope_surfaces_fast_ingest_failure_and_stops_plot() {
+    let state = ScriptState::default();
+    let invalid_fast = CanFdFrame::new(
+        can_id(MSG_FAST_DATA, NODE_ID_DEFAULT),
+        &[1, 0, 8, 1, 10, 0],
+    )
+    .unwrap();
+
+    {
+        let mut on_send = state.on_send.lock().unwrap();
+        on_send.push_back(vec![Ok(plot_response(
+            1,
+            PLOT_CONFIG,
+            &[PLOT_GROUP_FAST, 7, 1, 0x01, 0x00],
+        ))]);
+        on_send.push_back(vec![
+            Ok(plot_response(2, PLOT_START, &[])),
+            Ok(invalid_fast),
+        ]);
+        on_send.push_back(vec![Ok(plot_response(3, PLOT_STOP, &[]))]);
+    }
+
+    let session = DeviceSession::spawn(Box::new(ScriptedTransport::new(state.clone())));
+    let scope = ScopeSession::new(
+        session,
+        ScopeConfig {
+            config_id: 7,
+            sample_rate_hz: 20_000,
+            history: Duration::from_millis(100),
+            channels: vec![ScopeChannel {
+                id: 0x0001,
+                symbol: "Iq".into(),
+                unit: Some("A".into()),
+                scale: 0.001,
+            }],
+        },
+    )
+    .unwrap();
+
+    scope.live().unwrap();
+
+    let deadline = Instant::now() + Duration::from_millis(100);
+    loop {
+        match scope.status() {
+            Err(ScopeError::Runtime(error)) => {
+                assert!(error.contains("Config_ID mismatch"));
+                break;
+            }
+            Ok(_) if Instant::now() < deadline => std::thread::yield_now(),
+            other => panic!("Scope runtime failure was not surfaced: {other:?}"),
+        }
+    }
+
+    assert!(matches!(scope.snapshot(), Err(ScopeError::Runtime(_))));
+
+    let sent = state.sent.lock().unwrap();
+    assert_eq!(sent.len(), 3);
+    assert_eq!(&sent[2].data()[..3], &[3, PLOT_STOP, PLOT_FAST_MASK]);
 }
