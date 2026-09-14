@@ -2,15 +2,18 @@ use std::sync::Mutex;
 use std::time::Duration;
 
 use nmixx_app::{
-    DEFAULT_USB_BAUD, DevicePlotCapabilities, DeviceSession, HostSchema, ScopeSession, StreamState,
+    DEFAULT_USB_BAUD, DevicePlotCapabilities, DeviceSession, HostSchema, ParameterMetadata,
+    ParameterService, ParameterValue, PositionValue, RangeMetadata, SchemaNumber, ScopeSession,
+    StreamState,
 };
-use serde::Serialize;
+use serde::{Deserialize, Serialize};
 use tauri::State;
 
 #[derive(Default)]
 struct DesktopState {
     session: Option<DeviceSession>,
     schema: Option<HostSchema>,
+    parameters: Option<ParameterService>,
     capabilities: Option<DevicePlotCapabilities>,
     scope: Option<ScopeSession>,
     port: Option<String>,
@@ -37,6 +40,139 @@ struct ConnectionDto {
     fast_rate_hz: u32,
     normal_rate_hz: u32,
     channels: Vec<PlotChannelDto>,
+}
+
+#[derive(Debug, Clone, Copy, Serialize)]
+#[serde(untagged)]
+enum SchemaNumberDto {
+    Integer(i64),
+    Float(f64),
+}
+
+impl From<SchemaNumber> for SchemaNumberDto {
+    fn from(value: SchemaNumber) -> Self {
+        match value {
+            SchemaNumber::Integer(value) => Self::Integer(value),
+            SchemaNumber::Float(value) => Self::Float(value),
+        }
+    }
+}
+
+#[derive(Debug, Serialize)]
+#[serde(rename_all = "camelCase")]
+struct ParameterRangeDto {
+    min: Option<SchemaNumberDto>,
+    max: Option<SchemaNumberDto>,
+    exclusive_min: bool,
+    exclusive_max: bool,
+    max_symbol: Option<String>,
+    max_binding: Option<String>,
+    max_bindings: Vec<String>,
+}
+
+impl From<&RangeMetadata> for ParameterRangeDto {
+    fn from(value: &RangeMetadata) -> Self {
+        Self {
+            min: value.min.map(Into::into),
+            max: value.max.map(Into::into),
+            exclusive_min: value.exclusive_min,
+            exclusive_max: value.exclusive_max,
+            max_symbol: value.max_symbol.clone(),
+            max_binding: value.max_binding.clone(),
+            max_bindings: value.max_bindings.clone(),
+        }
+    }
+}
+
+#[derive(Debug, Serialize)]
+#[serde(rename_all = "camelCase")]
+struct ParameterMetadataDto {
+    id: u16,
+    symbol: String,
+    name: Option<String>,
+    type_name: String,
+    access: String,
+    unit: Option<String>,
+    description: String,
+    write_state: Option<String>,
+    range: Option<ParameterRangeDto>,
+    allowed: Vec<SchemaNumberDto>,
+    allowed_symbols: Vec<String>,
+}
+
+impl From<&ParameterMetadata> for ParameterMetadataDto {
+    fn from(value: &ParameterMetadata) -> Self {
+        Self {
+            id: value.id,
+            symbol: value.symbol.clone(),
+            name: value.name.clone(),
+            type_name: value.type_name.clone(),
+            access: value.access.clone(),
+            unit: value.unit.clone(),
+            description: value.description.clone(),
+            write_state: value.write_state.clone(),
+            range: value.range.as_ref().map(Into::into),
+            allowed: value.allowed.iter().copied().map(Into::into).collect(),
+            allowed_symbols: value.allowed_symbols.clone(),
+        }
+    }
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+struct PositionValueDto {
+    turns: i32,
+    theta: f32,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(tag = "type", content = "value", rename_all = "snake_case")]
+enum ParameterValueDto {
+    U8(u8),
+    I8(i8),
+    F32(f32),
+    I32(i32),
+    U32(u32),
+    Position(PositionValueDto),
+}
+
+impl From<ParameterValue> for ParameterValueDto {
+    fn from(value: ParameterValue) -> Self {
+        match value {
+            ParameterValue::U8(value) => Self::U8(value),
+            ParameterValue::I8(value) => Self::I8(value),
+            ParameterValue::F32(value) => Self::F32(value),
+            ParameterValue::I32(value) => Self::I32(value),
+            ParameterValue::U32(value) => Self::U32(value),
+            ParameterValue::Position(value) => Self::Position(PositionValueDto {
+                turns: value.turns,
+                theta: value.theta,
+            }),
+        }
+    }
+}
+
+impl From<ParameterValueDto> for ParameterValue {
+    fn from(value: ParameterValueDto) -> Self {
+        match value {
+            ParameterValueDto::U8(value) => Self::U8(value),
+            ParameterValueDto::I8(value) => Self::I8(value),
+            ParameterValueDto::F32(value) => Self::F32(value),
+            ParameterValueDto::I32(value) => Self::I32(value),
+            ParameterValueDto::U32(value) => Self::U32(value),
+            ParameterValueDto::Position(value) => Self::Position(PositionValue {
+                turns: value.turns,
+                theta: value.theta,
+            }),
+        }
+    }
+}
+
+#[derive(Debug, Serialize)]
+#[serde(rename_all = "camelCase")]
+struct ParameterReadDto {
+    id: u16,
+    value: ParameterValueDto,
 }
 
 #[derive(Debug, Serialize)]
@@ -84,6 +220,15 @@ fn stream_state_name(state: StreamState) -> &'static str {
     }
 }
 
+fn parameter_service(state: &State<'_, Mutex<DesktopState>>) -> Result<ParameterService, String> {
+    state
+        .lock()
+        .map_err(|_| "desktop state is poisoned".to_owned())?
+        .parameters
+        .clone()
+        .ok_or_else(|| "device is not connected".to_owned())
+}
+
 #[tauri::command]
 fn device_list() -> Result<Vec<String>, String> {
     DeviceSession::available_usb_ports().map_err(|error| error.to_string())
@@ -101,6 +246,7 @@ fn device_connect(
         let scope = guard.scope.take();
         let session = guard.session.take();
         guard.schema = None;
+        guard.parameters = None;
         guard.capabilities = None;
         guard.port = None;
         (scope, session)
@@ -112,6 +258,7 @@ fn device_connect(
     let session = DeviceSession::open_usb(&port, baud.unwrap_or(DEFAULT_USB_BAUD))
         .map_err(|error| error.to_string())?;
     let capabilities = DevicePlotCapabilities::discover(&session).map_err(|error| error.to_string())?;
+    let parameters = ParameterService::new(session.clone(), schema.clone());
 
     let channels = capabilities
         .with_schema(&schema)
@@ -142,6 +289,7 @@ fn device_connect(
     let mut guard = state.lock().map_err(|_| "desktop state is poisoned".to_owned())?;
     guard.session = Some(session);
     guard.schema = Some(schema);
+    guard.parameters = Some(parameters);
     guard.capabilities = Some(capabilities);
     guard.port = Some(port);
     Ok(result)
@@ -154,6 +302,7 @@ fn device_disconnect(state: State<'_, Mutex<DesktopState>>) -> Result<(), String
         let scope = guard.scope.take();
         let session = guard.session.take();
         guard.schema = None;
+        guard.parameters = None;
         guard.capabilities = None;
         guard.port = None;
         (scope, session)
@@ -161,6 +310,46 @@ fn device_disconnect(state: State<'_, Mutex<DesktopState>>) -> Result<(), String
     drop(scope);
     drop(session);
     Ok(())
+}
+
+#[tauri::command]
+fn parameter_list(state: State<'_, Mutex<DesktopState>>) -> Result<Vec<ParameterMetadataDto>, String> {
+    let service = parameter_service(&state)?;
+    Ok(service.parameters().iter().map(Into::into).collect())
+}
+
+#[tauri::command]
+fn parameter_read(state: State<'_, Mutex<DesktopState>>, id: u16) -> Result<ParameterReadDto, String> {
+    let service = parameter_service(&state)?;
+    let value = service.read(id).map_err(|error| error.to_string())?;
+    Ok(ParameterReadDto { id, value: value.into() })
+}
+
+#[tauri::command]
+fn parameter_read_many(
+    state: State<'_, Mutex<DesktopState>>,
+    ids: Vec<u16>,
+) -> Result<Vec<ParameterReadDto>, String> {
+    let service = parameter_service(&state)?;
+    service
+        .read_many(&ids)
+        .map_err(|error| error.to_string())
+        .map(|values| {
+            values
+                .into_iter()
+                .map(|(id, value)| ParameterReadDto { id, value: value.into() })
+                .collect()
+        })
+}
+
+#[tauri::command]
+fn parameter_write(
+    state: State<'_, Mutex<DesktopState>>,
+    id: u16,
+    value: ParameterValueDto,
+) -> Result<(), String> {
+    let service = parameter_service(&state)?;
+    service.write(id, value.into()).map_err(|error| error.to_string())
 }
 
 #[tauri::command]
@@ -219,45 +408,25 @@ fn scope_configure(
 #[tauri::command]
 fn scope_live(state: State<'_, Mutex<DesktopState>>) -> Result<(), String> {
     let guard = state.lock().map_err(|_| "desktop state is poisoned".to_owned())?;
-    guard
-        .scope
-        .as_ref()
-        .ok_or("Scope is not configured")?
-        .live()
-        .map_err(|error| error.to_string())
+    guard.scope.as_ref().ok_or("Scope is not configured")?.live().map_err(|error| error.to_string())
 }
 
 #[tauri::command]
 fn scope_pause(state: State<'_, Mutex<DesktopState>>) -> Result<(), String> {
     let guard = state.lock().map_err(|_| "desktop state is poisoned".to_owned())?;
-    guard
-        .scope
-        .as_ref()
-        .ok_or("Scope is not configured")?
-        .pause()
-        .map_err(|error| error.to_string())
+    guard.scope.as_ref().ok_or("Scope is not configured")?.pause().map_err(|error| error.to_string())
 }
 
 #[tauri::command]
 fn scope_clear(state: State<'_, Mutex<DesktopState>>) -> Result<(), String> {
     let guard = state.lock().map_err(|_| "desktop state is poisoned".to_owned())?;
-    guard
-        .scope
-        .as_ref()
-        .ok_or("Scope is not configured")?
-        .clear()
-        .map_err(|error| error.to_string())
+    guard.scope.as_ref().ok_or("Scope is not configured")?.clear().map_err(|error| error.to_string())
 }
 
 #[tauri::command]
 fn scope_status(state: State<'_, Mutex<DesktopState>>) -> Result<ScopeStatusDto, String> {
     let guard = state.lock().map_err(|_| "desktop state is poisoned".to_owned())?;
-    let status = guard
-        .scope
-        .as_ref()
-        .ok_or("Scope is not configured")?
-        .status()
-        .map_err(|error| error.to_string())?;
+    let status = guard.scope.as_ref().ok_or("Scope is not configured")?.status().map_err(|error| error.to_string())?;
     Ok(ScopeStatusDto {
         state: stream_state_name(status.state),
         samples: status.samples,
@@ -290,9 +459,7 @@ fn scope_snapshot(
         .collect::<Vec<_>>();
 
     for sample_index in (0..sample_count).step_by(stride) {
-        let sample = snapshot
-            .sample(sample_index)
-            .ok_or("snapshot indexing failed")?;
+        let sample = snapshot.sample(sample_index).ok_or("snapshot indexing failed")?;
         let t = (sample_index as f64 - sample_count.saturating_sub(1) as f64) / f64::from(rate);
         times.push(t);
         for (channel, value) in sample.iter().enumerate() {
@@ -317,6 +484,10 @@ fn main() {
             device_list,
             device_connect,
             device_disconnect,
+            parameter_list,
+            parameter_read,
+            parameter_read_many,
+            parameter_write,
             scope_configure,
             scope_live,
             scope_pause,
