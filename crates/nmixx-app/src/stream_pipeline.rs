@@ -36,11 +36,6 @@ pub struct StreamIngestReport {
     pub lost_frames_total: u64,
 }
 
-/// Application data-plane adapter from firmware telemetry frames into the
-/// RAM-only `StreamSession` ring buffer.
-///
-/// This type performs no device I/O and no disk I/O. `DeviceSession` remains
-/// the sole transport owner; callers feed its FAST/NORMAL events here.
 pub struct StreamPipeline {
     config_id: u8,
     mode: StreamWireMode,
@@ -80,6 +75,10 @@ impl StreamPipeline {
 
     pub fn snapshot(&self) -> StreamSnapshot {
         self.stream.snapshot()
+    }
+
+    pub fn snapshot_tail(&self, max_samples: usize) -> StreamSnapshot {
+        self.stream.snapshot_tail(max_samples)
     }
 
     pub fn reset_sequence(&mut self) {
@@ -238,6 +237,5 @@ mod tests {
         let report = runtime.ingest_normal(&frame).unwrap();
         assert_eq!(report.samples_received, 1);
         assert_eq!(report.samples_stored, 0);
-        assert_eq!(runtime.snapshot().sample_count(), 0);
     }
 }

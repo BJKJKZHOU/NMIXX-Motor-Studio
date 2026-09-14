@@ -2,7 +2,9 @@ use std::collections::VecDeque;
 use std::sync::{Arc, Mutex};
 use std::time::{Duration, Instant};
 
-use nmixx_app::{DeviceSession, SessionEvent};
+use nmixx_app::{
+    DeviceSession, ScopeChannel, ScopeConfig, ScopeError, ScopeSession, SessionEvent,
+};
 use nmixx_core::protocol::{
     AxdrStatus, MSG_FAST_DATA, MSG_PLOT, MSG_RESPONSE, NODE_ID_DEFAULT, PLOT_CONFIG,
     PLOT_FAST_MASK, PLOT_GROUP_FAST, PLOT_START, PLOT_STOP, can_id,
@@ -118,6 +120,71 @@ fn plot_config_start_stream_and_stop_share_single_session_owner() {
 }
 
 #[test]
+fn scope_live_snapshot_pause_and_clear_follow_fast_samples() {
+    let state = ScriptState::default();
+    let fast = CanFdFrame::new(
+        can_id(MSG_FAST_DATA, NODE_ID_DEFAULT),
+        &[1, 0, 7, 2, 10, 0, 236, 255, 20, 0, 216, 255],
+    )
+    .unwrap();
+    {
+        let mut on_send = state.on_send.lock().unwrap();
+        on_send.push_back(vec![Ok(plot_response(
+            1,
+            PLOT_CONFIG,
+            &[PLOT_GROUP_FAST, 7, 2, 0x01, 0x00, 0x11, 0x00],
+        ))]);
+        on_send.push_back(vec![Ok(plot_response(2, PLOT_START, &[])), Ok(fast)]);
+        on_send.push_back(vec![Ok(plot_response(3, PLOT_STOP, &[]))]);
+    }
+
+    let session = DeviceSession::spawn(Box::new(ScriptedTransport::new(state.clone())));
+    let scope = ScopeSession::new(
+        session,
+        ScopeConfig {
+            config_id: 7,
+            sample_rate_hz: 20_000,
+            history: Duration::from_secs(1),
+            channels: vec![
+                ScopeChannel {
+                    id: 0x0001,
+                    symbol: "Ia".into(),
+                    unit: Some("A".into()),
+                    scale: 0.1,
+                },
+                ScopeChannel {
+                    id: 0x0011,
+                    symbol: "Iq".into(),
+                    unit: Some("A".into()),
+                    scale: 0.5,
+                },
+            ],
+        },
+    )
+    .unwrap();
+
+    scope.live().unwrap();
+    let deadline = Instant::now() + Duration::from_millis(100);
+    while scope.status().unwrap().samples < 2 && Instant::now() < deadline {
+        std::thread::yield_now();
+    }
+    let snapshot = scope.snapshot_tail(2).unwrap();
+    assert_eq!(snapshot.sample_count(), 2);
+    assert_eq!(snapshot.sample(0), Some(&[1.0, -10.0][..]));
+    assert_eq!(snapshot.sample(1), Some(&[2.0, -20.0][..]));
+
+    scope.pause().unwrap();
+    assert_eq!(
+        scope.status().unwrap().state,
+        nmixx_app::StreamState::Paused
+    );
+    scope.clear().unwrap();
+    assert_eq!(scope.status().unwrap().samples, 0);
+    let sent = state.sent.lock().unwrap();
+    assert_eq!(&sent[2].data()[..3], &[3, PLOT_STOP, PLOT_FAST_MASK]);
+}
+
+#[test]
 fn fast_burst_is_dispatched_without_per_frame_poll_delay() {
     const FRAME_COUNT: usize = 8;
 
@@ -141,4 +208,65 @@ fn fast_burst_is_dispatched_without_per_frame_poll_delay() {
     }
 
     assert!(start.elapsed() < Duration::from_millis(100));
+}
+
+#[test]
+fn scope_surfaces_fast_ingest_failure_and_stops_plot() {
+    let state = ScriptState::default();
+    let invalid_fast = CanFdFrame::new(
+        can_id(MSG_FAST_DATA, NODE_ID_DEFAULT),
+        &[1, 0, 8, 1, 10, 0],
+    )
+    .unwrap();
+
+    {
+        let mut on_send = state.on_send.lock().unwrap();
+        on_send.push_back(vec![Ok(plot_response(
+            1,
+            PLOT_CONFIG,
+            &[PLOT_GROUP_FAST, 7, 1, 0x01, 0x00],
+        ))]);
+        on_send.push_back(vec![
+            Ok(plot_response(2, PLOT_START, &[])),
+            Ok(invalid_fast),
+        ]);
+        on_send.push_back(vec![Ok(plot_response(3, PLOT_STOP, &[]))]);
+    }
+
+    let session = DeviceSession::spawn(Box::new(ScriptedTransport::new(state.clone())));
+    let scope = ScopeSession::new(
+        session,
+        ScopeConfig {
+            config_id: 7,
+            sample_rate_hz: 20_000,
+            history: Duration::from_millis(100),
+            channels: vec![ScopeChannel {
+                id: 0x0001,
+                symbol: "Iq".into(),
+                unit: Some("A".into()),
+                scale: 0.001,
+            }],
+        },
+    )
+    .unwrap();
+
+    scope.live().unwrap();
+
+    let deadline = Instant::now() + Duration::from_millis(100);
+    loop {
+        match scope.status() {
+            Err(ScopeError::Runtime(error)) => {
+                assert!(error.contains("Config_ID mismatch"));
+                break;
+            }
+            Ok(_) if Instant::now() < deadline => std::thread::yield_now(),
+            other => panic!("Scope runtime failure was not surfaced: {other:?}"),
+        }
+    }
+
+    assert!(matches!(scope.snapshot(), Err(ScopeError::Runtime(_))));
+
+    let sent = state.sent.lock().unwrap();
+    assert_eq!(sent.len(), 3);
+    assert_eq!(&sent[2].data()[..3], &[3, PLOT_STOP, PLOT_FAST_MASK]);
 }

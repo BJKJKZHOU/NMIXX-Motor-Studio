@@ -3,6 +3,7 @@ members = [
     "crates/nmixx-core",
     "crates/nmixx-app",
     "crates/nmixx-cli",
+    "apps/desktop/src-tauri",
 ]
 resolver = "2"
 
