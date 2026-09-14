@@ -72,15 +72,16 @@
     <main class="main-area">
       {#if activePage === "connection"}
         <ConnectionPage {connection} onConnected={(next) => setConnection(next)} onDisconnected={() => setConnection(undefined)} onError={setError} />
-      {:else if activePage === "analysis"}
-        <ScopePage {connection} onSummary={(summary) => scopeSummary = summary} onError={setError} />
-      {:else}
+      {:else if activePage !== "analysis"}
         <section class="page-toolbar"><div class="page-title">{pageTitle(activePage).toUpperCase()}</div></section>
         <section class="placeholder-page">
           <div class="placeholder-title">{pageTitle(activePage)}</div>
           <div class="placeholder-copy">This workflow page is reserved for the corresponding application domain. Device behavior will be added through the shared Application API rather than implemented in the shell.</div>
         </section>
       {/if}
+      <div class:inactive={activePage !== "analysis"} class="scope-page-container">
+        <ScopePage {connection} active={activePage === "analysis"} onSummary={(summary) => scopeSummary = summary} onError={setError} />
+      </div>
       {#if errorText}<div class="error-text app-error">{errorText}</div>{/if}
     </main>
   </div>

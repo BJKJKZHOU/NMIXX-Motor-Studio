@@ -53,6 +53,8 @@ button, input { font: inherit; }
 .activity-spacer { flex: 1; }
 
 .main-area { position: relative; min-width: 0; min-height: 0; display: grid; grid-template-rows: 36px minmax(0, 1fr); }
+.scope-page-container { display: contents; }
+.scope-page-container.inactive { display: none; }
 .page-toolbar { display: flex; align-items: center; padding: 0 8px 0 12px; background: #202020; border-bottom: 1px solid #303030; }
 .page-title { font-size: 11px; color: #a6a6a6; letter-spacing: .5px; }
 .toolbar-actions { margin-left: auto; display: flex; gap: 5px; align-items: center; }
@@ -99,15 +101,16 @@ vscode-button { --vscode-button-border: transparent; }
 .empty-hint { padding: 5px 10px 9px; color: #757575; font-size: 11px; line-height: 1.45; }
 .property-grid { display: grid; grid-template-columns: 1fr auto; gap: 8px 12px; padding: 2px 11px 8px; color: #858585; font-size: 12px; }
 .property-grid strong { color: #c7c7c7; font-family: "SFMono-Regular", Consolas, "Liberation Mono", monospace; font-size: 11px; font-weight: 400; }
+.scope-pending { padding: 3px 11px 0; color: #c8b77a; font-size: 11px; }
 
 .editor-tabs { display: flex; align-items: stretch; background: #181818; border-bottom: 1px solid #2b2b2b; }
 .editor-tab { min-width: 116px; display: flex; align-items: center; gap: 7px; padding: 0 12px; color: #949494; background: #181818; border-right: 1px solid #2b2b2b; }
 .editor-tab.active { color: #d4d4d4; background: #1e1e1e; border-top: 1px solid #74859e; }
-.plot-header { display: flex; align-items: center; gap: 18px; padding: 0 12px; border-bottom: 1px solid #2b2b2b; color: #a2a2a2; font-size: 12px; overflow: hidden; }
+.plot-header { position: relative; display: flex; align-items: center; gap: 18px; padding: 0 12px; border-bottom: 1px solid #2b2b2b; color: #a2a2a2; font-size: 12px; overflow: hidden; }
 .trace-key { display: flex; align-items: center; gap: 6px; white-space: nowrap; }
 .trace-mark { width: 13px; height: 2px; display: inline-block; flex: 0 0 auto; }
 .value { color: #d0d0d0; font-family: "SFMono-Regular", Consolas, "Liberation Mono", monospace; }
-.plot-meta { margin-left: auto; color: #777; white-space: nowrap; }
+.plot-meta { position: absolute; inset: 0 0 0 auto; display: flex; align-items: center; padding: 0 12px; background: #1e1e1e; color: #777; white-space: nowrap; }
 .plot-placeholder { color: #777; }
 .plot-host { min-width: 0; min-height: 0; overflow: hidden; padding: 8px 8px 4px 4px; }
 .uplot { font-family: "SFMono-Regular", Consolas, "Liberation Mono", monospace; }
