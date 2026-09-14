@@ -225,8 +225,17 @@ impl StreamSession {
     }
 
     pub fn snapshot(&self) -> StreamSnapshot {
-        let mut values = Vec::with_capacity(self.sample_len * self.config.channel_count);
-        for logical in 0..self.sample_len {
+        self.snapshot_tail(self.sample_len)
+    }
+
+    /// Copies only the newest `max_samples` in logical time order.
+    /// This is intended for UI refreshes so the full rolling history does not
+    /// need to be cloned on every frame.
+    pub fn snapshot_tail(&self, max_samples: usize) -> StreamSnapshot {
+        let keep = self.sample_len.min(max_samples);
+        let skip = self.sample_len - keep;
+        let mut values = Vec::with_capacity(keep * self.config.channel_count);
+        for logical in skip..self.sample_len {
             let physical = (self.oldest_sample + logical) % self.capacity_samples;
             let start = physical * self.config.channel_count;
             values.extend_from_slice(&self.storage[start..start + self.config.channel_count]);
@@ -284,6 +293,19 @@ mod tests {
         assert_eq!(snapshot.sample_count(), 4);
         assert_eq!(snapshot.sample(0).unwrap(), &[2.0, -2.0]);
         assert_eq!(snapshot.sample(3).unwrap(), &[5.0, -5.0]);
+    }
+
+    #[test]
+    fn tail_snapshot_keeps_only_newest_samples_in_order() {
+        let mut stream = StreamSession::new(config()).unwrap();
+        stream.live();
+        for n in 0..6 {
+            stream.push_sample(&[n as f32, -(n as f32)]).unwrap();
+        }
+        let snapshot = stream.snapshot_tail(2);
+        assert_eq!(snapshot.sample_count(), 2);
+        assert_eq!(snapshot.sample(0).unwrap(), &[4.0, -4.0]);
+        assert_eq!(snapshot.sample(1).unwrap(), &[5.0, -5.0]);
     }
 
     #[test]

@@ -75,6 +75,158 @@ GUI, CLI and automation are peers. They must not implement device protocol logic
 
 A client may format values, render a progress bar, or compose a workflow, but it must not reimplement transaction matching, action completion handling, protection rules or transport framing.
 
+## Desktop GUI functional domains
+
+The desktop client is split by **functional domain and shared internal capability**, not by visual rectangles or one-file-per-widget rules.
+
+```text
+App shell
+  |
+  +-- Connection
+  |     +-- Serial
+  |     +-- CAN FD
+  |     +-- future transports
+  |
+  +-- Parameters
+  |     +-- full parameter table
+  |     +-- read/write/search/filter
+  |     +-- import/export
+  |
+  +-- Analysis
+  |     +-- shared acquisition
+  |     +-- Scope
+  |     +-- FFT
+  |     +-- Bode
+  |     +-- capture/export
+  |
+  +-- Motor
+  +-- Encoder
+  +-- Limits / Safety
+  +-- Control
+  +-- Events
+```
+
+`App.svelte` is the workbench shell. It owns navigation, global connection summary, global notifications and the status bar. Device and analysis behavior belongs in domain modules.
+
+### UI reuse boundary
+
+NMIXX owns product semantics, information architecture and presentation style. Generic interaction mechanisms should use mature libraries when they are already solved well.
+
+```text
+Application API / motor semantics / commissioning workflow
+                         |
+                    NMIXX-owned
+
+table state / plot interaction / terminal / editor / docking
+                         |
+                 mature infrastructure
+
+colors / spacing / typography / icons / density / page composition
+                         |
+                    NMIXX-owned
+```
+
+Rules:
+
+- Do not introduce a large opinionated visual framework merely to obtain a widget. NMIXX keeps its VS Code-like engineering-tool presentation and theme tokens.
+- Prefer headless or low-presentation libraries for complex interaction behavior.
+- A domain page must not duplicate Application API state or create a second write path for a device concept.
+- `App.svelte` remains a shell; domain behavior belongs to domain modules.
+- Reuse the existing `parameters/api.ts`, analysis acquisition service and other domain APIs rather than invoking Tauri directly from arbitrary components.
+- Do not hand-roll sorting, filtering, column state, terminal emulation, code editing or IDE docking once the approved infrastructure is applicable.
+
+Approved now:
+
+- **VSCode Elements + Codicons** for basic controls and icons.
+- **uPlot** for Scope/FFT/Bode plotting mechanics, including scales, axes, cursor and plugins.
+- **Split.js** for simple fixed split panes.
+- **TanStack Table** for Parameters and Events table state, sorting and filtering.
+
+Introduce only when the corresponding product need exists:
+
+- **Dockview** for draggable/persisted IDE-style panel layouts; do not replace simple Split.js layouts preemptively.
+- **xterm.js** for an Automation terminal frontend.
+- **Monaco Editor** for script editing.
+
+Avoid using Ant Design, Material UI, Bootstrap, dashboard templates or a second general-purpose chart framework as the product's visual foundation.
+
+### Workflow-oriented navigation
+
+The primary Activity Bar is ordered by the normal motor commissioning and control workflow, not by software implementation modules.
+
+```text
+Connection
+    |
+    v
+Motor + identification tools
+    |
+    v
+Encoder + phase search / homing / zero
+    |
+    v
+Limits / Safety
+    |
+    v
+Control architecture
+    |
+    v
+Analysis: Scope / FFT / Bode
+```
+
+The order communicates the normal engineering sequence without turning the application into a mandatory wizard. Experienced users may jump directly to any page.
+
+- **Connection** establishes the Device Session and transport. It is the first page and is independent from Scope or other analysis tools.
+- **Motor** owns the motor parameter view. Unknown parameters are obtained through identification tools attached to this page instead of a separate top-level Identification page.
+- **Encoder** configures feedback type/interface and generic encoder parameters. Phase search current, homing and zero-setting tools belong here because they establish position/electrical alignment.
+- **Limits / Safety** configures user operating limits and other software safety boundaries while keeping hardware protection semantics distinct.
+- **Control** chooses the operating mode and control architecture: loop controllers, startup strategy, observer and related defaults. Detailed tuning is intentionally not centered here.
+- **Analysis** is where detailed tuning happens while observing data. Scope, FFT and Bode share acquisition and plotting infrastructure.
+
+Cross-workflow expert tools are visually separated from the commissioning sequence. The generic **Parameters** table, **Events**, and future **Automation** entry belong to this secondary group rather than interrupting the primary workflow.
+
+### Parameter is a shared service, not one page
+
+The Parameter subsystem is the single source of truth for host-visible parameters. The generic Parameters page is an expert view over the complete registry, but domain pages reuse the same Parameter API:
+
+```text
+Parameter service
+      |
+      +--> Parameters table   (all parameters, direct read/write/import/export)
+      +--> Motor page         (motor-related parameter view)
+      +--> Encoder page       (feedback-related parameter view)
+      +--> Limits page        (operating/safety limits)
+      +--> Control page       (algorithm selection and defaults)
+      +--> other domain pages
+```
+
+A value such as motor resistance must not have separate storage or write paths in the generic table and the Motor page. Both views call the same Application API entry.
+
+The Parameters page uses TanStack Table for table behavior. TanStack owns sorting/filtering/table state; NMIXX owns markup, styling, device reads/writes and value editing semantics. Table code must not bypass `ParameterService`.
+
+### Control setup and tuning are different workflows
+
+The Control page selects the active control structure and supplies usable default parameters. Fine tuning belongs with live analysis because tuning decisions depend on observed waveforms and frequency response.
+
+For example, selecting position/speed control may choose the position, speed and current-loop controller types. A sensorless mode may additionally choose startup strategy and observer. Once the structure is selected, detailed gain adjustment can be surfaced beside Scope/Bode/FFT views while still using the same Parameter service underneath.
+
+### Analysis shares acquisition and plotting infrastructure
+
+Scope, FFT and Bode are related analysis functions, but not identical workflows. They share channel metadata, acquisition buffers, plotting, cursors, units and export infrastructure where practical.
+
+- **Scope** is the time-domain live/capture view.
+- **FFT** analyzes acquired data in the frequency domain.
+- **Bode** may own an excitation-and-measurement workflow, while still reusing acquisition and plot infrastructure.
+
+The GUI must not open its own transport or decode telemetry wire frames for any of these functions. Acquisition remains an Application Runtime capability.
+
+Chart interaction should use uPlot capabilities and plugins instead of recreating generic plotting behavior in Svelte. Unit metadata should drive reusable scale/axis policy rather than page-specific conditionals.
+
+### Connection is transport-oriented
+
+Connection UI is a functional domain because the product will support more than one transport. Serial, native CAN FD and future transports present transport-specific configuration but converge on the same device/session API above them. The rest of the GUI must not assume that a connected device is represented by a serial port string.
+
+Connection state is global, but connection control belongs only to the Connection page. Scope, Motor, Control and other workflow pages consume the current Device Session; they do not embed their own Connect/Disconnect UI.
+
 ## Concurrency and ownership
 
 The runtime owns the transport and demultiplexes received frames into responses, events and streams.
