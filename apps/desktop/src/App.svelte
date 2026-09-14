@@ -74,7 +74,9 @@
       {#if activePage === "connection"}
         <ConnectionPage {connection} onConnected={(next) => setConnection(next)} onDisconnected={() => setConnection(undefined)} onError={setError} />
       {:else if activePage === "parameters"}
-        <ParameterTablePage {connection} onError={setError} />
+        <div style="grid-row: 1 / -1; min-height: 0; display: grid;">
+          <ParameterTablePage {connection} onError={setError} />
+        </div>
       {:else if activePage !== "analysis"}
         <section class="page-toolbar"><div class="page-title">{pageTitle(activePage).toUpperCase()}</div></section>
         <section class="placeholder-page">
