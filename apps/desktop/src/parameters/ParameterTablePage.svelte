@@ -281,7 +281,7 @@
             {#each table.getRowModel().rows as tableRow (tableRow.id)}
               {@const row = tableRow.original}
               <tr class:error-row={!!row.error} title={row.error ?? row.meta.description}>
-                {#each tableRow.getVisibleCells() as cell (cell.id)}
+                {#each tableRow.getAllCells() as cell (cell.id)}
                   <td class:parameter-value-column={cell.column.id === "value"}>
                     {#if cell.column.id === "id"}
                       <span class="mono parameter-id">0x{row.meta.id.toString(16).toUpperCase().padStart(4, "0")}</span>
