@@ -98,6 +98,48 @@ App shell
 
 `App.svelte` is the workbench shell. It owns navigation, global connection summary, global notifications and the status bar. Device and analysis behavior belongs in domain modules.
 
+### UI reuse boundary
+
+NMIXX owns product semantics, information architecture and presentation style. Generic interaction mechanisms should use mature libraries when they are already solved well.
+
+```text
+Application API / motor semantics / commissioning workflow
+                         |
+                    NMIXX-owned
+
+table state / plot interaction / terminal / editor / docking
+                         |
+                 mature infrastructure
+
+colors / spacing / typography / icons / density / page composition
+                         |
+                    NMIXX-owned
+```
+
+Rules:
+
+- Do not introduce a large opinionated visual framework merely to obtain a widget. NMIXX keeps its VS Code-like engineering-tool presentation and theme tokens.
+- Prefer headless or low-presentation libraries for complex interaction behavior.
+- A domain page must not duplicate Application API state or create a second write path for a device concept.
+- `App.svelte` remains a shell; domain behavior belongs to domain modules.
+- Reuse the existing `parameters/api.ts`, analysis acquisition service and other domain APIs rather than invoking Tauri directly from arbitrary components.
+- Do not hand-roll sorting, filtering, column state, terminal emulation, code editing or IDE docking once the approved infrastructure is applicable.
+
+Approved now:
+
+- **VSCode Elements + Codicons** for basic controls and icons.
+- **uPlot** for Scope/FFT/Bode plotting mechanics, including scales, axes, cursor and plugins.
+- **Split.js** for simple fixed split panes.
+- **TanStack Table** for Parameters and Events table state, sorting and filtering.
+
+Introduce only when the corresponding product need exists:
+
+- **Dockview** for draggable/persisted IDE-style panel layouts; do not replace simple Split.js layouts preemptively.
+- **xterm.js** for an Automation terminal frontend.
+- **Monaco Editor** for script editing.
+
+Avoid using Ant Design, Material UI, Bootstrap, dashboard templates or a second general-purpose chart framework as the product's visual foundation.
+
 ### Workflow-oriented navigation
 
 The primary Activity Bar is ordered by the normal motor commissioning and control workflow, not by software implementation modules.
@@ -149,6 +191,8 @@ Parameter service
 
 A value such as motor resistance must not have separate storage or write paths in the generic table and the Motor page. Both views call the same Application API entry.
 
+The Parameters page uses TanStack Table for table behavior. TanStack owns sorting/filtering/table state; NMIXX owns markup, styling, device reads/writes and value editing semantics. Table code must not bypass `ParameterService`.
+
 ### Control setup and tuning are different workflows
 
 The Control page selects the active control structure and supplies usable default parameters. Fine tuning belongs with live analysis because tuning decisions depend on observed waveforms and frequency response.
@@ -164,6 +208,8 @@ Scope, FFT and Bode are related analysis functions, but not identical workflows.
 - **Bode** may own an excitation-and-measurement workflow, while still reusing acquisition and plot infrastructure.
 
 The GUI must not open its own transport or decode telemetry wire frames for any of these functions. Acquisition remains an Application Runtime capability.
+
+Chart interaction should use uPlot capabilities and plugins instead of recreating generic plotting behavior in Svelte. Unit metadata should drive reusable scale/axis policy rather than page-specific conditionals.
 
 ### Connection is transport-oriented
 
