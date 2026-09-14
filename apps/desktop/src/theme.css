@@ -37,23 +37,8 @@
 html, body, #app { margin: 0; width: 100%; height: 100%; overflow: hidden; }
 button, input { font: inherit; }
 
-.workbench {
-  width: 100%;
-  height: 100%;
-  display: grid;
-  grid-template-rows: 35px minmax(0, 1fr) 22px;
-  background: #1e1e1e;
-  color: #cccccc;
-}
-
-.titlebar {
-  display: flex;
-  align-items: center;
-  padding: 0 10px 0 13px;
-  border-bottom: 1px solid #2b2b2b;
-  background: #181818;
-  user-select: none;
-}
+.workbench { width: 100%; height: 100%; display: grid; grid-template-rows: 35px minmax(0, 1fr) 22px; background: #1e1e1e; color: #cccccc; }
+.titlebar { display: flex; align-items: center; padding: 0 10px 0 13px; border-bottom: 1px solid #2b2b2b; background: #181818; user-select: none; }
 .brand { font-size: 12px; font-weight: 600; color: #d8d8d8; }
 .device-summary { margin-left: auto; color: #9b9b9b; font-size: 12px; }
 .status-dot { display: inline-block; width: 7px; height: 7px; margin-right: 6px; border-radius: 50%; background: #666; }
@@ -64,13 +49,25 @@ button, input { font: inherit; }
 .activity { height: 48px; border: 0; border-left: 2px solid transparent; color: #858585; background: transparent; cursor: default; font-size: 21px; }
 .activity:hover { color: #c3c3c3; background: #202020; }
 .activity.active { color: #e0e0e0; border-left-color: #7e8fa9; }
+.workflow-separator { height: 1px; margin: 5px 8px; background: #303030; }
 .activity-spacer { flex: 1; }
 
-.main-area { min-width: 0; min-height: 0; display: grid; grid-template-rows: 36px minmax(0, 1fr); }
+.main-area { position: relative; min-width: 0; min-height: 0; display: grid; grid-template-rows: 36px minmax(0, 1fr); }
 .page-toolbar { display: flex; align-items: center; padding: 0 8px 0 12px; background: #202020; border-bottom: 1px solid #303030; }
 .page-title { font-size: 11px; color: #a6a6a6; letter-spacing: .5px; }
 .toolbar-actions { margin-left: auto; display: flex; gap: 5px; align-items: center; }
 vscode-button { --vscode-button-border: transparent; }
+.page-content { min-height: 0; overflow: auto; background: #1e1e1e; }
+.placeholder-page { min-height: 0; display: grid; place-content: center; gap: 8px; padding: 32px; text-align: center; color: #777; }
+.placeholder-title { color: #b9b9b9; font-size: 16px; }
+.placeholder-copy { max-width: 560px; line-height: 1.6; }
+
+.connection-page { display: grid; grid-template-columns: minmax(320px, 560px) minmax(280px, 420px); align-content: start; gap: 18px; padding: 22px; }
+.connection-card { border: 1px solid #303030; background: #1b1b1b; }
+.connection-card-title { height: 34px; display: flex; align-items: center; padding: 0 12px; border-bottom: 1px solid #303030; color: #b8b8b8; font-size: 12px; font-weight: 600; }
+.wide-form { padding: 12px; gap: 8px; }
+.static-field { height: 27px; display: flex; align-items: center; padding: 3px 7px; border: 1px solid #333842; color: #bdbdbd; background: #25282d; }
+.connection-properties { padding: 13px 14px; }
 
 .scope-shell { min-height: 0; display: flex; background: #1e1e1e; }
 .scope-sidebar { min-width: 0; overflow: auto; background: #181818; border-right: 1px solid #2b2b2b; }
@@ -84,21 +81,12 @@ vscode-button { --vscode-button-border: transparent; }
 .connection-form { display: grid; gap: 6px; padding: 1px 9px 8px; }
 .connection-form label { color: #858585; font-size: 11px; }
 .field-row { display: grid; grid-template-columns: minmax(0, 1fr) 30px; gap: 5px; }
-.compact-input {
-  width: 100%;
-  min-width: 0;
-  height: 27px;
-  padding: 3px 7px;
-  border: 1px solid var(--vscode-input-border);
-  border-radius: 2px;
-  outline: none;
-  color: var(--vscode-input-foreground);
-  background: var(--vscode-input-background);
-}
+.compact-input { width: 100%; min-width: 0; height: 27px; padding: 3px 7px; border: 1px solid var(--vscode-input-border); border-radius: 2px; outline: none; color: var(--vscode-input-foreground); background: var(--vscode-input-background); }
 .compact-input:focus { border-color: var(--vscode-focusBorder); }
 .compact-input.mono { font-family: "SFMono-Regular", Consolas, "Liberation Mono", monospace; font-size: 11px; }
 .connection-actions { display: flex; justify-content: flex-end; padding-top: 2px; }
 .error-text { padding: 4px 6px; border-left: 2px solid #b35d5d; background: #2b2020; color: #d7a6a6; font-size: 11px; line-height: 1.4; word-break: break-word; }
+.app-error { position: absolute; left: 10px; right: 10px; bottom: 10px; z-index: 20; }
 
 .channel-list { display: flex; flex-direction: column; }
 .channel-row { min-height: 28px; display: grid; grid-template-columns: 24px minmax(0, 1fr) 42px 54px; align-items: center; padding: 0 7px; cursor: default; }
@@ -109,14 +97,12 @@ vscode-button { --vscode-button-border: transparent; }
 .channel-mode { color: #9ba8bb; }
 .channel-mode.normal-only { color: #8b8b8b; }
 .empty-hint { padding: 5px 10px 9px; color: #757575; font-size: 11px; line-height: 1.45; }
-
 .property-grid { display: grid; grid-template-columns: 1fr auto; gap: 8px 12px; padding: 2px 11px 8px; color: #858585; font-size: 12px; }
 .property-grid strong { color: #c7c7c7; font-family: "SFMono-Regular", Consolas, "Liberation Mono", monospace; font-size: 11px; font-weight: 400; }
 
 .editor-tabs { display: flex; align-items: stretch; background: #181818; border-bottom: 1px solid #2b2b2b; }
 .editor-tab { min-width: 116px; display: flex; align-items: center; gap: 7px; padding: 0 12px; color: #949494; background: #181818; border-right: 1px solid #2b2b2b; }
 .editor-tab.active { color: #d4d4d4; background: #1e1e1e; border-top: 1px solid #74859e; }
-
 .plot-header { display: flex; align-items: center; gap: 18px; padding: 0 12px; border-bottom: 1px solid #2b2b2b; color: #a2a2a2; font-size: 12px; overflow: hidden; }
 .trace-key { display: flex; align-items: center; gap: 6px; white-space: nowrap; }
 .trace-mark { width: 13px; height: 2px; display: inline-block; flex: 0 0 auto; }
@@ -129,3 +115,7 @@ vscode-button { --vscode-button-border: transparent; }
 
 .statusbar { display: flex; align-items: center; gap: 15px; padding: 0 8px; background: #24272d; border-top: 1px solid #30343a; color: #b9b9b9; font-size: 11px; user-select: none; }
 .status-spacer { flex: 1; }
+
+@media (max-width: 860px) {
+  .connection-page { grid-template-columns: 1fr; }
+}

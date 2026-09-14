@@ -1,0 +1,83 @@
+<script lang="ts">
+  import { onMount } from "svelte";
+  import { connectDevice, disconnectDevice, listDevices } from "./api";
+  import type { ConnectionInfo } from "./types";
+
+  export let connection: ConnectionInfo | undefined;
+  export let onConnected: (connection: ConnectionInfo) => void = () => undefined;
+  export let onDisconnected: () => void = () => undefined;
+  export let onError: (error: unknown) => void = () => undefined;
+
+  let ports: string[] = [];
+  let port = "/dev/ttyACM1";
+  let schemaPath = "../../../AxDr_L_Motor/build/host/axdr-host-schema.toml";
+  let busy = false;
+
+  async function refreshPorts() {
+    try {
+      ports = await listDevices();
+      if (ports.length > 0 && !ports.includes(port)) port = ports[0];
+    } catch (error) {
+      onError(error);
+    }
+  }
+
+  async function connect() {
+    busy = true;
+    try {
+      onConnected(await connectDevice(port, schemaPath, 115200));
+    } catch (error) {
+      onError(error);
+    } finally {
+      busy = false;
+    }
+  }
+
+  async function disconnect() {
+    try {
+      await disconnectDevice();
+    } catch (error) {
+      onError(error);
+    } finally {
+      onDisconnected();
+    }
+  }
+
+  onMount(refreshPorts);
+</script>
+
+<section class="page-toolbar"><div class="page-title">CONNECTION</div></section>
+<section class="page-content connection-page">
+  <div class="connection-card">
+    <div class="connection-card-title">Transport</div>
+    <div class="connection-form wide-form">
+      <label>Type</label>
+      <div class="static-field">Serial / USB CDC</div>
+      <label>Port</label>
+      <div class="field-row">
+        <input bind:value={port} class="compact-input" list="device-ports" />
+        <datalist id="device-ports">{#each ports as item}<option value={item}></option>{/each}</datalist>
+        <vscode-button secondary onclick={refreshPorts} title="Refresh ports"><i class="codicon codicon-refresh"></i></vscode-button>
+      </div>
+      <label>HostSchema</label>
+      <input bind:value={schemaPath} class="compact-input mono" />
+      <div class="connection-actions">
+        {#if connection}<vscode-button secondary onclick={disconnect}>Disconnect</vscode-button>
+        {:else}<vscode-button disabled={busy} onclick={connect}>Connect</vscode-button>{/if}
+      </div>
+    </div>
+  </div>
+
+  <div class="connection-card">
+    <div class="connection-card-title">Device</div>
+    <div class="property-grid connection-properties">
+      <span>Status</span><strong>{connection ? "Connected" : "Disconnected"}</strong>
+      <span>Endpoint</span><strong>{connection?.port ?? "—"}</strong>
+      <span>FAST rate</span><strong>{connection ? `${(connection.fastRateHz / 1000).toFixed(1)} kHz` : "—"}</strong>
+      <span>NORMAL rate</span><strong>{connection ? `${(connection.normalRateHz / 1000).toFixed(1)} kHz` : "—"}</strong>
+      <span>FAST channels</span><strong>{connection?.fastMaxChannels ?? "—"}</strong>
+      <span>NORMAL channels</span><strong>{connection?.normalMaxChannels ?? "—"}</strong>
+      <span>FAST block</span><strong>{connection?.fastBlockSamples ?? "—"}</strong>
+    </div>
+  </div>
+</section>

@@ -90,12 +90,47 @@ App shell
   |     +-- capture/export
   |
   +-- Motor
+  +-- Encoder
+  +-- Limits / Safety
   +-- Control
-  +-- Identification
   +-- Events
 ```
 
 `App.svelte` is the workbench shell. It owns navigation, global connection summary, global notifications and the status bar. Device and analysis behavior belongs in domain modules.
+
+### Workflow-oriented navigation
+
+The primary Activity Bar is ordered by the normal motor commissioning and control workflow, not by software implementation modules.
+
+```text
+Connection
+    |
+    v
+Motor + identification tools
+    |
+    v
+Encoder + phase search / homing / zero
+    |
+    v
+Limits / Safety
+    |
+    v
+Control architecture
+    |
+    v
+Analysis: Scope / FFT / Bode
+```
+
+The order communicates the normal engineering sequence without turning the application into a mandatory wizard. Experienced users may jump directly to any page.
+
+- **Connection** establishes the Device Session and transport. It is the first page and is independent from Scope or other analysis tools.
+- **Motor** owns the motor parameter view. Unknown parameters are obtained through identification tools attached to this page instead of a separate top-level Identification page.
+- **Encoder** configures feedback type/interface and generic encoder parameters. Phase search current, homing and zero-setting tools belong here because they establish position/electrical alignment.
+- **Limits / Safety** configures user operating limits and other software safety boundaries while keeping hardware protection semantics distinct.
+- **Control** chooses the operating mode and control architecture: loop controllers, startup strategy, observer and related defaults. Detailed tuning is intentionally not centered here.
+- **Analysis** is where detailed tuning happens while observing data. Scope, FFT and Bode share acquisition and plotting infrastructure.
+
+Cross-workflow expert tools are visually separated from the commissioning sequence. The generic **Parameters** table, **Events**, and future **Automation** entry belong to this secondary group rather than interrupting the primary workflow.
 
 ### Parameter is a shared service, not one page
 
@@ -106,11 +141,19 @@ Parameter service
       |
       +--> Parameters table   (all parameters, direct read/write/import/export)
       +--> Motor page         (motor-related parameter view)
-      +--> Control page       (algorithm, gains, limits, targets)
+      +--> Encoder page       (feedback-related parameter view)
+      +--> Limits page        (operating/safety limits)
+      +--> Control page       (algorithm selection and defaults)
       +--> other domain pages
 ```
 
 A value such as motor resistance must not have separate storage or write paths in the generic table and the Motor page. Both views call the same Application API entry.
+
+### Control setup and tuning are different workflows
+
+The Control page selects the active control structure and supplies usable default parameters. Fine tuning belongs with live analysis because tuning decisions depend on observed waveforms and frequency response.
+
+For example, selecting position/speed control may choose the position, speed and current-loop controller types. A sensorless mode may additionally choose startup strategy and observer. Once the structure is selected, detailed gain adjustment can be surfaced beside Scope/Bode/FFT views while still using the same Parameter service underneath.
 
 ### Analysis shares acquisition and plotting infrastructure
 
@@ -125,6 +168,8 @@ The GUI must not open its own transport or decode telemetry wire frames for any 
 ### Connection is transport-oriented
 
 Connection UI is a functional domain because the product will support more than one transport. Serial, native CAN FD and future transports present transport-specific configuration but converge on the same device/session API above them. The rest of the GUI must not assume that a connected device is represented by a serial port string.
+
+Connection state is global, but connection control belongs only to the Connection page. Scope, Motor, Control and other workflow pages consume the current Device Session; they do not embed their own Connect/Disconnect UI.
 
 ## Concurrency and ownership
 
