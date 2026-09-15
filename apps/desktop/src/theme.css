@@ -7,8 +7,10 @@
   --vscode-font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif;
   --vscode-font-size: 13px;
   --vscode-foreground: #cccccc;
+  --vscode-descriptionForeground: #9b9b9b;
   --vscode-disabledForeground: #6f6f6f;
   --vscode-focusBorder: #61799f;
+  --vscode-panel-border: #303030;
   --vscode-editor-background: #1e1e1e;
   --vscode-editor-foreground: #cccccc;
   --vscode-sideBar-background: #181818;
@@ -31,6 +33,12 @@
   --vscode-list-hoverBackground: #24282f;
   --vscode-list-activeSelectionBackground: #30394a;
   --vscode-list-activeSelectionForeground: #eeeeee;
+
+  --nmixx-status-runningForeground: #c8b77a;
+  --nmixx-status-successForeground: #7b9b84;
+  --nmixx-status-errorForeground: #d7a6a6;
+  --nmixx-action-successBackground: #44664d;
+  --nmixx-action-successHoverBackground: #52795d;
 }
 
 * { box-sizing: border-box; }

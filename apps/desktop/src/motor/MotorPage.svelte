@@ -1,47 +1,149 @@
 <script lang="ts">
-  import { untrack } from "svelte";
+  import { onMount, untrack } from "svelte";
   import type { ConnectionInfo } from "../connection/types";
   import { listParameters, readParameters, writeParameter } from "../parameters/api";
   import type { ParameterMetadata, ParameterValue } from "../parameters/types";
+  import { listActions, onActionCompleted, startAction } from "../actions/api";
+  import type { ActionCompletion, ActionHandle, ActionMetadata } from "../actions/types";
 
   type Props = {
     connection: ConnectionInfo | undefined;
     onError?: (error: unknown) => void;
   };
 
+  type IdentKey = "rsLs" | "flux" | "jb";
+  type IdentPhase = "idle" | "running" | "ready" | "applying" | "applied" | "failed";
+
+  type IdentState = {
+    phase: IdentPhase;
+    message: string;
+  };
+
+  type IdentConfig = {
+    startAction: string;
+    validSymbol: string;
+    resultSymbols: string[];
+    activeSymbols: string[];
+  };
+
   type RowSpec = {
     label: string;
     activeSymbol: string;
     identifiedSymbol?: string;
+    identifiedValidSymbol?: string;
     actionLabel?: string;
+    identKey?: IdentKey;
+  };
+
+  const IDENT_CONFIGS: Record<IdentKey, IdentConfig> = {
+    rsLs: {
+      startAction: "ACTION_IDENT_RS_LS_START",
+      validSymbol: "PARAM_IDENT_RS_LS_VALID",
+      resultSymbols: ["PARAM_IDENT_RS_RESULT", "PARAM_IDENT_LS_RESULT"],
+      activeSymbols: ["PARAM_MOTOR_RS", "PARAM_MOTOR_LD", "PARAM_MOTOR_LQ"],
+    },
+    flux: {
+      startAction: "ACTION_IDENT_FLUX_START",
+      validSymbol: "PARAM_IDENT_FLUX_VALID",
+      resultSymbols: ["PARAM_IDENT_FLUX_RESULT"],
+      activeSymbols: ["PARAM_MOTOR_FLUX"],
+    },
+    jb: {
+      startAction: "ACTION_IDENT_J_B_START",
+      validSymbol: "PARAM_IDENT_J_B_VALID",
+      resultSymbols: ["PARAM_IDENT_J_RESULT", "PARAM_IDENT_B_RESULT"],
+      activeSymbols: ["PARAM_MOTOR_J", "PARAM_MOTOR_B"],
+    },
   };
 
   const ROWS: RowSpec[] = [
     { label: "Pole pairs", activeSymbol: "PARAM_MOTOR_PP" },
-    { label: "Rs", activeSymbol: "PARAM_MOTOR_RS", identifiedSymbol: "PARAM_IDENT_RS_RESULT", actionLabel: "Rs/Ls" },
-    { label: "Ld", activeSymbol: "PARAM_MOTOR_LD", identifiedSymbol: "PARAM_IDENT_LS_RESULT" },
-    { label: "Lq", activeSymbol: "PARAM_MOTOR_LQ", identifiedSymbol: "PARAM_IDENT_LS_RESULT" },
-    { label: "Flux", activeSymbol: "PARAM_MOTOR_FLUX", identifiedSymbol: "PARAM_IDENT_FLUX_RESULT", actionLabel: "Flux" },
-    { label: "J", activeSymbol: "PARAM_MOTOR_J", actionLabel: "J/B" },
-    { label: "B", activeSymbol: "PARAM_MOTOR_B" },
+    {
+      label: "Rs",
+      activeSymbol: "PARAM_MOTOR_RS",
+      identifiedSymbol: "PARAM_IDENT_RS_RESULT",
+      identifiedValidSymbol: "PARAM_IDENT_RS_LS_VALID",
+      actionLabel: "Rs/Ls",
+      identKey: "rsLs",
+    },
+    {
+      label: "Ld",
+      activeSymbol: "PARAM_MOTOR_LD",
+      identifiedSymbol: "PARAM_IDENT_LS_RESULT",
+      identifiedValidSymbol: "PARAM_IDENT_RS_LS_VALID",
+    },
+    {
+      label: "Lq",
+      activeSymbol: "PARAM_MOTOR_LQ",
+      identifiedSymbol: "PARAM_IDENT_LS_RESULT",
+      identifiedValidSymbol: "PARAM_IDENT_RS_LS_VALID",
+    },
+    {
+      label: "Flux",
+      activeSymbol: "PARAM_MOTOR_FLUX",
+      identifiedSymbol: "PARAM_IDENT_FLUX_RESULT",
+      identifiedValidSymbol: "PARAM_IDENT_FLUX_VALID",
+      actionLabel: "Flux",
+      identKey: "flux",
+    },
+    {
+      label: "J",
+      activeSymbol: "PARAM_MOTOR_J",
+      identifiedSymbol: "PARAM_IDENT_J_RESULT",
+      identifiedValidSymbol: "PARAM_IDENT_J_B_VALID",
+      actionLabel: "J/B",
+      identKey: "jb",
+    },
+    {
+      label: "B",
+      activeSymbol: "PARAM_MOTOR_B",
+      identifiedSymbol: "PARAM_IDENT_B_RESULT",
+      identifiedValidSymbol: "PARAM_IDENT_J_B_VALID",
+    },
   ];
+
+  const identificationCurrentSymbol = "PARAM_IDENT_IF_CURRENT";
+  const failReasonSymbol = "PARAM_IDENT_FAIL_REASON";
+  const applyActionSymbol = "ACTION_IDENT_APPLY";
 
   let { connection, onError = () => undefined }: Props = $props();
 
   let metadata = $state<Record<string, ParameterMetadata>>({});
+  let actions = $state<Record<string, ActionMetadata>>({});
   let values = $state<Record<string, ParameterValue | null>>({});
   let drafts = $state<Record<string, string>>({});
   let loading = $state(false);
   let writing = $state<Set<string>>(new Set());
+  let identStates = $state<Record<IdentKey, IdentState>>(initialIdentStates());
+  let pendingHandles = $state<Record<string, { identKey: IdentKey; kind: "identify" | "apply" }>>({});
   let generation = 0;
 
-  const identificationCurrentSymbol = "PARAM_IDENT_IF_CURRENT";
+  onMount(() => {
+    let disposed = false;
+    let unlisten: (() => void) | undefined;
+
+    onActionCompleted((completion) => void handleActionCompleted(completion))
+      .then((stop) => {
+        if (disposed) stop();
+        else unlisten = stop;
+      })
+      .catch(onError);
+
+    return () => {
+      disposed = true;
+      unlisten?.();
+    };
+  });
 
   $effect(() => {
     const activeConnection = connection;
     const token = ++generation;
+    identStates = initialIdentStates();
+    pendingHandles = {};
+
     if (!activeConnection) {
       metadata = {};
+      actions = {};
       values = {};
       drafts = {};
       loading = false;
@@ -50,6 +152,18 @@
     untrack(() => void loadMotorParameters(activeConnection, token));
   });
 
+  function initialIdentStates(): Record<IdentKey, IdentState> {
+    return {
+      rsLs: { phase: "idle", message: "" },
+      flux: { phase: "idle", message: "" },
+      jb: { phase: "idle", message: "" },
+    };
+  }
+
+  function handleKey(handle: ActionHandle | ActionCompletion): string {
+    return `${handle.txn}:${handle.actionId}`;
+  }
+
   function valueText(value: ParameterValue | null | undefined): string {
     if (!value) return "—";
     if (value.type === "position") return `${value.value.turns}, ${value.value.theta}`;
@@ -57,9 +171,20 @@
     return String(value.value);
   }
 
+  function numericValue(value: ParameterValue | null | undefined): number | null {
+    if (!value || value.type === "position") return null;
+    return Number(value.value);
+  }
+
   function displayValue(symbol?: string): string {
     if (!symbol) return "—";
     return valueText(values[symbol]);
+  }
+
+  function identifiedText(row: RowSpec): string {
+    if (!row.identifiedSymbol) return "—";
+    if (row.identifiedValidSymbol && numericValue(values[row.identifiedValidSymbol]) !== 1) return "—";
+    return displayValue(row.identifiedSymbol);
   }
 
   function unitFor(symbol: string): string {
@@ -84,12 +209,15 @@
   async function loadMotorParameters(activeConnection: ConnectionInfo, token: number) {
     loading = true;
     try {
-      const registry = await listParameters();
+      const [registry, actionRegistry] = await Promise.all([listParameters(), listActions()]);
       if (token !== generation || connection !== activeConnection) return;
 
+      actions = Object.fromEntries(actionRegistry.map((item) => [item.symbol, item]));
+
       const wanted = new Set([
-        ...ROWS.flatMap((row) => [row.activeSymbol, row.identifiedSymbol].filter(Boolean) as string[]),
+        ...ROWS.flatMap((row) => [row.activeSymbol, row.identifiedSymbol, row.identifiedValidSymbol].filter(Boolean) as string[]),
         identificationCurrentSymbol,
+        failReasonSymbol,
       ]);
       const entries = registry.filter((item) => wanted.has(item.symbol));
       metadata = Object.fromEntries(entries.map((item) => [item.symbol, item]));
@@ -113,6 +241,28 @@
     }
   }
 
+  async function refreshSymbols(symbols: string[]): Promise<Record<string, ParameterValue | null>> {
+    const entries = symbols
+      .map((symbol) => metadata[symbol])
+      .filter((item): item is ParameterMetadata => !!item && item.access.toLowerCase().includes("r"));
+    if (entries.length === 0) return {};
+
+    const results = await readParameters(entries.map((item) => item.id));
+    const byId = new Map(results.map((item) => [item.id, item]));
+    const patch: Record<string, ParameterValue | null> = {};
+    const draftPatch: Record<string, string> = {};
+
+    for (const item of entries) {
+      const result = byId.get(item.id);
+      patch[item.symbol] = result?.value ?? null;
+      if (result?.value) draftPatch[item.symbol] = valueText(result.value);
+    }
+
+    values = { ...values, ...patch };
+    drafts = { ...drafts, ...draftPatch };
+    return patch;
+  }
+
   async function commit(symbol: string) {
     const meta = metadata[symbol];
     if (!meta || !isWritable(symbol) || writing.has(symbol)) return;
@@ -122,6 +272,12 @@
       await writeParameter(meta.id, value);
       values = { ...values, [symbol]: value };
       drafts = { ...drafts, [symbol]: valueText(value) };
+
+      for (const identKey of Object.keys(IDENT_CONFIGS) as IdentKey[]) {
+        if (IDENT_CONFIGS[identKey].activeSymbols.includes(symbol) && identStates[identKey].phase === "applied") {
+          setIdentState(identKey, "idle");
+        }
+      }
     } catch (error) {
       onError(error);
       drafts = { ...drafts, [symbol]: valueText(values[symbol]) };
@@ -143,13 +299,107 @@
       (event.currentTarget as HTMLInputElement).blur();
     }
   }
+
+  function setIdentState(identKey: IdentKey, phase: IdentPhase, message = "") {
+    identStates = { ...identStates, [identKey]: { phase, message } };
+  }
+
+  function actionAvailable(symbol: string): boolean {
+    return !!actions[symbol];
+  }
+
+  function identifyBusy(): boolean {
+    return (Object.values(identStates) as IdentState[]).some((state) => state.phase === "running" || state.phase === "applying");
+  }
+
+  async function startIdentification(identKey: IdentKey) {
+    const config = IDENT_CONFIGS[identKey];
+    if (!actionAvailable(config.startAction) || identifyBusy()) return;
+
+    for (const otherKey of Object.keys(IDENT_CONFIGS) as IdentKey[]) {
+      if (otherKey !== identKey && identStates[otherKey].phase === "ready") setIdentState(otherKey, "idle");
+    }
+
+    setIdentState(identKey, "running");
+    try {
+      const handle = await startAction(config.startAction);
+      pendingHandles = {
+        ...pendingHandles,
+        [handleKey(handle)]: { identKey, kind: "identify" },
+      };
+    } catch (error) {
+      setIdentState(identKey, "failed", error instanceof Error ? error.message : String(error));
+      onError(error);
+    }
+  }
+
+  async function applyIdentification(identKey: IdentKey) {
+    if (!actionAvailable(applyActionSymbol) || identifyBusy() || identStates[identKey].phase !== "ready") return;
+
+    setIdentState(identKey, "applying");
+    try {
+      const handle = await startAction(applyActionSymbol);
+      pendingHandles = {
+        ...pendingHandles,
+        [handleKey(handle)]: { identKey, kind: "apply" },
+      };
+    } catch (error) {
+      setIdentState(identKey, "failed", error instanceof Error ? error.message : String(error));
+      onError(error);
+    }
+  }
+
+  async function handleActionCompleted(completion: ActionCompletion) {
+    let pending = pendingHandles[handleKey(completion)];
+
+    if (!pending) {
+      const runningKey = (Object.keys(IDENT_CONFIGS) as IdentKey[]).find(
+        (key) => identStates[key].phase === "running" && IDENT_CONFIGS[key].startAction === completion.symbol,
+      );
+      if (runningKey) pending = { identKey: runningKey, kind: "identify" };
+      else if (completion.symbol === applyActionSymbol) {
+        const applyingKey = (Object.keys(IDENT_CONFIGS) as IdentKey[]).find((key) => identStates[key].phase === "applying");
+        if (applyingKey) pending = { identKey: applyingKey, kind: "apply" };
+      }
+    }
+
+    if (!pending) return;
+
+    const nextPending = { ...pendingHandles };
+    delete nextPending[handleKey(completion)];
+    pendingHandles = nextPending;
+
+    if (!completion.ok) {
+      setIdentState(pending.identKey, "failed", completion.status);
+      return;
+    }
+
+    const config = IDENT_CONFIGS[pending.identKey];
+    try {
+      if (pending.kind === "identify") {
+        const patch = await refreshSymbols([...config.resultSymbols, config.validSymbol, failReasonSymbol]);
+        if (numericValue(patch[config.validSymbol]) === 1) {
+          setIdentState(pending.identKey, "ready");
+        } else {
+          const reason = numericValue(patch[failReasonSymbol]);
+          setIdentState(pending.identKey, "failed", reason && reason !== 0 ? `Reason ${reason}` : "No valid result");
+        }
+      } else {
+        await refreshSymbols(config.activeSymbols);
+        setIdentState(pending.identKey, "applied");
+      }
+    } catch (error) {
+      setIdentState(pending.identKey, "failed", error instanceof Error ? error.message : String(error));
+      onError(error);
+    }
+  }
 </script>
 
 <div class="motor-root">
   <section class="page-toolbar">
     <div class="page-title">MOTOR</div>
     <div class="toolbar-actions">
-      <button class="tool-button" disabled={!connection || loading} onclick={() => connection && void loadMotorParameters(connection, ++generation)} title="Refresh motor parameters">
+      <button class="tool-button" disabled={!connection || loading || identifyBusy()} onclick={() => connection && void loadMotorParameters(connection, ++generation)} title="Refresh motor parameters">
         <i class={`codicon ${loading ? "codicon-loading codicon-modifier-spin" : "codicon-refresh"}`}></i>
         Refresh
       </button>
@@ -161,74 +411,104 @@
       <div class="empty-state"><i class="codicon codicon-plug"></i><div>Connect a device to configure motor parameters.</div></div>
     {:else}
       <div class="motor-sheet">
-        <div class="sheet-heading">
+        <section class="motor-section">
           <div class="section-title">Motor Parameters</div>
-          <label class="ident-current">
-            <span>Identification current</span>
-            {#if metadata[identificationCurrentSymbol]}
-              <span class="inline-editor">
-                <input
-                  class="compact-input mono"
-                  value={drafts[identificationCurrentSymbol] ?? ""}
-                  disabled={!isWritable(identificationCurrentSymbol) || writing.has(identificationCurrentSymbol)}
-                  oninput={(event) => drafts = { ...drafts, [identificationCurrentSymbol]: (event.currentTarget as HTMLInputElement).value }}
-                  onblur={() => void commit(identificationCurrentSymbol)}
-                  onkeydown={(event) => handleKeydown(event, identificationCurrentSymbol)}
-                />
-                <span class="unit">{unitFor(identificationCurrentSymbol)}</span>
-              </span>
-            {:else}
-              <span class="muted">—</span>
-            {/if}
-          </label>
-        </div>
 
-        <div class="parameter-grid" role="table" aria-label="Motor parameters">
-          <div class="grid-header" role="row">
-            <div role="columnheader">Parameter</div>
-            <div role="columnheader">Default</div>
-            <div role="columnheader">Active</div>
-            <div role="columnheader">Identified</div>
-            <div role="columnheader">Action</div>
+          <div class="parameter-grid" role="table" aria-label="Motor parameters">
+            <div class="grid-header" role="row">
+              <div role="columnheader">Parameter</div>
+              <div role="columnheader">Default</div>
+              <div role="columnheader">Active</div>
+              <div role="columnheader">Identified</div>
+              <div role="columnheader">Action</div>
+            </div>
+
+            {#each ROWS as row}
+              <div class="grid-row" role="row">
+                <div class="parameter-name" role="cell">{row.label}</div>
+                <div class="default-value muted" role="cell" title="Firmware compiled defaults are not exposed by the current HostSchema">—</div>
+                <div role="cell">
+                  {#if metadata[row.activeSymbol]}
+                    <span class="inline-editor">
+                      <input
+                        class="compact-input mono"
+                        value={drafts[row.activeSymbol] ?? ""}
+                        disabled={!isWritable(row.activeSymbol) || writing.has(row.activeSymbol) || identifyBusy()}
+                        oninput={(event) => drafts = { ...drafts, [row.activeSymbol]: (event.currentTarget as HTMLInputElement).value }}
+                        onblur={() => void commit(row.activeSymbol)}
+                        onkeydown={(event) => handleKeydown(event, row.activeSymbol)}
+                      />
+                      <span class="unit">{unitFor(row.activeSymbol)}</span>
+                    </span>
+                  {:else}
+                    <span class="muted">—</span>
+                  {/if}
+                </div>
+                <div class="identified-value mono" role="cell">{identifiedText(row)}</div>
+                <div class="action-cell" role="cell">
+                  {#if row.actionLabel && row.identKey}
+                    {@const state = identStates[row.identKey]}
+                    {@const startSymbol = IDENT_CONFIGS[row.identKey].startAction}
+                    <vscode-button
+                      secondary
+                      disabled={!actionAvailable(startSymbol) || identifyBusy()}
+                      title={actionAvailable(startSymbol) ? `Start ${row.actionLabel} identification` : `${row.actionLabel} identification is not exposed by this firmware`}
+                      onclick={() => void startIdentification(row.identKey!)}
+                    >{row.actionLabel}</vscode-button>
+
+                    {#if state.phase === "running"}
+                      <span class="action-status state-running"><i class="codicon codicon-loading codicon-modifier-spin"></i> Running</span>
+                    {:else if state.phase === "ready"}
+                      <vscode-button class="apply-button" disabled={!actionAvailable(applyActionSymbol)} onclick={() => void applyIdentification(row.identKey!)} title="Apply the latest valid identification result to Active parameters">Apply</vscode-button>
+                    {:else if state.phase === "applying"}
+                      <span class="action-status state-running"><i class="codicon codicon-loading codicon-modifier-spin"></i> Applying</span>
+                    {:else if state.phase === "applied"}
+                      <span class="action-status state-success"><i class="codicon codicon-check"></i> Applied</span>
+                    {:else if state.phase === "failed"}
+                      <span class="action-status state-failed" title={state.message}><i class="codicon codicon-error"></i> Failed</span>
+                    {:else}
+                      <span class="action-status muted">—</span>
+                    {/if}
+                  {:else}
+                    <span class="muted">—</span>
+                  {/if}
+                </div>
+              </div>
+            {/each}
           </div>
+        </section>
 
-          {#each ROWS as row}
-            <div class="grid-row" role="row">
-              <div class="parameter-name" role="cell">{row.label}</div>
-              <div class="default-value muted" role="cell" title="Firmware compiled defaults are not exposed by the current HostSchema">—</div>
+        <section class="motor-section identification-settings">
+          <div class="section-title">Identification Settings</div>
+          <div class="settings-grid" role="table" aria-label="Identification settings">
+            <div class="settings-header" role="row">
+              <div role="columnheader">Parameter</div>
+              <div role="columnheader">Value</div>
+              <div role="columnheader">Used by</div>
+            </div>
+            <div class="settings-row" role="row">
+              <div class="parameter-name" role="cell">I/F startup current</div>
               <div role="cell">
-                {#if metadata[row.activeSymbol]}
+                {#if metadata[identificationCurrentSymbol]}
                   <span class="inline-editor">
                     <input
                       class="compact-input mono"
-                      value={drafts[row.activeSymbol] ?? ""}
-                      disabled={!isWritable(row.activeSymbol) || writing.has(row.activeSymbol)}
-                      oninput={(event) => drafts = { ...drafts, [row.activeSymbol]: (event.currentTarget as HTMLInputElement).value }}
-                      onblur={() => void commit(row.activeSymbol)}
-                      onkeydown={(event) => handleKeydown(event, row.activeSymbol)}
+                      value={drafts[identificationCurrentSymbol] ?? ""}
+                      disabled={!isWritable(identificationCurrentSymbol) || writing.has(identificationCurrentSymbol) || identifyBusy()}
+                      oninput={(event) => drafts = { ...drafts, [identificationCurrentSymbol]: (event.currentTarget as HTMLInputElement).value }}
+                      onblur={() => void commit(identificationCurrentSymbol)}
+                      onkeydown={(event) => handleKeydown(event, identificationCurrentSymbol)}
                     />
-                    <span class="unit">{unitFor(row.activeSymbol)}</span>
+                    <span class="unit">{unitFor(identificationCurrentSymbol)}</span>
                   </span>
                 {:else}
                   <span class="muted">—</span>
                 {/if}
               </div>
-              <div class="identified-value mono" role="cell">{displayValue(row.identifiedSymbol)}</div>
-              <div class="action-cell" role="cell">
-                {#if row.actionLabel}
-                  <vscode-button secondary disabled title="Identification actions will use the shared Application Action API once surfaced to the desktop client">{row.actionLabel}</vscode-button>
-                  <span class="action-status muted">—</span>
-                {:else}
-                  <span class="muted">—</span>
-                {/if}
-              </div>
+              <div class="muted" role="cell">Flux startup</div>
             </div>
-          {/each}
-        </div>
-
-        <div class="sheet-note">
-          Active values use the shared Parameter service. Default values and Identification Actions remain read-only placeholders until those Application API contracts are exposed to the desktop client.
-        </div>
+          </div>
+        </section>
       </div>
     {/if}
   </section>
@@ -253,42 +533,40 @@
     max-width: 980px;
   }
 
-  .sheet-heading {
-    display: grid;
-    grid-template-columns: minmax(220px, 1fr) minmax(320px, auto);
-    align-items: center;
-    gap: 24px;
-    margin-bottom: 18px;
+  .motor-section + .motor-section {
+    margin-top: 30px;
   }
 
   .section-title {
+    margin-bottom: 12px;
     font-size: 13px;
     font-weight: 600;
     color: var(--vscode-foreground);
   }
 
-  .ident-current {
-    display: flex;
-    align-items: center;
-    justify-content: flex-end;
-    gap: 10px;
-    color: var(--vscode-descriptionForeground);
-    font-size: 12px;
-  }
-
-  .parameter-grid {
+  .parameter-grid,
+  .settings-grid {
     min-width: 760px;
   }
 
   .grid-header,
   .grid-row {
     display: grid;
-    grid-template-columns: minmax(120px, 0.85fr) minmax(120px, 0.8fr) minmax(205px, 1.35fr) minmax(150px, 1fr) minmax(210px, 1.25fr);
+    grid-template-columns: minmax(120px, 0.85fr) minmax(120px, 0.8fr) minmax(205px, 1.35fr) minmax(150px, 1fr) minmax(250px, 1.5fr);
     column-gap: 18px;
     align-items: center;
   }
 
-  .grid-header {
+  .settings-header,
+  .settings-row {
+    display: grid;
+    grid-template-columns: minmax(180px, 1fr) minmax(240px, 1.35fr) minmax(160px, 1fr);
+    column-gap: 18px;
+    align-items: center;
+  }
+
+  .grid-header,
+  .settings-header {
     min-height: 34px;
     border-bottom: 1px solid var(--vscode-panel-border);
     color: var(--vscode-descriptionForeground);
@@ -296,7 +574,8 @@
     font-weight: 600;
   }
 
-  .grid-row {
+  .grid-row,
+  .settings-row {
     min-height: 44px;
     border-bottom: 1px solid color-mix(in srgb, var(--vscode-panel-border) 55%, transparent);
     font-size: 12px;
@@ -336,29 +615,32 @@
   }
 
   .action-status {
+    display: inline-flex;
+    align-items: center;
+    gap: 5px;
     overflow: hidden;
     text-overflow: ellipsis;
     white-space: nowrap;
   }
 
+  .state-running {
+    color: var(--nmixx-status-runningForeground);
+  }
+
+  .state-success {
+    color: var(--nmixx-status-successForeground);
+  }
+
+  .state-failed {
+    color: var(--nmixx-status-errorForeground);
+  }
+
+  .apply-button {
+    --vscode-button-background: var(--nmixx-action-successBackground);
+    --vscode-button-hoverBackground: var(--nmixx-action-successHoverBackground);
+  }
+
   .muted {
     color: var(--vscode-descriptionForeground);
-  }
-
-  .sheet-note {
-    margin-top: 14px;
-    color: var(--vscode-descriptionForeground);
-    font-size: 11px;
-    line-height: 1.45;
-  }
-
-  @media (max-width: 860px) {
-    .sheet-heading {
-      grid-template-columns: 1fr;
-    }
-
-    .ident-current {
-      justify-content: flex-start;
-    }
   }
 </style>

@@ -2,12 +2,12 @@ use std::sync::Mutex;
 use std::time::Duration;
 
 use nmixx_app::{
-    DEFAULT_USB_BAUD, DevicePlotCapabilities, DeviceSession, HostSchema, ParameterMetadata,
-    ParameterService, ParameterValue, PositionValue, RangeMetadata, SchemaNumber, ScopeSession,
-    StreamState,
+    ActionMetadata, AxdrStatus, DEFAULT_USB_BAUD, DevicePlotCapabilities, DeviceSession, HostSchema,
+    ParameterMetadata, ParameterService, ParameterValue, PositionValue, RangeMetadata,
+    SchemaNumber, ScopeSession, SessionEvent, StreamState,
 };
 use serde::{Deserialize, Serialize};
-use tauri::State;
+use tauri::{Emitter, State};
 
 #[derive(Default)]
 struct DesktopState {
@@ -116,6 +116,44 @@ impl From<&ParameterMetadata> for ParameterMetadataDto {
             allowed_symbols: value.allowed_symbols.clone(),
         }
     }
+}
+
+#[derive(Debug, Serialize)]
+#[serde(rename_all = "camelCase")]
+struct ActionMetadataDto {
+    id: u16,
+    symbol: String,
+    name: Option<String>,
+    description: String,
+}
+
+impl From<&ActionMetadata> for ActionMetadataDto {
+    fn from(value: &ActionMetadata) -> Self {
+        Self {
+            id: value.id,
+            symbol: value.symbol.clone(),
+            name: value.name.clone(),
+            description: value.description.clone(),
+        }
+    }
+}
+
+#[derive(Debug, Clone, Serialize)]
+#[serde(rename_all = "camelCase")]
+struct ActionHandleDto {
+    txn: u8,
+    action_id: u16,
+    symbol: String,
+}
+
+#[derive(Debug, Clone, Serialize)]
+#[serde(rename_all = "camelCase")]
+struct ActionCompletionDto {
+    txn: u8,
+    action_id: u16,
+    symbol: String,
+    status: String,
+    ok: bool,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -368,6 +406,65 @@ fn parameter_write(
 }
 
 #[tauri::command]
+fn action_list(state: State<'_, Mutex<DesktopState>>) -> Result<Vec<ActionMetadataDto>, String> {
+    let guard = state.lock().map_err(|_| "desktop state is poisoned".to_owned())?;
+    let schema = guard.schema.as_ref().ok_or("HostSchema is not loaded")?;
+    Ok(schema.actions.iter().map(Into::into).collect())
+}
+
+#[tauri::command]
+fn action_start(
+    app: tauri::AppHandle,
+    state: State<'_, Mutex<DesktopState>>,
+    key: String,
+) -> Result<ActionHandleDto, String> {
+    let (session, action_id, symbol) = {
+        let guard = state.lock().map_err(|_| "desktop state is poisoned".to_owned())?;
+        let session = guard.session.clone().ok_or("device is not connected")?;
+        let schema = guard.schema.as_ref().ok_or("HostSchema is not loaded")?;
+        let action = schema
+            .action_by_key(&key)
+            .ok_or_else(|| format!("Action '{key}' is not exposed by the HostSchema"))?;
+        (session, action.id, action.symbol.clone())
+    };
+
+    let events = session.subscribe().map_err(|error| error.to_string())?;
+    let handle = session.action_start(action_id).map_err(|error| error.to_string())?;
+    let result = ActionHandleDto {
+        txn: handle.txn.get(),
+        action_id,
+        symbol: symbol.clone(),
+    };
+
+    std::thread::spawn(move || {
+        while let Ok(event) = events.recv() {
+            let SessionEvent::ActionCompleted {
+                handle: completed,
+                status,
+            } = event
+            else {
+                continue;
+            };
+            if completed != handle {
+                continue;
+            }
+
+            let payload = ActionCompletionDto {
+                txn: completed.txn.get(),
+                action_id: completed.action_id,
+                symbol,
+                status: format!("{status:?}"),
+                ok: status == AxdrStatus::Ok,
+            };
+            let _ = app.emit("action-completed", payload);
+            break;
+        }
+    });
+
+    Ok(result)
+}
+
+#[tauri::command]
 fn scope_configure(
     state: State<'_, Mutex<DesktopState>>,
     parameter_ids: Vec<u16>,
@@ -503,6 +600,8 @@ fn main() {
             parameter_read,
             parameter_read_many,
             parameter_write,
+            action_list,
+            action_start,
             scope_configure,
             scope_live,
             scope_pause,
