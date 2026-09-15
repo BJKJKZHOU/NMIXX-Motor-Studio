@@ -6,6 +6,7 @@
   import ScopePage from "./analysis/scope/ScopePage.svelte";
   import type { ScopeSummary } from "./analysis/scope/types";
   import ParameterTablePage from "./parameters/ParameterTablePage.svelte";
+  import MotorPage from "./motor/MotorPage.svelte";
 
   type Page = "connection" | "motor" | "encoder" | "limits" | "control" | "analysis" | "parameters" | "events" | "automation";
 
@@ -73,8 +74,12 @@
     <main class="main-area">
       {#if activePage === "connection"}
         <ConnectionPage {connection} onConnected={(next) => setConnection(next)} onDisconnected={() => setConnection(undefined)} onError={setError} />
+      {:else if activePage === "motor"}
+        <div class="domain-page-container">
+          <MotorPage {connection} onError={setError} />
+        </div>
       {:else if activePage === "parameters"}
-        <div class="parameter-page-container">
+        <div class="domain-page-container">
           <ParameterTablePage {connection} onError={setError} />
         </div>
       {:else if activePage !== "analysis"}
@@ -103,7 +108,7 @@
 </div>
 
 <style>
-  .parameter-page-container {
+  .domain-page-container {
     grid-row: 1 / -1;
     min-width: 0;
     min-height: 0;
