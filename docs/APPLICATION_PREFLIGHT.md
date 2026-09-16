@@ -126,19 +126,17 @@ A business page organizes existing Application API and Parameter concepts around
 For example, Limits / Safety may group:
 
 ```text
-Current
+Operating Limits
   Current limit
-
-Speed
   Maximum speed
+
+Motion Limits
+  Motion speed
   Acceleration
   Deceleration
-
-Position
-  Motion / position limits
 ```
 
-The page may explain why a value matters and may highlight missing prerequisites, but it does not become the authority that decides whether an Action is safe to start.
+The Limits / Safety page is intentionally a configuration page. It does not show which Action uses a limit and does not add workflow-specific warnings or explanations to normal page content.
 
 ## Limits are derived from Parameter values
 
@@ -161,9 +159,126 @@ CurrentLimitReady = PARAM_LIMIT_I_MAX is valid
 SpeedLimitReady   = PARAM_LIMIT_WM_MAX is valid
 ```
 
-Validation may include conditions such as finite values, positive ranges and firmware-defined absolute bounds.
-
 A separate `limits_page_visited` or equivalent flag must not be used as the source of truth.
+
+## Limits / Safety page value model
+
+The Limits / Safety page presents the actual limit sources rather than a synthetic `Configured / Effective` pair.
+
+For operating limits, the intended presentation is:
+
+```text
+Operating Limits
+
+Parameter          User Limit              Hardware Limit
+----------------------------------------------------------
+Current            [ 8.000 ] A             10.000 A
+Maximum speed      [ 400.0 ] rad/s         300.0 rad/s
+```
+
+The columns have explicit meanings:
+
+- **User Limit** is the user-configured limit and is editable.
+- **Hardware Limit** is the device-side motor/hardware limit and is read-only.
+- the GUI does not replace either source with a single derived value.
+
+For speed, the motion planner adds another possible limiting source:
+
+```text
+Motion Limits
+
+Parameter          Value
+-------------------------------
+Motion speed       [ 250.0 ] rad/s
+Acceleration       [ 100.0 ] rad/s^2
+Deceleration       [ 100.0 ] rad/s^2
+```
+
+The active runtime limit is conceptually the minimum applicable source:
+
+```text
+CurrentLimit = min(UserCurrentLimit, HardwareCurrentLimit)
+
+SpeedLimit = min(
+    UserSpeedLimit,
+    HardwareSpeedLimit,
+    MotionSpeedLimit
+)
+```
+
+The UI does not need to print this formula or add explanatory text to the page. It expresses the result visually by highlighting the source that is currently limiting the system.
+
+### User values may exceed hardware limits
+
+The intended product semantics are that a user-configured limit may be higher than the hardware/device limit.
+
+Example:
+
+```text
+User current limit      20 A
+Hardware current limit  10 A
+Actual limiting source  Hardware
+```
+
+This is not treated as a configuration error in the Limits page:
+
+- do not show a warning merely because the user value exceeds the hardware value;
+- do not color the value red;
+- do not reject it at the host UI layer;
+- retain and display the user's configured value;
+- visually mark the hardware value as the currently active limiting source.
+
+The device-side control path remains responsible for enforcing the stricter limit.
+
+### Visual state semantics
+
+The page uses two distinct low-intensity visual states. They must not be represented by the same background treatment.
+
+**Configured state**
+
+Indicates that a user-editable value has been configured. Use a subtle neutral background lift. It does not mean that the value is currently limiting the system and it does not mean that the value has been validated as safe by the GUI.
+
+**Active limiting source**
+
+Indicates which source currently determines the runtime limit. Use a visually distinct, low-saturation accent background.
+
+Examples:
+
+```text
+User = 8 A, Hardware = 10 A
+
+User Limit              Hardware Limit
+[ 8 A ]                 10 A
+  configured + active
+```
+
+```text
+User = 20 A, Hardware = 10 A
+
+User Limit              Hardware Limit
+[ 20 A ]                [ 10 A ]
+  configured               active
+```
+
+For speed, if the motion limit is lower than both user and hardware limits, neither operating-limit cell is marked active; the Motion speed row is the active limiting source instead.
+
+Do not use success/error semantics such as green = valid or red = invalid for this source selection. The highlight communicates which value is in force, not a pass/fail judgement.
+
+### Current firmware mismatch
+
+The current AxDr_L firmware schema still constrains `PARAM_LIMIT_I_MAX` and `PARAM_LIMIT_WM_MAX` with `Motor_Lim` as a maximum Parameter range. That means a host write above the device limit is currently rejected before the runtime `min(...)` limiting logic can preserve the larger user value.
+
+This does not match the intended Limits page semantics above.
+
+The firmware change is intentionally deferred. When the firmware is updated, the intended direction is:
+
+- user limits remain positive/finite configuration values;
+- they are not rejected solely for exceeding the corresponding device limit;
+- runtime control continues to enforce the stricter source;
+- hardware/device limits are exposed as read-only host-visible values so the Limits page can display them directly;
+- existing effective-limit values may remain available for diagnostics/API use even though the page does not need a separate Effective column.
+
+Until that firmware change is made, the GUI implementation must not pretend that higher-than-hardware user values are already supported by the device.
 
 ## Action-specific prerequisites
 
@@ -217,19 +332,7 @@ issues:
     suggested_domain: LimitsSafety
 ```
 
-The GUI can then render a focused message such as:
-
-```text
-Flux identification cannot start yet.
-
-Configure:
-- Current limit
-- Maximum speed
-
-[Configure Limits]
-```
-
-Selecting the recovery action may navigate to Limits / Safety and highlight the relevant fields.
+The GUI may provide navigation to the relevant business page. The destination page itself remains a normal configuration page; it does not need to render Action-specific context such as `required by Flux`.
 
 CLI and automation can consume the same structured issues without depending on GUI-specific text.
 
@@ -241,11 +344,9 @@ Allowed:
 
 ```text
 Motor page
-  -> preflight Flux for display
-  -> show "Requires motor limits"
-  -> user clicks Flux
-  -> Application starts Flux
-  -> Application performs authoritative preflight again
+  -> user requests Flux
+  -> Application performs preflight
+  -> if a required limit is missing, GUI offers navigation to Limits / Safety
 ```
 
 Not allowed:
@@ -257,22 +358,14 @@ Motor page
   -> bypasses Application policy
 ```
 
-When a missing prerequisite belongs naturally to another business page, the GUI should offer navigation rather than duplicating the configuration controls everywhere.
+When a missing prerequisite belongs naturally to another business page, the GUI may offer navigation rather than duplicating the configuration controls everywhere.
 
-For motor limits this means:
+After navigation, Limits / Safety remains a plain configuration page. It does not need:
 
-```text
-Motor page
-    |
-    | missing I_MAX / WM_MAX
-    v
-"Configure Limits"
-    |
-    v
-Limits / Safety page
-    |
-    +--> same ParameterService
-```
+- `required by Flux` labels;
+- missing-parameter banners;
+- Action-specific field highlighting;
+- per-limit explanations of which operation consumes a value.
 
 ## Identification-specific application
 
@@ -373,5 +466,7 @@ GUI business pages
     +-- present structured preflight failures
     +-- navigate the user to the right configuration page
 ```
+
+The Limits / Safety page additionally presents the independent User, Hardware, and Motion limit sources and visually indicates which source is currently active, without turning normal source selection into a warning/error state.
 
 This keeps the Parameters page complete, keeps domain pages useful, and keeps motor-motion readiness policy consistent across GUI, CLI and automation.
