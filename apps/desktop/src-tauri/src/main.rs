@@ -2,12 +2,15 @@ use std::sync::Mutex;
 use std::time::Duration;
 
 use nmixx_app::{
-    ActionMetadata, AxdrStatus, DEFAULT_USB_BAUD, DevicePlotCapabilities, DeviceSession, HostSchema,
-    ParameterMetadata, ParameterService, ParameterValue, PositionValue, RangeMetadata,
-    SchemaNumber, ScopeSession, SessionEvent, StreamState,
+    ActionHandle, ActionMetadata, AxdrStatus, DEFAULT_USB_BAUD, DevicePlotCapabilities,
+    DeviceSession, HostSchema, MotorActionService, ParameterMetadata, ParameterService,
+    ParameterValue, PositionValue, RangeMetadata, SchemaNumber, ScopeSession, SessionEvent,
+    StreamState,
 };
 use serde::{Deserialize, Serialize};
 use tauri::{Emitter, State};
+
+const PHASE_SEARCH_SEMANTIC_ACTION: &str = "ACTION_PHASE_SEARCH_START";
 
 #[derive(Default)]
 struct DesktopState {
@@ -275,6 +278,38 @@ fn parameter_service(state: &State<'_, Mutex<DesktopState>>) -> Result<Parameter
         .ok_or_else(|| "device is not connected".to_owned())
 }
 
+fn spawn_action_completion(
+    app: tauri::AppHandle,
+    events: std::sync::mpsc::Receiver<SessionEvent>,
+    handle: ActionHandle,
+    symbol: String,
+) {
+    std::thread::spawn(move || {
+        while let Ok(event) = events.recv() {
+            let SessionEvent::ActionCompleted {
+                handle: completed,
+                status,
+            } = event
+            else {
+                continue;
+            };
+            if completed != handle {
+                continue;
+            }
+
+            let payload = ActionCompletionDto {
+                txn: completed.txn.get(),
+                action_id: completed.action_id,
+                symbol,
+                status: format!("{status:?}"),
+                ok: status == AxdrStatus::Ok,
+            };
+            let _ = app.emit("action-completed", payload);
+            break;
+        }
+    });
+}
+
 #[tauri::command]
 fn device_list() -> Result<Vec<String>, String> {
     DeviceSession::available_usb_ports().map_err(|error| error.to_string())
@@ -435,32 +470,36 @@ fn action_start(
         action_id,
         symbol: symbol.clone(),
     };
+    spawn_action_completion(app, events, handle, symbol);
+    Ok(result)
+}
 
-    std::thread::spawn(move || {
-        while let Ok(event) = events.recv() {
-            let SessionEvent::ActionCompleted {
-                handle: completed,
-                status,
-            } = event
-            else {
-                continue;
-            };
-            if completed != handle {
-                continue;
-            }
+#[tauri::command]
+fn phase_search_start(
+    app: tauri::AppHandle,
+    state: State<'_, Mutex<DesktopState>>,
+) -> Result<ActionHandleDto, String> {
+    let (session, schema) = {
+        let guard = state.lock().map_err(|_| "desktop state is poisoned".to_owned())?;
+        (
+            guard.session.clone().ok_or("device is not connected")?,
+            guard.schema.clone().ok_or("HostSchema is not loaded")?,
+        )
+    };
 
-            let payload = ActionCompletionDto {
-                txn: completed.txn.get(),
-                action_id: completed.action_id,
-                symbol,
-                status: format!("{status:?}"),
-                ok: status == AxdrStatus::Ok,
-            };
-            let _ = app.emit("action-completed", payload);
-            break;
-        }
-    });
-
+    // Subscribe before the workflow starts. The receiver may observe the
+    // intermediate Enable completion; the completion forwarder ignores it and
+    // waits for the returned final Run handle.
+    let events = session.subscribe().map_err(|error| error.to_string())?;
+    let service = MotorActionService::new(session, schema);
+    let handle = service.phase_search_start().map_err(|error| error.to_string())?;
+    let symbol = PHASE_SEARCH_SEMANTIC_ACTION.to_owned();
+    let result = ActionHandleDto {
+        txn: handle.txn.get(),
+        action_id: handle.action_id,
+        symbol: symbol.clone(),
+    };
+    spawn_action_completion(app, events, handle, symbol);
     Ok(result)
 }
 
@@ -602,6 +641,7 @@ fn main() {
             parameter_write,
             action_list,
             action_start,
+            phase_search_start,
             scope_configure,
             scope_live,
             scope_pause,
