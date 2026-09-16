@@ -5,6 +5,7 @@
 //! application-facing access to that device.
 
 mod connection;
+mod motor_actions;
 mod parameter_service;
 mod plot_capabilities;
 mod schema;
@@ -15,6 +16,7 @@ mod stream;
 mod stream_pipeline;
 
 pub use connection::DEFAULT_USB_BAUD;
+pub use motor_actions::{MotorActionError, MotorActionService};
 pub use parameter_service::{ParameterService, ParameterServiceError};
 pub use plot_capabilities::{
     DevicePlotCapabilities, DevicePlotChannel, PlotCapabilitiesError, PlotChannelInfo,
