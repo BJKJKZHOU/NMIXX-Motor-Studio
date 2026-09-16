@@ -7,6 +7,7 @@
   import type { ScopeSummary } from "./analysis/scope/types";
   import ParameterTablePage from "./parameters/ParameterTablePage.svelte";
   import MotorPage from "./motor/MotorPage.svelte";
+  import EncoderPage from "./encoder/EncoderPage.svelte";
   import LimitsPage from "./limits/LimitsPage.svelte";
 
   type Page = "connection" | "motor" | "encoder" | "limits" | "control" | "analysis" | "parameters" | "events" | "automation";
@@ -78,6 +79,10 @@
       {:else if activePage === "motor"}
         <div class="domain-page-container">
           <MotorPage {connection} onError={setError} />
+        </div>
+      {:else if activePage === "encoder"}
+        <div class="domain-page-container">
+          <EncoderPage {connection} onError={setError} />
         </div>
       {:else if activePage === "limits"}
         <div class="domain-page-container">
