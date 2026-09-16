@@ -123,20 +123,17 @@ Preflight does not implement the identification algorithm itself.
 
 A business page organizes existing Application API and Parameter concepts around a human workflow.
 
-For example, Limits / Safety may group:
+For Limits / Safety, the first-page model is intentionally narrow:
 
 ```text
 Operating Limits
   Current limit
   Maximum speed
-
-Motion Limits
-  Motion speed
-  Acceleration
-  Deceleration
 ```
 
 The Limits / Safety page is intentionally a configuration page. It does not show which Action uses a limit and does not add workflow-specific warnings or explanations to normal page content.
+
+Motion-profile values such as maximum trajectory velocity, acceleration and deceleration are not operating-limit sources. They describe how a requested motion should be generated and belong to the motion/control workflow rather than Limits / Safety.
 
 ## Limits are derived from Parameter values
 
@@ -163,9 +160,9 @@ A separate `limits_page_visited` or equivalent flag must not be used as the sour
 
 ## Limits / Safety page value model
 
-The Limits / Safety page presents the actual limit sources rather than a synthetic `Configured / Effective` pair.
+The Limits / Safety page presents the actual operating-limit sources rather than a synthetic `Configured / Effective` pair.
 
-For operating limits, the intended presentation is:
+The intended presentation is:
 
 ```text
 Operating Limits
@@ -178,35 +175,61 @@ Maximum speed      [ 400.0 ] rad/s         300.0 rad/s
 
 The columns have explicit meanings:
 
-- **User Limit** is the user-configured limit and is editable.
-- **Hardware Limit** is the device-side motor/hardware limit and is read-only.
+- **User Limit** is the user-configured operating limit and is editable.
+- **Hardware Limit** is the device-side absolute limit and is read-only.
 - the GUI does not replace either source with a single derived value.
 
-For speed, the motion planner adds another possible limiting source:
-
-```text
-Motion Limits
-
-Parameter          Value
--------------------------------
-Motion speed       [ 250.0 ] rad/s
-Acceleration       [ 100.0 ] rad/s^2
-Deceleration       [ 100.0 ] rad/s^2
-```
-
-The active runtime limit is conceptually the minimum applicable source:
+The active operating limit is conceptually:
 
 ```text
 CurrentLimit = min(UserCurrentLimit, HardwareCurrentLimit)
-
-SpeedLimit = min(
-    UserSpeedLimit,
-    HardwareSpeedLimit,
-    MotionSpeedLimit
-)
+SpeedLimit   = min(UserSpeedLimit, HardwareSpeedLimit)
 ```
 
-The UI does not need to print this formula or add explanatory text to the page. It expresses the result visually by highlighting the source that is currently limiting the system.
+Motion-profile parameters are not additional operating-limit sources.
+
+### Motion profile is not a safety limit
+
+Values such as:
+
+```text
+PARAM_MOTION_WM_MAX
+PARAM_MOTION_WM_ACC
+PARAM_MOTION_WM_DEC
+```
+
+belong to the motion command/profile layer.
+
+Their semantic role is:
+
+```text
+Motion profile
+    -> requested trajectory shape / requested maximum trajectory speed
+
+Operating limits
+    -> boundaries the control system must not exceed
+```
+
+A motion profile may request a lower speed than the configured operating limits, but that does not make the profile value a third limit source in the Limits / Safety page.
+
+The intended control layering is:
+
+```text
+User command / trajectory
+        |
+        | Motion profile parameters
+        v
+Motion planner
+        |
+        | generated reference
+        v
+Operating-limit clamp
+        |
+        +-- User Limit
+        +-- Hardware Limit
+        v
+Final reference used by control
+```
 
 ### User values may exceed hardware limits
 
@@ -240,7 +263,7 @@ Indicates that a user-editable value has been configured. Use a subtle neutral b
 
 **Active limiting source**
 
-Indicates which source currently determines the runtime limit. Use a visually distinct, low-saturation accent background.
+Indicates which source currently determines the operating limit. Use a visually distinct, low-saturation accent background.
 
 Examples:
 
@@ -260,29 +283,30 @@ User Limit              Hardware Limit
   configured               active
 ```
 
-For speed, if the motion limit is lower than both user and hardware limits, neither operating-limit cell is marked active; the Motion speed row is the active limiting source instead.
-
 Do not use success/error semantics such as green = valid or red = invalid for this source selection. The highlight communicates which value is in force, not a pass/fail judgement.
 
 ### Current firmware mismatch
 
-The current AxDr_L firmware schema still constrains `PARAM_LIMIT_I_MAX` and `PARAM_LIMIT_WM_MAX` with `Motor_Lim` as a maximum Parameter range. That means a host write above the device limit is currently rejected before the runtime `min(...)` limiting logic can preserve the larger user value.
+The current AxDr_L firmware still has two mismatches with the intended model.
 
-This does not match the intended Limits page semantics above.
+First, the schema constrains `PARAM_LIMIT_I_MAX` and `PARAM_LIMIT_WM_MAX` with `Motor_Lim` as a maximum Parameter range. That means a host write above the device limit is currently rejected before the runtime `min(...)` limiting logic can preserve the larger user value.
 
-The firmware change is intentionally deferred. When the firmware is updated, the intended direction is:
+Second, `Motor_Limit_Get()` currently folds `Motion_Config.Wm_Max` into the effective speed limit. This mixes a trajectory/profile command value into the operating-limit layer.
+
+Both firmware changes are intentionally deferred. The intended direction is:
 
 - user limits remain positive/finite configuration values;
 - they are not rejected solely for exceeding the corresponding device limit;
-- runtime control continues to enforce the stricter source;
+- current and speed operating limits are selected only from User Limit and Hardware Limit;
+- motion-profile parameters remain in the motion-planning layer;
 - hardware/device limits are exposed as read-only host-visible values so the Limits page can display them directly;
 - existing effective-limit values may remain available for diagnostics/API use even though the page does not need a separate Effective column.
 
-Until that firmware change is made, the GUI implementation must not pretend that higher-than-hardware user values are already supported by the device.
+Until those firmware changes are made, the GUI must not pretend that higher-than-hardware user values or the final firmware limit layering are already supported by the device.
 
 ## Action-specific prerequisites
 
-Do not require every Limits / Safety field for every motor-related operation. Each Action checks only the prerequisites that are relevant to that operation.
+Do not require every configuration field for every motor-related operation. Each Action checks only the prerequisites that are relevant to that operation.
 
 Initial intended mapping:
 
@@ -293,7 +317,9 @@ Initial intended mapping:
 | J/B identification | Current limit, speed limit | valid Flux result and suitable motor state |
 | Torque run | Current limit, speed limit | suitable motor/control state |
 | Speed run | Current limit, speed limit | suitable motor/control state |
-| Position run | Current limit, speed limit, relevant motion limits | suitable motor/control state |
+| Position run | Current limit, speed limit | suitable motor/control state |
+
+Motion-profile settings may be required by a particular control or positioning workflow, but they are not operating limits and should not be surfaced as Limits / Safety prerequisites merely because they affect trajectory generation.
 
 The exact Parameter IDs and validity rules should follow the firmware schema and may evolve. The architectural rule is that prerequisite ownership remains in the Application layer.
 
@@ -467,6 +493,6 @@ GUI business pages
     +-- navigate the user to the right configuration page
 ```
 
-The Limits / Safety page additionally presents the independent User, Hardware, and Motion limit sources and visually indicates which source is currently active, without turning normal source selection into a warning/error state.
+The Limits / Safety page presents only the independent User and Hardware operating-limit sources and visually indicates which source is currently active. Motion-profile parameters remain part of motion/control configuration rather than being treated as a third safety-limit source.
 
 This keeps the Parameters page complete, keeps domain pages useful, and keeps motor-motion readiness policy consistent across GUI, CLI and automation.
