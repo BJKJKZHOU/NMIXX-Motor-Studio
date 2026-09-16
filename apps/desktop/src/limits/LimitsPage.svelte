@@ -9,11 +9,6 @@
     onError?: (error: unknown) => void;
   };
 
-  type EditableLimit = {
-    label: string;
-    symbol: string;
-  };
-
   const CURRENT_USER_SYMBOL = "PARAM_LIMIT_I_MAX";
   const SPEED_USER_SYMBOL = "PARAM_LIMIT_WM_MAX";
   const CURRENT_HARDWARE_SYMBOL = "PARAM_LIMIT_I_HARDWARE";
@@ -24,18 +19,11 @@
     { label: "Maximum speed", userSymbol: SPEED_USER_SYMBOL, hardwareSymbol: SPEED_HARDWARE_SYMBOL },
   ];
 
-  const MOTION_LIMITS: EditableLimit[] = [
-    { label: "Motion speed", symbol: "PARAM_MOTION_WM_MAX" },
-    { label: "Acceleration", symbol: "PARAM_MOTION_WM_ACC" },
-    { label: "Deceleration", symbol: "PARAM_MOTION_WM_DEC" },
-  ];
-
   const ALL_SYMBOLS = [
     CURRENT_USER_SYMBOL,
     SPEED_USER_SYMBOL,
     CURRENT_HARDWARE_SYMBOL,
     SPEED_HARDWARE_SYMBOL,
-    ...MOTION_LIMITS.map((item) => item.symbol),
   ];
 
   let { connection, onError = () => undefined }: Props = $props();
@@ -86,6 +74,20 @@
     const value = values[symbol];
     if (!value || value.type === "position") return false;
     return Number.isFinite(Number(value.value));
+  }
+
+  function numericValue(symbol: string): number | null {
+    const value = values[symbol];
+    if (!value || value.type === "position") return null;
+    const number = Number(value.value);
+    return Number.isFinite(number) ? number : null;
+  }
+
+  function activeSource(userSymbol: string, hardwareSymbol: string): "user" | "hardware" | null {
+    const user = numericValue(userSymbol);
+    const hardware = numericValue(hardwareSymbol);
+    if (user === null || hardware === null) return null;
+    return user <= hardware ? "user" : "hardware";
   }
 
   function parameterValue(meta: ParameterMetadata, text: string): ParameterValue {
@@ -221,9 +223,10 @@
             </div>
 
             {#each OPERATING_LIMITS as row}
+              {@const source = activeSource(row.userSymbol, row.hardwareSymbol)}
               <div class="operating-row" role="row">
                 <div class="parameter-name" role="cell">{row.label}</div>
-                <div class:configured-cell={isConfigured(row.userSymbol)} class="limit-cell" role="cell">
+                <div class:configured-cell={isConfigured(row.userSymbol)} class:active-limit-cell={source === "user"} class="limit-cell" role="cell">
                   {#if metadata[row.userSymbol]}
                     <span class="inline-editor">
                       <input
@@ -240,43 +243,10 @@
                     <span class="muted">—</span>
                   {/if}
                 </div>
-                <div class="limit-cell hardware-value mono" role="cell">
+                <div class:active-limit-cell={source === "hardware"} class="limit-cell hardware-value mono" role="cell">
                   {#if metadata[row.hardwareSymbol]}
                     <span>{displayText(row.hardwareSymbol)}</span>
                     <span class="unit">{unitFor(row.hardwareSymbol)}</span>
-                  {:else}
-                    <span class="muted">—</span>
-                  {/if}
-                </div>
-              </div>
-            {/each}
-          </div>
-        </section>
-
-        <section class="limits-section">
-          <div class="section-title">Motion Limits</div>
-          <div class="motion-grid" role="table" aria-label="Motion limits">
-            <div class="motion-header" role="row">
-              <div role="columnheader">Parameter</div>
-              <div role="columnheader">Value</div>
-            </div>
-
-            {#each MOTION_LIMITS as row}
-              <div class="motion-row" role="row">
-                <div class="parameter-name" role="cell">{row.label}</div>
-                <div class:configured-cell={isConfigured(row.symbol)} class="limit-cell" role="cell">
-                  {#if metadata[row.symbol]}
-                    <span class="inline-editor">
-                      <input
-                        class="compact-input mono"
-                        value={drafts[row.symbol] ?? ""}
-                        disabled={!isWritable(row.symbol) || writing.has(row.symbol)}
-                        oninput={(event) => drafts = { ...drafts, [row.symbol]: (event.currentTarget as HTMLInputElement).value }}
-                        onblur={() => void commit(row.symbol)}
-                        onkeydown={(event) => handleKeydown(event, row.symbol)}
-                      />
-                      <span class="unit">{unitFor(row.symbol)}</span>
-                    </span>
                   {:else}
                     <span class="muted">—</span>
                   {/if}
@@ -309,10 +279,6 @@
     max-width: 980px;
   }
 
-  .limits-section + .limits-section {
-    margin-top: 30px;
-  }
-
   .section-title {
     margin-bottom: 12px;
     font-size: 13px;
@@ -320,8 +286,7 @@
     color: var(--vscode-foreground);
   }
 
-  .operating-grid,
-  .motion-grid {
+  .operating-grid {
     min-width: 650px;
   }
 
@@ -333,17 +298,7 @@
     align-items: stretch;
   }
 
-  .motion-header,
-  .motion-row {
-    display: grid;
-    grid-template-columns: minmax(180px, 0.9fr) minmax(260px, 1.25fr);
-    column-gap: 18px;
-    align-items: stretch;
-    max-width: 700px;
-  }
-
-  .operating-header,
-  .motion-header {
+  .operating-header {
     min-height: 34px;
     align-items: center;
     border-bottom: 1px solid var(--vscode-panel-border);
@@ -352,8 +307,7 @@
     font-weight: 600;
   }
 
-  .operating-row,
-  .motion-row {
+  .operating-row {
     min-height: 46px;
     border-bottom: 1px solid color-mix(in srgb, var(--vscode-panel-border) 55%, transparent);
     font-size: 12px;
@@ -375,6 +329,14 @@
 
   .configured-cell {
     background: color-mix(in srgb, var(--vscode-foreground) 6%, transparent);
+  }
+
+  .active-limit-cell {
+    background: color-mix(in srgb, var(--vscode-focusBorder) 18%, transparent);
+  }
+
+  .configured-cell.active-limit-cell {
+    background: color-mix(in srgb, var(--vscode-focusBorder) 18%, var(--vscode-foreground) 5%);
   }
 
   .hardware-value {
