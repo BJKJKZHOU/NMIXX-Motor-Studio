@@ -255,6 +255,40 @@
             {/each}
           </div>
         </section>
+
+        <section class="limits-section position-section unavailable-section" aria-disabled="true">
+          <div class="section-heading">
+            <div class="section-title">Position Limits</div>
+            <div class="section-note">Firmware unavailable</div>
+          </div>
+
+          <div class="position-grid" role="table" aria-label="Position limits">
+            <div class="position-row" role="row">
+              <div class="parameter-name" role="cell">Zero reference</div>
+              <div class="muted mono" role="cell">—</div>
+            </div>
+            <div class="position-row" role="row">
+              <div class="parameter-name" role="cell">Enable</div>
+              <div role="cell"><button class="disabled-control" disabled>Off</button></div>
+            </div>
+            <div class="position-row" role="row">
+              <div class="parameter-name" role="cell">Minimum position</div>
+              <div class="position-editor" role="cell">
+                <input class="compact-input mono" value="" placeholder="Turn" disabled />
+                <input class="compact-input mono" value="" placeholder="Theta" disabled />
+                <span class="unit">turn + rad</span>
+              </div>
+            </div>
+            <div class="position-row" role="row">
+              <div class="parameter-name" role="cell">Maximum position</div>
+              <div class="position-editor" role="cell">
+                <input class="compact-input mono" value="" placeholder="Turn" disabled />
+                <input class="compact-input mono" value="" placeholder="Theta" disabled />
+                <span class="unit">turn + rad</span>
+              </div>
+            </div>
+          </div>
+        </section>
       </div>
     {/if}
   </section>
@@ -279,6 +313,17 @@
     max-width: 980px;
   }
 
+  .limits-section + .limits-section {
+    margin-top: 30px;
+  }
+
+  .section-heading {
+    display: flex;
+    align-items: baseline;
+    gap: 10px;
+    margin-bottom: 12px;
+  }
+
   .section-title {
     margin-bottom: 12px;
     font-size: 13px;
@@ -286,7 +331,17 @@
     color: var(--vscode-foreground);
   }
 
-  .operating-grid {
+  .section-heading .section-title {
+    margin-bottom: 0;
+  }
+
+  .section-note {
+    color: var(--vscode-descriptionForeground);
+    font-size: 11px;
+  }
+
+  .operating-grid,
+  .position-grid {
     min-width: 650px;
   }
 
@@ -307,10 +362,18 @@
     font-weight: 600;
   }
 
-  .operating-row {
+  .operating-row,
+  .position-row {
     min-height: 46px;
     border-bottom: 1px solid color-mix(in srgb, var(--vscode-panel-border) 55%, transparent);
     font-size: 12px;
+  }
+
+  .position-row {
+    display: grid;
+    grid-template-columns: minmax(180px, 0.9fr) minmax(500px, 2.25fr);
+    column-gap: 18px;
+    align-items: center;
   }
 
   .parameter-name {
@@ -354,6 +417,31 @@
   .inline-editor .compact-input {
     min-width: 0;
     width: 100%;
+  }
+
+  .position-section {
+    max-width: 760px;
+  }
+
+  .unavailable-section {
+    opacity: 0.5;
+  }
+
+  .position-editor {
+    display: grid;
+    grid-template-columns: 105px 105px auto;
+    align-items: center;
+    gap: 7px;
+  }
+
+  .disabled-control {
+    min-width: 54px;
+    height: 26px;
+    border: 1px solid var(--vscode-panel-border);
+    border-radius: 3px;
+    background: var(--vscode-input-background);
+    color: var(--vscode-disabledForeground, var(--vscode-descriptionForeground));
+    font: inherit;
   }
 
   .unit {
