@@ -3,8 +3,9 @@
   import type { ConnectionInfo } from "../connection/types";
   import { listParameters, readParameters, writeParameter } from "../parameters/api";
   import type { ParameterMetadata, ParameterValue } from "../parameters/types";
-  import { listActions, onActionCompleted, startAction } from "../actions/api";
+  import { listActions, onActionCompleted } from "../actions/api";
   import type { ActionCompletion, ActionHandle, ActionMetadata } from "../actions/types";
+  import { startPhaseSearch as startPhaseSearchAction } from "./api";
 
   type Props = {
     connection: ConnectionInfo | undefined;
@@ -240,11 +241,11 @@
   }
 
   async function startPhaseSearch() {
-    if (!actionAvailable(PHASE_SEARCH_ACTION) || phaseState === "running") return;
+    if (!connection || phaseState === "running") return;
     phaseState = "running";
     phaseMessage = "";
     try {
-      const handle = await startAction(PHASE_SEARCH_ACTION);
+      const handle = await startPhaseSearchAction();
       pendingPhaseHandle = handleKey(handle);
     } catch (error) {
       phaseState = "failed";
@@ -328,8 +329,8 @@
                 <div class="action-line">
                   <vscode-button
                     secondary
-                    disabled={!actionAvailable(PHASE_SEARCH_ACTION) || phaseState === "running"}
-                    title={actionAvailable(PHASE_SEARCH_ACTION) ? "Start phase search" : "Semantic phase-search Application Action is not exposed yet"}
+                    disabled={phaseState === "running"}
+                    title="Start phase search"
                     onclick={() => void startPhaseSearch()}
                   >Start</vscode-button>
 
@@ -339,8 +340,6 @@
                     <span class="action-status state-success"><i class="codicon codicon-check"></i> Success</span>
                   {:else if phaseState === "failed"}
                     <span class="action-status state-failed" title={phaseMessage}><i class="codicon codicon-error"></i> Failed</span>
-                  {:else if !actionAvailable(PHASE_SEARCH_ACTION)}
-                    <span class="action-status muted">Unavailable</span>
                   {/if}
                 </div>
 
