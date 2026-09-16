@@ -213,37 +213,42 @@ Without a valid mechanical zero, position limits cannot be enabled because their
 
 The GUI must not reproduce motor-state orchestration required to perform phase search or homing.
 
-For example, the current firmware starts phase search by selecting `PHASE_SEARCH` motor mode and then using the generic motor run action. The Encoder page must not directly encode a sequence such as:
+The current AxDr_L firmware starts phase search by selecting `PHASE_SEARCH` motor mode, completing the generic motor-enable action, and then using the generic motor-run action. That device-side composition is now hidden by the Rust Application API:
 
 ```text
-write motor mode
-motor.enable
-motor.run
-wait for completion
-```
-
-That sequence belongs behind a semantic Application API operation such as:
-
-```text
+GUI / CLI / Automation
+        |
+        v
 phaseSearch.start()
+        |
+        v
+MotorActionService
+        |
+        +-- PARAM_MOTOR_MODE = PHASE_SEARCH
+        +-- ACTION_MOTOR_ENABLE
+        +-- wait for Enable completion
+        +-- ACTION_MOTOR_RUN
+        +-- expose final completion as ACTION_PHASE_SEARCH_START
 ```
 
-so GUI, CLI and automation share identical state checks, task ownership, completion and error semantics.
+The desktop client calls the semantic `phase_search_start` command. It does not know or reproduce the firmware sequence.
 
-Until a semantic Application API operation exists, the GUI may reserve the control in a disabled/unavailable state rather than bypassing the application architecture.
+This is intentionally an Application-level compatibility adapter. If firmware later exposes a native `ACTION_PHASE_SEARCH_START`, only the Application implementation needs to change; Encoder GUI, CLI and automation semantics stay stable.
+
+The same rule applies to future Set Zero and Homing operations: clients call semantic Application operations, while any required lower-level Parameter/Action composition remains inside the Application layer.
 
 ## Initial implementation boundary
 
-The first GUI implementation may wire parameters that already have the correct business semantics, including:
+The current GUI wires parameters/actions that already have a stable business meaning:
 
 - phase-search current;
+- semantic phase search through `MotorActionService`;
 - user motor direction.
 
-It should reserve but not fake functionality whose firmware/application contract does not yet exist, including:
+It reserves but does not fake functionality whose firmware/application contract does not yet exist:
 
 - protocol-oriented feedback interface selection;
 - ABZ PPR and derived counts/rev when ABZ is not yet exposed;
-- semantic phase-search Application Action;
 - zero-valid state;
 - Set Current as Zero Action;
 - Software Homing Action.
