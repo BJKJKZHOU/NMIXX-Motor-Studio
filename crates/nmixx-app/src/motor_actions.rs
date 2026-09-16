@@ -93,27 +93,37 @@ fn enum_u8(
             symbol: wanted_symbol.to_owned(),
         })?;
 
-    let value = parameter
-        .allowed
-        .get(index)
-        .ok_or_else(|| MotorActionError::MissingEnumValue {
-            parameter: parameter.symbol.clone(),
-            symbol: wanted_symbol.to_owned(),
-        })?;
-
-    match value {
-        SchemaNumber::Integer(value) => u8::try_from(*value).map_err(|_| MotorActionError::InvalidEnumValue {
-            parameter: parameter.symbol.clone(),
-            symbol: wanted_symbol.to_owned(),
-        }),
-        SchemaNumber::Float(value) if value.is_finite() && value.fract() == 0.0 && *value >= 0.0 && *value <= u8::MAX as f64 => {
-            Ok(*value as u8)
-        }
-        _ => Err(MotorActionError::InvalidEnumValue {
-            parameter: parameter.symbol.clone(),
-            symbol: wanted_symbol.to_owned(),
-        }),
+    // Preferred contract: HostSchema supplies numeric allowed values alongside
+    // their symbols. The current AxDr exporter only emits allowed_symbols for
+    // C enums; those enums are zero-based contiguous and the exported symbol
+    // order is the enum ordinal order. Keep that compatibility rule here in
+    // the AxDr application adapter rather than leaking a numeric PHASE_SEARCH
+    // constant into GUI/CLI clients.
+    if let Some(value) = parameter.allowed.get(index) {
+        return match value {
+            SchemaNumber::Integer(value) => u8::try_from(*value).map_err(|_| MotorActionError::InvalidEnumValue {
+                parameter: parameter.symbol.clone(),
+                symbol: wanted_symbol.to_owned(),
+            }),
+            SchemaNumber::Float(value)
+                if value.is_finite()
+                    && value.fract() == 0.0
+                    && *value >= 0.0
+                    && *value <= u8::MAX as f64 =>
+            {
+                Ok(*value as u8)
+            }
+            _ => Err(MotorActionError::InvalidEnumValue {
+                parameter: parameter.symbol.clone(),
+                symbol: wanted_symbol.to_owned(),
+            }),
+        };
     }
+
+    u8::try_from(index).map_err(|_| MotorActionError::InvalidEnumValue {
+        parameter: parameter.symbol.clone(),
+        symbol: wanted_symbol.to_owned(),
+    })
 }
 
 fn wait_for_action(
