@@ -205,6 +205,7 @@
   function handleKeydown(event: KeyboardEvent, symbol: string) {
     if (event.key === "Enter") {
       event.preventDefault();
+      void commit(symbol);
       (event.currentTarget as HTMLInputElement).blur();
     } else if (event.key === "Escape") {
       drafts = { ...drafts, [symbol]: valueText(values[symbol]) };
@@ -216,12 +217,6 @@
 <div class="limits-root">
   <section class="page-toolbar">
     <div class="page-title">LIMITS / SAFETY</div>
-    <div class="toolbar-actions">
-      <button class="tool-button" disabled={!connection || loading} onclick={() => connection && void loadLimits(connection, ++generation)} title="Refresh limits">
-        <i class={`codicon ${loading ? "codicon-loading codicon-modifier-spin" : "codicon-refresh"}`}></i>
-        Refresh
-      </button>
-    </div>
   </section>
 
   <section class="limits-content">
@@ -250,7 +245,6 @@
                         value={drafts[row.userSymbol] ?? ""}
                         disabled={!isWritable(row.userSymbol) || writing.has(row.userSymbol)}
                         oninput={(event) => drafts = { ...drafts, [row.userSymbol]: (event.currentTarget as HTMLInputElement).value }}
-                        onblur={() => void commit(row.userSymbol)}
                         onkeydown={(event) => handleKeydown(event, row.userSymbol)}
                       />
                       <span class="unit">{unitFor(row.userSymbol)}</span>
