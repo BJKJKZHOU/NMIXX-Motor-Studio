@@ -10,6 +10,18 @@ export function startAction(key: string): Promise<ActionHandle> {
   return invoke<ActionHandle>("action_start", { key });
 }
 
+export function enableMotor(): Promise<ActionHandle> {
+  return startAction("ACTION_MOTOR_ENABLE");
+}
+
+export function disableMotor(): Promise<ActionHandle> {
+  return startAction("ACTION_MOTOR_DISABLE");
+}
+
+export function stopMotor(): Promise<ActionHandle> {
+  return startAction("ACTION_MOTOR_STOP");
+}
+
 export function onActionCompleted(handler: (completion: ActionCompletion) => void): Promise<UnlistenFn> {
   return listen<ActionCompletion>("action-completed", (event) => handler(event.payload));
 }
