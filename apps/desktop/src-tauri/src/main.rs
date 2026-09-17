@@ -278,6 +278,21 @@ fn parameter_service(state: &State<'_, Mutex<DesktopState>>) -> Result<Parameter
         .ok_or_else(|| "device is not connected".to_owned())
 }
 
+fn parameter_result(id: u16, result: Result<ParameterValue, impl ToString>) -> ParameterReadResultDto {
+    match result {
+        Ok(value) => ParameterReadResultDto {
+            id,
+            value: Some(value.into()),
+            error: None,
+        },
+        Err(error) => ParameterReadResultDto {
+            id,
+            value: None,
+            error: Some(error.to_string()),
+        },
+    }
+}
+
 fn spawn_action_completion(
     app: tauri::AppHandle,
     events: std::sync::mpsc::Receiver<SessionEvent>,
@@ -340,6 +355,10 @@ fn device_connect(
         .map_err(|error| error.to_string())?;
     let capabilities = DevicePlotCapabilities::discover(&session).map_err(|error| error.to_string())?;
     let parameters = ParameterService::new(session.clone(), schema.clone());
+
+    // Connection owns the initial Device RAM -> Application cache synchronization.
+    // Per-parameter failures do not abort an otherwise valid device session.
+    let _ = parameters.refresh_all().map_err(|error| error.to_string())?;
 
     let channels = capabilities
         .with_schema(&schema)
@@ -415,11 +434,28 @@ fn parameter_read_many(
     let values = service.read_many(&ids).map_err(|error| error.to_string())?;
     Ok(values
         .into_iter()
-        .map(|(id, result)| match result {
-            Ok(value) => ParameterReadResultDto {
+        .map(|(id, result)| parameter_result(id, result))
+        .collect())
+}
+
+#[tauri::command]
+fn parameter_cached_many(
+    state: State<'_, Mutex<DesktopState>>,
+    ids: Vec<u16>,
+) -> Result<Vec<ParameterReadResultDto>, String> {
+    let service = parameter_service(&state)?;
+    Ok(ids
+        .into_iter()
+        .map(|id| match service.cached(id) {
+            Ok(Some(value)) => ParameterReadResultDto {
                 id,
                 value: Some(value.into()),
                 error: None,
+            },
+            Ok(None) => ParameterReadResultDto {
+                id,
+                value: None,
+                error: Some("parameter has not been read into the shared cache".to_owned()),
             },
             Err(error) => ParameterReadResultDto {
                 id,
@@ -428,6 +464,21 @@ fn parameter_read_many(
             },
         })
         .collect())
+}
+
+#[tauri::command]
+fn parameter_refresh_all(
+    app: tauri::AppHandle,
+    state: State<'_, Mutex<DesktopState>>,
+) -> Result<Vec<ParameterReadResultDto>, String> {
+    let service = parameter_service(&state)?;
+    let values = service.refresh_all().map_err(|error| error.to_string())?;
+    let result = values
+        .into_iter()
+        .map(|(id, result)| parameter_result(id, result))
+        .collect::<Vec<_>>();
+    let _ = app.emit("parameters-refreshed", ());
+    Ok(result)
 }
 
 #[tauri::command]
@@ -638,6 +689,8 @@ fn main() {
             parameter_list,
             parameter_read,
             parameter_read_many,
+            parameter_cached_many,
+            parameter_refresh_all,
             parameter_write,
             action_list,
             action_start,
