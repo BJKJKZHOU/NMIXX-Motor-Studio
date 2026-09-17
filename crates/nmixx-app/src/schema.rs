@@ -39,8 +39,7 @@ pub struct SchemaSource {
 #[derive(Debug, Clone, Deserialize)]
 pub struct ParameterMetadata {
     pub symbol: String,
-    #[serde(default)]
-    pub name: Option<String>,
+    pub label: String,
     pub id: u16,
     #[serde(rename = "type")]
     pub type_name: String,
@@ -77,8 +76,7 @@ impl ParameterMetadata {
 #[derive(Debug, Clone, Deserialize)]
 pub struct ActionMetadata {
     pub symbol: String,
-    #[serde(default)]
-    pub name: Option<String>,
+    pub label: String,
     pub id: u16,
     pub description: String,
 }
@@ -127,9 +125,9 @@ impl HostSchema {
     }
 
     pub fn parameter_by_key(&self, key: &str) -> Option<&ParameterMetadata> {
-        self.parameters.iter().find(|parameter| {
-            parameter.symbol == key || parameter.name.as_deref() == Some(key)
-        })
+        self.parameters
+            .iter()
+            .find(|parameter| parameter.symbol == key || parameter.label == key)
     }
 
     pub fn action_by_id(&self, id: u16) -> Option<&ActionMetadata> {
@@ -139,7 +137,7 @@ impl HostSchema {
     pub fn action_by_key(&self, key: &str) -> Option<&ActionMetadata> {
         self.actions
             .iter()
-            .find(|action| action.symbol == key || action.name.as_deref() == Some(key))
+            .find(|action| action.symbol == key || action.label == key)
     }
 }
 
@@ -161,6 +159,7 @@ parameter_schema = 1
 
 [[parameters]]
 symbol = "PARAM_MOTOR_RS"
+label = "Rs"
 id = 272
 type = "f32"
 access = "rw"
@@ -173,16 +172,17 @@ exclusive_min = true
 
 [[actions]]
 symbol = "ACTION_MOTOR_ENABLE"
+label = "Enable"
 id = 4097
 description = "Enable motor"
 "#,
         )
         .unwrap();
 
-        let parameter = schema.parameter_by_key("PARAM_MOTOR_RS").unwrap();
+        let parameter = schema.parameter_by_key("Rs").unwrap();
         assert_eq!(parameter.id, 272);
         assert_eq!(parameter.parameter_type().unwrap(), ParameterType::F32);
         assert!(parameter.range.as_ref().unwrap().exclusive_min);
-        assert_eq!(schema.action_by_id(4097).unwrap().symbol, "ACTION_MOTOR_ENABLE");
+        assert_eq!(schema.action_by_key("Enable").unwrap().symbol, "ACTION_MOTOR_ENABLE");
     }
 }
