@@ -104,11 +104,21 @@ If an Active value is edited manually after an identified result has been applie
 
 Identification startup/configuration values that have a clear user-facing role may be shown below the motor-parameter table instead of being mixed into the parameter/result rows.
 
-The current GUI exposes the I/F startup current when the connected firmware exposes `PARAM_IDENT_IF_CURRENT`.
+The current GUI exposes the shared I/F forced-start current when the connected firmware exposes `PARAM_IDENT_IF_CURRENT`.
+
+This parameter is not a Flux-only setting. It is the common current used by identification workflows that require I/F forced startup before observer-based motion. The UI should therefore present it as a shared identification startup parameter rather than maintaining a `Used by: Flux startup` label.
+
+Preferred presentation:
+
+```text
+Identification Settings
+
+Parameter                 Value
+-------------------------------------
+I/F startup current       [ 0.500 ] A
+```
 
 Do not add internal thresholds, observer gates, fitting constants or other algorithm details merely because they exist in firmware. A setting belongs on this page only when it is an intentional host-visible control for the identification workflow.
-
-If the same startup parameter is later shared by more than one identification Action, the UI label and `Used by` presentation must follow the actual firmware/Application semantics rather than preserving an outdated single-action label.
 
 ## Readiness and preflight
 
@@ -160,7 +170,7 @@ The current GUI implements:
 - latest valid Rs/Ls, Flux and J/B results;
 - Rs/Ls, Flux and J/B Action start/completion state;
 - explicit Apply after a valid result;
-- I/F startup current when exposed by the Host schema.
+- shared I/F startup current when exposed by the Host schema.
 
 Current limitations that must remain explicit rather than simulated:
 
