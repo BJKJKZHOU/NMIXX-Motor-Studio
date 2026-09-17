@@ -13,7 +13,8 @@ The application shell separates actions, workflow content and persistent status:
 ```text
 Top toolbar
     global motor actions
-    global problem summary
+    global parameter actions
+    compact Problems indicator
 
 Current page
     domain-specific configuration and actions
@@ -24,6 +25,14 @@ Bottom status bar
 ```
 
 Do not duplicate the same information in all three areas.
+
+The intended top-toolbar composition is:
+
+```text
+[ Enable / Disable ] [ Stop ] [ Read ] [ Save ]                         [ ⚠ 3 ]
+```
+
+The action group is aligned to the left edge of the main content area and must not extend over the left Activity Bar. The Problems indicator is aligned to the far right.
 
 ## Global motor controls
 
@@ -46,6 +55,37 @@ The control must not rely on color alone. Text, icon and color change together s
 
 `Run` is not a generic global action. Run/Start belongs to the domain that defines what operation will execute.
 
+## Global parameter controls
+
+`Read` and `Save` are global configuration actions in the top toolbar.
+
+```text
+[ Read ] [ Save ]
+```
+
+`Read` means refresh the host from the device's current active RAM parameter values. It does not reload Flash into RAM.
+
+A successful device connection automatically performs one initial Read so the Application Parameter service is populated before normal workflows use the values. The explicit Read button remains available to resynchronize after external changes, Actions or debugging operations.
+
+Normal parameter edits made from Motor, Encoder, Limits, Control, Parameters or other pages update the device's active RAM state only. They do not implicitly persist the change to Flash.
+
+`Save` means explicitly persist the current firmware-defined persistent configuration from RAM to non-volatile storage. Persistence ownership stays in firmware; the host must not implement storage by maintaining its own list of values and replaying them as a pseudo-Flash format.
+
+The intended semantic direction is:
+
+```text
+Read
+    Device RAM -> ParameterService / GUI
+
+normal edit
+    GUI -> Device RAM
+
+Save
+    Device RAM persistent configuration -> Flash/NVS
+```
+
+A future Reload Saved Configuration operation, if added, is a distinct destructive action because it would overwrite current RAM changes from Flash. It must not be conflated with Read.
+
 ## Stateful paired actions
 
 When two actions are mutually exclusive transitions of the same resource, use one stateful button in a stable location rather than two adjacent Start/Stop-style buttons.
@@ -63,42 +103,39 @@ Use this pattern when the actions operate on the same task/resource and only one
 
 Do not merge unrelated actions merely because their names form a verbal pair. In particular, the global `Enable / Disable` button does not absorb the separate global `Stop` action, and domain-specific `Run` does not become a global toggle.
 
-## Top toolbar problem indicator
+## Top toolbar Problems indicator
 
-The far-right area of the top toolbar contains the global Problems indicator.
+The far-right area of the top toolbar contains a compact Problems indicator.
 
-It is a summary only. It must not become a miniature diagnostic panel.
+Its persistent collapsed form contains only:
 
-The indicator shows:
-
-- the severity of the most important currently active problem;
-- a short broad-domain summary for that most important problem, such as `Encoder problem`, `Motor problem` or `Identification problem`;
-- a badge count equal to the total number of currently active problems.
+```text
+[ severity icon ] [ active problem count ]
+```
 
 Example:
 
 ```text
-[ Disable ] [ Stop ]        [ Error · Encoder problem  3 ]
+⚠ 3
 ```
 
-When several active problems exist, the text still represents only the single highest-priority problem. The badge communicates the total count. Full per-problem information belongs on the Events / Problems page.
+The badge count equals the total number of currently active problems. The icon reflects the highest active severity. No problem text is shown persistently in the toolbar.
 
-Priority is determined first by severity, then by application-defined importance within the same severity. The top bar must not rotate through several messages or concatenate long diagnostic text.
-
-Hover may show only a short summary such as:
+Clicking the compact indicator opens a small summary popover. The popover shows only the single highest-priority active problem as a short message, for example:
 
 ```text
-3 active problems
-Highest: Encoder problem
+Encoder problem
 ```
 
-Detailed cause, effect, recovery instructions, error codes and timestamps remain on the Events / Problems page.
+It may also provide a compact Refresh/Recheck control.
 
-Clicking the indicator opens the Events / Problems page, normally focused on Active problems.
+Clicking the short problem message navigates to the Events / Problems page, normally focused on the corresponding active problem. The popover must not attempt to show full cause, effect, recovery guidance, codes or timestamps.
+
+Priority is determined first by severity, then by application-defined importance within the same severity. The top bar must not rotate through several messages or concatenate multiple problem summaries.
 
 ## Active problem refresh and resolution
 
-The Problems indicator provides a direct refresh/recheck operation.
+The Problems summary may expose a direct Refresh/Recheck action.
 
 Refresh means:
 
@@ -189,7 +226,7 @@ Initial product convention:
 - `Enable`: green enable treatment;
 - `Disable`: red disable treatment;
 - `Stop`: visually distinct stop treatment with a stop-square symbol;
-- problem severity: distinct Info / Warning / Error-or-Fault treatment while always retaining icon/text semantics.
+- problem severity: distinct Info / Warning / Error-or-Fault treatment while always retaining icon semantics.
 
 Exact theme tokens may evolve. Semantic distinction must remain.
 
@@ -221,6 +258,8 @@ Global operations should have stable semantic entries such as:
 motor.enable
 motor.disable
 motor.stop
+parameters.refresh
+config.save
 problems.refresh
 ```
 
