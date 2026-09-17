@@ -67,7 +67,7 @@ Owns host application semantics:
 - protection-aware application behavior;
 - stable public Application API.
 
-The Application API should expose domain concepts such as `parameter.get`, `motor.enable`, `action.start`, `stream.subscribe` and `task.cancel`, not raw CAN IDs or payload bytes.
+The Application API should expose domain concepts such as `parameter.get`, `motor.enable`, `motor.disable`, `motor.stop`, `action.start`, `stream.subscribe` and `task.cancel`, not raw CAN IDs or payload bytes.
 
 ### clients
 
@@ -87,10 +87,11 @@ App shell
   |     +-- CAN FD
   |     +-- future transports
   |
-  +-- Parameters
-  |     +-- full parameter table
-  |     +-- read/write/search/filter
-  |     +-- import/export
+  +-- Motor
+  +-- Encoder
+  +-- Limits / Safety
+  +-- Control
+  +-- Control Tuning
   |
   +-- Analysis
   |     +-- shared acquisition
@@ -99,17 +100,42 @@ App shell
   |     +-- Bode
   |     +-- capture/export
   |
-  +-- Motor
-  +-- Encoder
-  +-- Limits / Safety
-  +-- Control
-  +-- Control Tuning
+  +-- Parameters
   +-- Events
+  +-- Automation
 ```
 
-`App.svelte` is the workbench shell. It owns navigation, global connection summary, global notifications and the status bar. Device and analysis behavior belongs in domain modules.
+`App.svelte` is the workbench shell. It owns navigation, global connection summary, global notifications, global motor controls and the status bar. Device and analysis behavior belongs in domain modules.
 
-### UI reuse boundary
+Shared interaction behavior is defined in `UI_INTERACTION_RULES.md`.
+
+## Workbench-level state and controls
+
+The shell continuously presents application-global context. It may include:
+
+- device connection state;
+- motor state;
+- compact live position/speed/current feedback;
+- global motor `Enable / Disable` control;
+- global motor `Stop` control.
+
+Connection configuration and Connect/Disconnect are not duplicated in the shell. They belong to the Connection page because establishing a Device Session may require transport, endpoint and other transport-specific configuration.
+
+Global motor controls follow these semantics:
+
+```text
+DISABLED   [ Enable ]   [ Stop ] disabled
+ENABLED    [ Disable ]  [ Stop ] disabled
+RUN        [ Disable ]  [ Stop ] active
+```
+
+`Enable / Disable` is one stateful button in a stable location. Text, icon and color change together to indicate the action that pressing the button will perform. `Stop` is a separate persistent button because stopping current motion/task and changing motor enable state are different operations.
+
+`Run` is not a global shell action. Run always has workflow context: position/speed/torque motion, a tuning experiment, identification internals, Bode excitation, or another domain operation. The page/domain that defines the command owns the Run/Start action.
+
+Other mutually exclusive Start/Stop-style operations should normally use one stateful button in a stable location when both actions operate on the same task/resource. See `UI_INTERACTION_RULES.md`.
+
+## UI reuse boundary
 
 NMIXX owns product semantics, information architecture and presentation style. Generic interaction mechanisms should use mature libraries when they are already solved well.
 
@@ -151,7 +177,7 @@ Introduce only when the corresponding product need exists:
 
 Avoid using Ant Design, Material UI, Bootstrap, dashboard templates or a second general-purpose chart framework as the product's visual foundation.
 
-### Workflow-oriented navigation
+## Workflow-oriented navigation
 
 The primary Activity Bar is ordered by the normal motor commissioning and control workflow, not by software implementation modules.
 
@@ -181,15 +207,15 @@ The order communicates the normal engineering sequence without turning the appli
 
 - **Connection** establishes the Device Session and transport. It is the first page and is independent from Scope or other analysis tools.
 - **Motor** owns the motor parameter view. Unknown parameters are obtained through identification tools attached to this page instead of a separate top-level Identification page.
-- **Encoder** configures feedback type/interface and generic encoder parameters. Phase search current, homing and zero-setting tools belong here because they establish position/electrical alignment.
+- **Encoder** configures feedback protocol/interface and protocol-specific parameters. Phase search current, homing and zero-setting tools belong here because they establish position/electrical alignment.
 - **Limits / Safety** configures user operating limits and other software safety boundaries while keeping hardware protection semantics distinct.
 - **Control** chooses the operating mode and control architecture: loop controllers, startup strategy, observer and related defaults. It does not own the repeated motion-test tuning workflow.
 - **Control Tuning** runs bounded tuning experiments: edit controller design parameters, configure one motion command, capture the synchronized response, and preserve the completed waveform for comparison.
 - **Analysis** provides general-purpose continuous or manually triggered engineering analysis. Scope, FFT and Bode share acquisition and plotting infrastructure but are not responsible for the Control Tuning experiment workflow.
 
-Cross-workflow expert tools are visually separated from the commissioning sequence. The generic **Parameters** table, **Events**, and future **Automation** entry belong to this secondary group rather than interrupting the primary workflow.
+Cross-workflow expert tools are visually separated from the commissioning sequence. The generic **Parameters** table, **Events**, and **Automation** entry belong to this secondary group rather than interrupting the primary workflow.
 
-### Parameter is a shared service, not one page
+## Parameter is a shared service, not one page
 
 The Parameter subsystem is the single source of truth for host-visible parameters. The generic Parameters page is an expert view over the complete registry, but domain pages reuse the same Parameter API:
 
@@ -209,7 +235,7 @@ A value such as motor resistance must not have separate storage or write paths i
 
 The Parameters page uses TanStack Table for table behavior. TanStack owns sorting/filtering/table state; NMIXX owns markup, styling, device reads/writes and value editing semantics. Table code must not bypass `ParameterService`.
 
-### Control setup and tuning are different workflows
+## Control setup and tuning are different workflows
 
 The **Control** page selects the active control structure and supplies usable defaults. The **Control Tuning** page is a dedicated experiment surface for tuning an already selected structure. Generic Scope/Bode/FFT remain separate expert analysis tools.
 
@@ -229,29 +255,28 @@ The first Control Tuning layout uses three functional regions:
 |                                          | Kp         read-only |
 |                                          | Ki         read-only |
 |                                          |                      |
-|                                          | Position Loop        |
-|                                          | Kp         [5.0]     |
+|                                          | Position Loop       |
+|                                          | Kp         [5.0]    |
 +------------------------------------------+                      |
 | Motion Command                           | Mechanical Observer  |
-| Mode / target / speed / acc / dec        | Bandwidth [100] Hz   |
+| Mode / target / speed / acc / dec        | Bandwidth [100] Hz  |
 |                         [ Run ]           |                      |
 +------------------------------------------+----------------------+
 ```
 
-The right column edits **design parameters** rather than exposing every internal coefficient as an independent tuning knob. The firmware derives active gains from the current motor model and the selected design parameter. Active gains are shown read-only so the engineer can see exactly what is running:
-
-```text
-Current bandwidth  --> Id/Iq Kp, Ki
-Speed bandwidth    --> Speed Kp, Ki
-Position Kp        --> Position controller Kp
-Observer bandwidth --> Mechanical ESO observer gains
-```
+The right column edits **design parameters** rather than exposing every internal coefficient as an independent tuning knob. The firmware derives active gains from the current motor model and selected design parameters. Active gains are shown read-only so the engineer can see exactly what is running.
 
 A tuning edit is staged by the GUI and applied as part of the next experiment. The first implementation should not continuously rewrite controller coefficients while the motor is running. During an active run the tuning controls are locked.
 
 One **Run** represents one bounded experiment:
 
 ```text
+verify motor state == ENABLED
+        |
+        +-- no --> reject with explicit "Enable motor first"
+        |
+       yes
+        v
 apply dirty tuning parameters
         |
         v
@@ -266,7 +291,7 @@ start experiment capture
         +-- pre-capture, default about 0.5 s
         |
         v
-enable / run motor
+run configured experiment
         |
         v
 execute requested motion
@@ -274,36 +299,20 @@ execute requested motion
         v
 motion complete / settling condition
         |
+        v
+return to ENABLED
+        |
         +-- post-capture, default about 1.0 s
         |
         v
 stop capture and keep the waveform on screen
 ```
 
+There is deliberately no implicit Enable/Disable in the experiment. Enable is an explicit global motor action. The global Stop control remains available while an experiment is running and stops the active motion/task through the same Application state used by the page.
+
 Pre/post capture are part of the experiment because startup response and post-arrival vibration are often the quantities being tuned. Capture does not stop at the exact instant the target is reached.
 
 The waveform panel is therefore not an indefinitely scrolling Scope. It starts with the experiment, stops automatically after the post-capture window, and preserves the completed record until the next run or explicit clear. It should reuse the shared acquisition/channel/uPlot infrastructure instead of creating a second telemetry implementation.
-
-Default channels depend on the experiment mode and may still be customized. Typical defaults are:
-
-```text
-Position experiment:
-  Position Ref / Encoder Position
-  Wm Ref / Mechanical ESO Wm
-  Iq Ref / Iq
-  ESO disturbance estimate
-
-Speed experiment:
-  Wm Ref / Mechanical ESO Wm
-  Encoder differentiated Wm (diagnostic)
-  Iq Ref / Iq
-  ESO disturbance estimate
-
-Current experiment:
-  Id Ref / Id
-  Iq Ref / Iq
-  Ud / Uq
-```
 
 Motion Command fields are mode-specific rather than one universal form:
 
@@ -311,9 +320,9 @@ Motion Command fields are mode-specific rather than one universal form:
 - Speed: target speed, acceleration, deceleration, hold time.
 - Torque/current-oriented tests: target value and hold time.
 
-The GUI composes this workflow through the Application API. It does not write protocol frames directly. The Application layer owns sequencing, capture lifetime, motor actions and completion/error handling so the same experiment can later be invoked from GUI, CLI or automation.
+The GUI composes this workflow through the Application API. It does not write protocol frames directly. The Application layer owns sequencing, capture lifetime, task state and completion/error handling so the same experiment can later be invoked from GUI, CLI or automation.
 
-### Analysis shares acquisition and plotting infrastructure
+## Analysis shares acquisition and plotting infrastructure
 
 Scope, FFT and Bode are related analysis functions, but not identical workflows. They share channel metadata, acquisition buffers, plotting, cursors, units and export infrastructure where practical.
 
@@ -325,11 +334,13 @@ The GUI must not open its own transport or decode telemetry wire frames for any 
 
 Chart interaction should use uPlot capabilities and plugins instead of recreating generic plotting behavior in Svelte. Unit metadata should drive reusable scale/axis policy rather than page-specific conditionals.
 
-### Connection is transport-oriented
+## Connection is transport-oriented
 
 Connection UI is a functional domain because the product will support more than one transport. Serial, native CAN FD and future transports present transport-specific configuration but converge on the same device/session API above them. The rest of the GUI must not assume that a connected device is represented by a serial port string.
 
-Connection state is global, but connection control belongs only to the Connection page. Scope, Motor, Control and other workflow pages consume the current Device Session; they do not embed their own Connect/Disconnect UI.
+Connection state is global, but connection configuration and Connect/Disconnect control belong to the Connection page. Scope, Motor, Control and other workflow pages consume the current Device Session; they do not embed their own Connect/Disconnect UI.
+
+Disconnect is session teardown, not a substitute for motor Stop or Disable. Motor safety behavior during communication loss must be defined independently by firmware/Application policy.
 
 ## Concurrency and ownership
 
