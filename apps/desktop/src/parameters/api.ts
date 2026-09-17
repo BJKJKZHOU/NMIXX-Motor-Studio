@@ -18,6 +18,16 @@ export function readCachedParameters(ids: number[]): Promise<ParameterReadResult
   return invoke<ParameterReadResult[]>("parameter_cached_many", { ids });
 }
 
+export async function readCurrentParameters(ids: number[]): Promise<ParameterReadResult[]> {
+  const cached = await readCachedParameters(ids);
+  const missing = cached.filter((item) => item.value === null).map((item) => item.id);
+  if (missing.length === 0) return cached;
+
+  const fresh = await readParameters(missing);
+  const freshById = new Map(fresh.map((item) => [item.id, item]));
+  return cached.map((item) => freshById.get(item.id) ?? item);
+}
+
 export function refreshAllParameters(): Promise<ParameterReadResult[]> {
   return invoke<ParameterReadResult[]>("parameter_refresh_all");
 }
