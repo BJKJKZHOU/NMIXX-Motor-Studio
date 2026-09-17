@@ -12,6 +12,8 @@ const MOTOR_MODE: &str = "PARAM_MOTOR_MODE";
 const PHASE_SEARCH_MODE: &str = "PHASE_SEARCH";
 const MOTOR_ENABLE: &str = "ACTION_MOTOR_ENABLE";
 const MOTOR_RUN: &str = "ACTION_MOTOR_RUN";
+const MOTOR_STOP: &str = "ACTION_MOTOR_STOP";
+const MOTOR_DISABLE: &str = "ACTION_MOTOR_DISABLE";
 const ACTION_COMPLETION_TIMEOUT: Duration = Duration::from_secs(5);
 
 #[derive(Debug, Error)]
@@ -47,6 +49,21 @@ impl MotorActionService {
         Self { session, schema, parameters }
     }
 
+    /// Start the global motor Enable action.
+    pub fn enable(&self) -> Result<ActionHandle, MotorActionError> {
+        self.start_action(MOTOR_ENABLE)
+    }
+
+    /// Start the global motor Stop action. Firmware returns RUN -> ENABLED.
+    pub fn stop(&self) -> Result<ActionHandle, MotorActionError> {
+        self.start_action(MOTOR_STOP)
+    }
+
+    /// Start the global motor Disable action.
+    pub fn disable(&self) -> Result<ActionHandle, MotorActionError> {
+        self.start_action(MOTOR_DISABLE)
+    }
+
     /// Start servo phase search as one application-level operation.
     ///
     /// The current AxDr_L firmware exposes phase search through the generic
@@ -77,6 +94,14 @@ impl MotorActionService {
 
         // The returned handle represents the finite phase-search operation.
         Ok(self.session.action_start(run.id)?)
+    }
+
+    fn start_action(&self, key: &str) -> Result<ActionHandle, MotorActionError> {
+        let action = self
+            .schema
+            .action_by_key(key)
+            .ok_or_else(|| MotorActionError::MissingAction(key.to_owned()))?;
+        Ok(self.session.action_start(action.id)?)
     }
 }
 
