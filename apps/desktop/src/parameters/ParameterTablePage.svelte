@@ -13,7 +13,7 @@
   } from "@tanstack/svelte-table";
   import type { ColumnDef } from "@tanstack/svelte-table";
   import type { ConnectionInfo } from "../connection/types";
-  import { listParameters, onParametersRefreshed, readCachedParameters, readCurrentParameters, readParameter, refreshAllParameters, writeParameter } from "./api";
+  import { listParameters, onParametersRefreshed, readCachedParameters, readCurrentParameters, readParameter, writeParameter } from "./api";
   import type { ParameterMetadata, ParameterValue } from "./types";
 
   type Props = {
@@ -213,18 +213,6 @@
     }
   }
 
-  async function refreshAll() {
-    if (!connection || loadingRegistry || readingValues) return;
-    readingValues = true;
-    try {
-      await refreshAllParameters();
-    } catch (error) {
-      onError(error);
-    } finally {
-      readingValues = false;
-    }
-  }
-
   async function refreshOne(row: ParameterRow) {
     try {
       const result = await readParameter(row.meta.id);
@@ -278,10 +266,6 @@
           {table.getRowModel().rows.length} / {rows.length}
         {/if}
       </span>
-      <button class="tool-button" disabled={!connection || loadingRegistry || readingValues} onclick={() => void refreshAll()} title="Refresh all parameters">
-        <i class={`codicon ${loadingRegistry || readingValues ? "codicon-loading codicon-modifier-spin" : "codicon-refresh"}`}></i>
-        Refresh
-      </button>
     </div>
   </section>
 
@@ -325,15 +309,23 @@
                       {#if row.pending}
                         <span class="pending-value"><i class="codicon codicon-loading codicon-modifier-spin"></i></span>
                       {:else if isWritable(row.meta)}
-                        <div class="parameter-value-editor">
-                          <input class="parameter-value-input mono" value={drafts[row.meta.id] ?? ""} disabled={writing.has(row.meta.id)} aria-label={`Value for ${row.meta.symbol}`} oninput={(event) => drafts = { ...drafts, [row.meta.id]: event.currentTarget.value }} onkeydown={(event) => {
-                            if (event.key === "Enter") { event.preventDefault(); void commitValue(row); }
-                            else if (event.key === "Escape") { drafts = { ...drafts, [row.meta.id]: row.value ? valueText(row.value) : "" }; event.currentTarget.blur(); }
-                          }} />
-                          <button class="cell-action" disabled={writing.has(row.meta.id)} onclick={() => void commitValue(row)} title="Write value (Enter)" aria-label={`Write ${row.meta.symbol}`}>
-                            <i class={`codicon ${writing.has(row.meta.id) ? "codicon-loading codicon-modifier-spin" : "codicon-check"}`}></i>
-                          </button>
-                        </div>
+                        <input
+                          class="parameter-value-input mono"
+                          value={drafts[row.meta.id] ?? ""}
+                          disabled={writing.has(row.meta.id)}
+                          aria-label={`Value for ${row.meta.symbol}`}
+                          oninput={(event) => drafts = { ...drafts, [row.meta.id]: event.currentTarget.value }}
+                          onkeydown={(event) => {
+                            if (event.key === "Enter") {
+                              event.preventDefault();
+                              void commitValue(row);
+                              event.currentTarget.blur();
+                            } else if (event.key === "Escape") {
+                              drafts = { ...drafts, [row.meta.id]: row.value ? valueText(row.value) : "" };
+                              event.currentTarget.blur();
+                            }
+                          }}
+                        />
                       {:else}
                         <span class="mono">{valueText(row.value)}</span>
                       {/if}
@@ -370,10 +362,8 @@
   .parameter-search .compact-input { border: 0; background: transparent; }
   .parameter-search .compact-input:focus { border: 0; }
   .parameter-count { min-width: 105px; color: #848484; font-size: 11px; text-align: right; }
-  .tool-button, .cell-action, .table-header-button { border: 0; color: #c8c8c8; background: transparent; font: inherit; }
-  .tool-button { height: 27px; display: inline-flex; align-items: center; gap: 6px; padding: 0 9px; border: 1px solid #3a3d42; border-radius: 2px; background: #2a2d32; }
-  .tool-button:not(:disabled):hover, .cell-action:not(:disabled):hover { background: #383c43; }
-  .tool-button:disabled, .cell-action:disabled, .table-header-button:disabled { opacity: .5; }
+  .table-header-button { border: 0; color: #c8c8c8; background: transparent; font: inherit; }
+  .table-header-button:disabled { opacity: .5; }
   .parameter-content { min-height: 0; overflow: hidden; background: #1e1e1e; }
   .parameter-table-shell { width: 100%; height: 100%; overflow: auto; }
   .parameter-table { width: 100%; min-width: 1080px; border-collapse: separate; border-spacing: 0; table-layout: auto; font-size: 12px; }
@@ -389,11 +379,9 @@
   .muted, .parameter-id { color: #8c8c8c; }
   .parameter-symbol { color: #d0d0d0; }
   .pending-value { color: #777; }
-  .parameter-value-editor { display: grid; grid-template-columns: minmax(90px, 1fr) 25px; gap: 4px; }
-  .parameter-value-input { width: 100%; min-width: 0; height: 23px; padding: 1px 5px; border: 1px solid transparent; border-radius: 2px; outline: none; color: #d8d8d8; background: transparent; }
+  .parameter-value-input { width: 100%; min-width: 90px; height: 23px; padding: 1px 5px; border: 1px solid transparent; border-radius: 2px; outline: none; color: #d8d8d8; background: transparent; }
   .parameter-value-input:hover { border-color: #3a4049; background: #25292f; }
   .parameter-value-input:focus { border-color: var(--vscode-focusBorder); background: var(--vscode-input-background); }
-  .cell-action { width: 25px; height: 23px; border-radius: 2px; }
   .access-badge { display: inline-flex; min-width: 28px; justify-content: center; padding: 1px 5px; border: 1px solid #3a3a3a; border-radius: 8px; color: #8d8d8d; font-size: 10px; line-height: 15px; }
   .access-badge.rw { color: #b5c2d4; border-color: #465265; background: #29303b; }
   .empty-state { height: 100%; display: grid; place-content: center; justify-items: center; gap: 10px; color: #777; }
