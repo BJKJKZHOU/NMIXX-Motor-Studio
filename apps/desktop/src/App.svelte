@@ -10,6 +10,7 @@
   import EncoderPage from "./encoder/EncoderPage.svelte";
   import LimitsPage from "./limits/LimitsPage.svelte";
   import { disableMotor, enableMotor, onActionCompleted, stopMotor } from "./actions/api";
+  import type { ActionCompletion, ActionHandle } from "./actions/types";
   import { listParameters, readParameters } from "./parameters/api";
   import type { ParameterMetadata, ParameterValue } from "./parameters/types";
 
@@ -17,7 +18,6 @@
 
   const GLOBAL_SYMBOLS = ["PARAM_MOTOR_STATE", "PARAM_RUN_IQ", "PARAM_RUN_WM", "PARAM_RUN_POSITION"] as const;
   const MOTOR_DISABLED = 0;
-  const MOTOR_ENABLED = 1;
   const MOTOR_RUN = 2;
 
   let activePage: Page = "connection";
@@ -31,6 +31,9 @@
   let speedWm: number | null = null;
   let positionText = "—";
   let motorActionBusy = false;
+  let pendingMotorAction: ActionHandle | null = null;
+  let pendingMotorActionSymbol: string | null = null;
+  let earlyMotorCompletion: ActionCompletion | null = null;
   let readingParameters = false;
   let globalRefreshTimer: ReturnType<typeof setInterval> | undefined;
   let stopActionListener: (() => void) | undefined;
@@ -87,11 +90,18 @@
     speedWm = null;
     positionText = "—";
     motorActionBusy = false;
+    pendingMotorAction = null;
+    pendingMotorActionSymbol = null;
+    earlyMotorCompletion = null;
     readingParameters = false;
   }
 
   function pageTitle(page: Page): string {
     return [...workflowPages, ...toolPages].find((item) => item.id === page)?.title ?? page;
+  }
+
+  function actionKey(action: ActionHandle | ActionCompletion): string {
+    return `${action.txn}:${action.actionId}`;
   }
 
   function numeric(value: ParameterValue | null): number | null {
@@ -135,34 +145,61 @@
     }
   }
 
-  async function toggleMotorEnable() {
-    if (!connection || motorActionBusy || motorState === null) return;
+  function finishMotorAction(completion: ActionCompletion) {
+    motorActionBusy = false;
+    pendingMotorAction = null;
+    pendingMotorActionSymbol = null;
+    earlyMotorCompletion = null;
+    if (!completion.ok) setError(`Motor action ${completion.symbol} failed: ${completion.status}`);
+    void refreshGlobalStatus();
+  }
+
+  async function startGlobalMotorAction(symbol: string, start: () => Promise<ActionHandle>) {
+    if (!connection || motorActionBusy) return;
     motorActionBusy = true;
+    pendingMotorAction = null;
+    pendingMotorActionSymbol = symbol;
+    earlyMotorCompletion = null;
+
     try {
-      if (motorState === MOTOR_DISABLED) await enableMotor();
-      else await disableMotor();
+      const handle = await start();
+      pendingMotorAction = handle;
+      if (earlyMotorCompletion && actionKey(earlyMotorCompletion) === actionKey(handle)) {
+        finishMotorAction(earlyMotorCompletion);
+      }
     } catch (error) {
       motorActionBusy = false;
+      pendingMotorAction = null;
+      pendingMotorActionSymbol = null;
+      earlyMotorCompletion = null;
       setError(error);
+    }
+  }
+
+  async function toggleMotorEnable() {
+    if (!connection || motorState === null || motorActionBusy) return;
+    if (motorState === MOTOR_DISABLED) {
+      await startGlobalMotorAction("ACTION_MOTOR_ENABLE", enableMotor);
+    } else {
+      await startGlobalMotorAction("ACTION_MOTOR_DISABLE", disableMotor);
     }
   }
 
   async function stopCurrentMotorOperation() {
-    if (!connection || motorActionBusy || motorState !== MOTOR_RUN) return;
-    motorActionBusy = true;
-    try {
-      await stopMotor();
-    } catch (error) {
-      motorActionBusy = false;
-      setError(error);
-    }
+    if (!connection || motorState !== MOTOR_RUN || motorActionBusy) return;
+    await startGlobalMotorAction("ACTION_MOTOR_STOP", stopMotor);
   }
 
   onMount(() => {
     let disposed = false;
-    onActionCompleted(() => {
-      motorActionBusy = false;
-      void refreshGlobalStatus();
+    onActionCompleted((completion) => {
+      if (!motorActionBusy || completion.symbol !== pendingMotorActionSymbol) return;
+      if (!pendingMotorAction) {
+        earlyMotorCompletion = completion;
+        return;
+      }
+      if (actionKey(completion) !== actionKey(pendingMotorAction)) return;
+      finishMotorAction(completion);
     }).then((unlisten) => {
       if (disposed) unlisten();
       else stopActionListener = unlisten;
