@@ -12,15 +12,30 @@ The page binds three things into one repeatable experiment:
 
 The intended workflow is:
 
-> adjust parameters -> configure one motion -> Run -> inspect the complete response -> adjust again.
+> select mode -> explicitly enable from the global toolbar -> adjust parameters -> configure one motion -> Run -> inspect the complete response -> adjust again.
 
 The GUI operates through the Application API. It must not assemble low-level protocol transactions directly.
 
+## Global motor controls are not owned by this page
+
+Connection / disconnection, motor Enable / Disable and other small top-level safety actions belong to the persistent application toolbar/header. They remain visible and keep the same state when the user changes pages.
+
+Control Tuning must never automatically Enable or Disable the motor as a side effect of `Run`, page entry, page exit, parameter editing or capture control.
+
+Enable / Disable is an explicit human safety action. In particular, software automation must not race with or override a user who is intentionally changing the enable state.
+
+The page may read and display the global motor state, but it does not own that state transition.
+
+`Run` is only valid when the motor is already `ENABLED`. If it is not enabled, the page reports that the user must explicitly Enable the motor from the global control area; it must not enable on the user's behalf.
+
 ## Layout
 
-The first version uses three functional regions:
+The first version uses three functional regions below the persistent application-level toolbar:
 
 ```text
+Application toolbar (persistent across pages)
+[ Connect / Disconnect ]   [ Enable / Disable ]   [ small top-level actions ]
+
 +---------------------------------------------------------------+
 | Control Tuning                                                |
 +-----------------------------------------+---------------------+
@@ -100,13 +115,41 @@ Writable:
 
 The observer states / gains may be exposed as diagnostics when required, but the first UI does not require users to edit `L1/L2/L3` directly.
 
-## Edit and Run behavior
+## Parameter editing and motor state
 
-Editing a tuning value does not need to change a running motor immediately.
+Tuning parameters may be edited while the motor is either `DISABLED` or `ENABLED`.
 
-The page keeps edited values as pending/dirty values. When the user presses `Run`, the Application API performs one complete experiment using a consistent parameter set:
+The first implementation does not permit tuning writes while the motor is `RUN`.
+
+This supports the intended workflow:
 
 ```text
+DISABLED
+  -> parameters may be edited
+  -> user explicitly enables from global toolbar
+ENABLED
+  -> parameters may still be edited
+  -> user presses Run for an experiment
+RUN
+  -> tuning controls locked / firmware rejects tuning writes
+  -> experiment finishes and returns to ENABLED
+ENABLED
+  -> user adjusts parameters and runs the next experiment
+```
+
+Parameter editing must not cause implicit Enable, Disable, Run or Stop actions.
+
+## Run behavior
+
+The page keeps edited values as pending/dirty values. When the user presses `Run`, the Application API performs one complete experiment using a consistent parameter set, but assumes the user has already explicitly put the motor in `ENABLED` state:
+
+```text
+verify motor state == ENABLED
+        |
+        +-- no --> show "Enable motor first" and stop
+        |
+       yes
+        v
 write dirty tuning parameters
         |
         v
@@ -119,10 +162,10 @@ configure motion command
 start experiment capture
         |
         v
-pre-trigger stationary capture
+pre-motion capture
         |
         v
-Enable / Run
+Run
         |
         v
 execute motion
@@ -131,11 +174,16 @@ execute motion
 motion complete / settled
         |
         v
-post-trigger capture
+return to ENABLED / stop motion
+        |
+        v
+post-motion capture
         |
         v
 stop capture and retain waveform
 ```
+
+There is deliberately no implicit `Enable` or `Disable` in this sequence.
 
 While an experiment is running, the tuning controls should be locked in the first implementation. Online gain editing can be added later only if there is a concrete need.
 
@@ -239,6 +287,8 @@ The firmware should expose these writable design parameters through the Paramete
 - Speed-loop bandwidth;
 - Position-loop Kp;
 - Mechanical ESO bandwidth.
+
+These tuning parameters must be writable in `DISABLED` and `ENABLED`, and rejected in `RUN`.
 
 It should also expose these read-only active controller values:
 
