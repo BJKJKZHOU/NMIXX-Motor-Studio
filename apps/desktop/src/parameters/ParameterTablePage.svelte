@@ -1,5 +1,5 @@
 <script lang="ts">
-  import { untrack } from "svelte";
+  import { onMount, untrack } from "svelte";
   import {
     FlexRender,
     columnFilteringFeature,
@@ -13,7 +13,7 @@
   } from "@tanstack/svelte-table";
   import type { ColumnDef } from "@tanstack/svelte-table";
   import type { ConnectionInfo } from "../connection/types";
-  import { listParameters, readParameter, readParameters, writeParameter } from "./api";
+  import { listParameters, onParametersRefreshed, readCachedParameters, readCurrentParameters, readParameter, refreshAllParameters, writeParameter } from "./api";
   import type { ParameterMetadata, ParameterValue } from "./types";
 
   type Props = {
@@ -68,6 +68,21 @@
   });
 
   const loadedValues = $derived(rows.filter((row) => !row.pending).length);
+
+  onMount(() => {
+    let disposed = false;
+    let refreshUnlisten: (() => void) | undefined;
+    onParametersRefreshed(() => void refreshFromCache())
+      .then((stop) => {
+        if (disposed) stop();
+        else refreshUnlisten = stop;
+      })
+      .catch(onError);
+    return () => {
+      disposed = true;
+      refreshUnlisten?.();
+    };
+  });
 
   $effect(() => {
     const activeConnection = connection;
@@ -137,7 +152,7 @@
     }
   }
 
-  function applyReadResults(results: Awaited<ReturnType<typeof readParameters>>) {
+  function applyReadResults(results: Awaited<ReturnType<typeof readCurrentParameters>>) {
     const byId = new Map(results.map((result) => [result.id, result]));
     const draftPatch: Record<number, string> = {};
     rows = rows.map((row) => {
@@ -167,7 +182,7 @@
         if (generation !== loadGeneration || connection !== activeConnection) return;
         const batch = readable.slice(offset, offset + READ_BATCH_SIZE);
         try {
-          const results = await readParameters(batch.map((item) => item.id));
+          const results = await readCurrentParameters(batch.map((item) => item.id));
           if (generation !== loadGeneration || connection !== activeConnection) return;
           applyReadResults(results);
         } catch (error) {
@@ -186,11 +201,28 @@
     }
   }
 
-  function refreshAll() {
-    const activeConnection = connection;
-    if (!activeConnection || loadingRegistry || readingValues) return;
-    const generation = ++loadGeneration;
-    void loadRegistry(activeConnection, generation);
+  async function refreshFromCache() {
+    if (!connection || rows.length === 0) return;
+    const readable = rows.filter((row) => isReadable(row.meta)).map((row) => row.meta.id);
+    if (readable.length === 0) return;
+    try {
+      const results = await readCachedParameters(readable);
+      applyReadResults(results);
+    } catch (error) {
+      onError(error);
+    }
+  }
+
+  async function refreshAll() {
+    if (!connection || loadingRegistry || readingValues) return;
+    readingValues = true;
+    try {
+      await refreshAllParameters();
+    } catch (error) {
+      onError(error);
+    } finally {
+      readingValues = false;
+    }
   }
 
   async function refreshOne(row: ParameterRow) {
@@ -246,7 +278,7 @@
           {table.getRowModel().rows.length} / {rows.length}
         {/if}
       </span>
-      <button class="tool-button" disabled={!connection || loadingRegistry || readingValues} onclick={refreshAll} title="Refresh all parameters">
+      <button class="tool-button" disabled={!connection || loadingRegistry || readingValues} onclick={() => void refreshAll()} title="Refresh all parameters">
         <i class={`codicon ${loadingRegistry || readingValues ? "codicon-loading codicon-modifier-spin" : "codicon-refresh"}`}></i>
         Refresh
       </button>
