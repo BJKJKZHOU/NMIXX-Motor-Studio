@@ -1,7 +1,7 @@
 <script lang="ts">
   import { onMount, untrack } from "svelte";
   import type { ConnectionInfo } from "../connection/types";
-  import { listParameters, readParameters, writeParameter } from "../parameters/api";
+  import { listParameters, onParametersRefreshed, readCachedParameters, readCurrentParameters, readParameters, writeParameter } from "../parameters/api";
   import type { ParameterMetadata, ParameterValue } from "../parameters/types";
   import { listActions, onActionCompleted, startAction } from "../actions/api";
   import type { ActionCompletion, ActionHandle, ActionMetadata } from "../actions/types";
@@ -120,18 +120,27 @@
 
   onMount(() => {
     let disposed = false;
-    let unlisten: (() => void) | undefined;
+    let actionUnlisten: (() => void) | undefined;
+    let refreshUnlisten: (() => void) | undefined;
 
     onActionCompleted((completion) => void handleActionCompleted(completion))
       .then((stop) => {
         if (disposed) stop();
-        else unlisten = stop;
+        else actionUnlisten = stop;
+      })
+      .catch(onError);
+
+    onParametersRefreshed(() => void refreshFromCache())
+      .then((stop) => {
+        if (disposed) stop();
+        else refreshUnlisten = stop;
       })
       .catch(onError);
 
     return () => {
       disposed = true;
-      unlisten?.();
+      actionUnlisten?.();
+      refreshUnlisten?.();
     };
   });
 
@@ -206,6 +215,19 @@
     throw new Error(`${meta.symbol}: Motor page does not edit ${meta.typeName}.`);
   }
 
+  function applyValues(entries: ParameterMetadata[], results: Awaited<ReturnType<typeof readParameters>>) {
+    const byId = new Map(results.map((item) => [item.id, item]));
+    const nextValues = { ...values };
+    const nextDrafts = { ...drafts };
+    for (const item of entries) {
+      const result = byId.get(item.id);
+      nextValues[item.symbol] = result?.value ?? null;
+      if (result?.value) nextDrafts[item.symbol] = valueText(result.value);
+    }
+    values = nextValues;
+    drafts = nextDrafts;
+  }
+
   async function loadMotorParameters(activeConnection: ConnectionInfo, token: number) {
     loading = true;
     try {
@@ -222,22 +244,25 @@
       const entries = registry.filter((item) => wanted.has(item.symbol));
       metadata = Object.fromEntries(entries.map((item) => [item.symbol, item]));
 
-      const results = await readParameters(entries.filter((item) => item.access.toLowerCase().includes("r")).map((item) => item.id));
+      const readable = entries.filter((item) => item.access.toLowerCase().includes("r"));
+      const results = await readCurrentParameters(readable.map((item) => item.id));
       if (token !== generation || connection !== activeConnection) return;
-      const byId = new Map(results.map((item) => [item.id, item]));
-      const nextValues: Record<string, ParameterValue | null> = {};
-      const nextDrafts: Record<string, string> = {};
-      for (const item of entries) {
-        const result = byId.get(item.id);
-        nextValues[item.symbol] = result?.value ?? null;
-        if (result?.value) nextDrafts[item.symbol] = valueText(result.value);
-      }
-      values = nextValues;
-      drafts = nextDrafts;
+      applyValues(readable, results);
     } catch (error) {
       if (token === generation) onError(error);
     } finally {
       if (token === generation) loading = false;
+    }
+  }
+
+  async function refreshFromCache() {
+    if (!connection || Object.keys(metadata).length === 0) return;
+    try {
+      const readable = Object.values(metadata).filter((item) => item.access.toLowerCase().includes("r"));
+      const results = await readCachedParameters(readable.map((item) => item.id));
+      applyValues(readable, results);
+    } catch (error) {
+      onError(error);
     }
   }
 
@@ -484,7 +509,6 @@
             <div class="settings-header" role="row">
               <div role="columnheader">Parameter</div>
               <div role="columnheader">Value</div>
-              <div role="columnheader">Used by</div>
             </div>
             <div class="settings-row" role="row">
               <div class="parameter-name" role="cell">I/F startup current</div>
@@ -505,7 +529,6 @@
                   <span class="muted">—</span>
                 {/if}
               </div>
-              <div class="muted" role="cell">Flux startup</div>
             </div>
           </div>
         </section>
@@ -560,9 +583,10 @@
   .settings-header,
   .settings-row {
     display: grid;
-    grid-template-columns: minmax(180px, 1fr) minmax(240px, 1.35fr) minmax(160px, 1fr);
+    grid-template-columns: minmax(180px, 1fr) minmax(240px, 1.35fr);
     column-gap: 18px;
     align-items: center;
+    max-width: 520px;
   }
 
   .grid-header,
