@@ -316,10 +316,9 @@
   function handleKeydown(event: KeyboardEvent, symbol: string) {
     if (event.key === "Enter") {
       event.preventDefault();
-      (event.currentTarget as HTMLInputElement).blur();
       void commit(symbol);
-    }
-    if (event.key === "Escape") {
+      (event.currentTarget as HTMLInputElement).blur();
+    } else if (event.key === "Escape") {
       drafts = { ...drafts, [symbol]: valueText(values[symbol]) };
       (event.currentTarget as HTMLInputElement).blur();
     }
@@ -423,12 +422,6 @@
 <div class="motor-root">
   <section class="page-toolbar">
     <div class="page-title">MOTOR</div>
-    <div class="toolbar-actions">
-      <button class="tool-button" disabled={!connection || loading || identifyBusy()} onclick={() => connection && void loadMotorParameters(connection, ++generation)} title="Refresh motor parameters">
-        <i class={`codicon ${loading ? "codicon-loading codicon-modifier-spin" : "codicon-refresh"}`}></i>
-        Refresh
-      </button>
-    </div>
   </section>
 
   <section class="motor-content">
@@ -460,7 +453,6 @@
                         value={drafts[row.activeSymbol] ?? ""}
                         disabled={!isWritable(row.activeSymbol) || writing.has(row.activeSymbol) || identifyBusy()}
                         oninput={(event) => drafts = { ...drafts, [row.activeSymbol]: (event.currentTarget as HTMLInputElement).value }}
-                        onblur={() => void commit(row.activeSymbol)}
                         onkeydown={(event) => handleKeydown(event, row.activeSymbol)}
                       />
                       <span class="unit">{unitFor(row.activeSymbol)}</span>
@@ -520,7 +512,6 @@
                       value={drafts[identificationCurrentSymbol] ?? ""}
                       disabled={!isWritable(identificationCurrentSymbol) || writing.has(identificationCurrentSymbol) || identifyBusy()}
                       oninput={(event) => drafts = { ...drafts, [identificationCurrentSymbol]: (event.currentTarget as HTMLInputElement).value }}
-                      onblur={() => void commit(identificationCurrentSymbol)}
                       onkeydown={(event) => handleKeydown(event, identificationCurrentSymbol)}
                     />
                     <span class="unit">{unitFor(identificationCurrentSymbol)}</span>
