@@ -103,6 +103,7 @@ App shell
   +-- Encoder
   +-- Limits / Safety
   +-- Control
+  +-- Control Tuning
   +-- Events
 ```
 
@@ -170,6 +171,9 @@ Limits / Safety
 Control architecture
     |
     v
+Control Tuning
+    |
+    v
 Analysis: Scope / FFT / Bode
 ```
 
@@ -179,8 +183,9 @@ The order communicates the normal engineering sequence without turning the appli
 - **Motor** owns the motor parameter view. Unknown parameters are obtained through identification tools attached to this page instead of a separate top-level Identification page.
 - **Encoder** configures feedback type/interface and generic encoder parameters. Phase search current, homing and zero-setting tools belong here because they establish position/electrical alignment.
 - **Limits / Safety** configures user operating limits and other software safety boundaries while keeping hardware protection semantics distinct.
-- **Control** chooses the operating mode and control architecture: loop controllers, startup strategy, observer and related defaults. Detailed tuning is intentionally not centered here.
-- **Analysis** is where detailed tuning happens while observing data. Scope, FFT and Bode share acquisition and plotting infrastructure.
+- **Control** chooses the operating mode and control architecture: loop controllers, startup strategy, observer and related defaults. It does not own the repeated motion-test tuning workflow.
+- **Control Tuning** runs bounded tuning experiments: edit controller design parameters, configure one motion command, capture the synchronized response, and preserve the completed waveform for comparison.
+- **Analysis** provides general-purpose continuous or manually triggered engineering analysis. Scope, FFT and Bode share acquisition and plotting infrastructure but are not responsible for the Control Tuning experiment workflow.
 
 Cross-workflow expert tools are visually separated from the commissioning sequence. The generic **Parameters** table, **Events**, and future **Automation** entry belong to this secondary group rather than interrupting the primary workflow.
 
@@ -196,6 +201,7 @@ Parameter service
       +--> Encoder page       (feedback-related parameter view)
       +--> Limits page        (operating/safety limits)
       +--> Control page       (algorithm selection and defaults)
+      +--> Control Tuning     (controller design parameters and active gains)
       +--> other domain pages
 ```
 
@@ -205,9 +211,107 @@ The Parameters page uses TanStack Table for table behavior. TanStack owns sortin
 
 ### Control setup and tuning are different workflows
 
-The Control page selects the active control structure and supplies usable default parameters. Fine tuning belongs with live analysis because tuning decisions depend on observed waveforms and frequency response.
+The **Control** page selects the active control structure and supplies usable defaults. The **Control Tuning** page is a dedicated experiment surface for tuning an already selected structure. Generic Scope/Bode/FFT remain separate expert analysis tools.
 
-For example, selecting position/speed control may choose the position, speed and current-loop controller types. A sensorless mode may additionally choose startup strategy and observer. Once the structure is selected, detailed gain adjustment can be surfaced beside Scope/Bode/FFT views while still using the same Parameter service underneath.
+The first Control Tuning layout uses three functional regions:
+
+```text
++------------------------------------------+----------------------+
+|                                          | Current Loop         |
+|                                          | Bandwidth [1000] Hz  |
+|                                          | Id Kp      read-only |
+|                                          | Id Ki      read-only |
+|              Experiment Waveform         | Iq Kp      read-only |
+|                                          | Iq Ki      read-only |
+|                                          |                      |
+|                                          | Speed Loop           |
+|                                          | Bandwidth [50] Hz    |
+|                                          | Kp         read-only |
+|                                          | Ki         read-only |
+|                                          |                      |
+|                                          | Position Loop        |
+|                                          | Kp         [5.0]     |
++------------------------------------------+                      |
+| Motion Command                           | Mechanical Observer  |
+| Mode / target / speed / acc / dec        | Bandwidth [100] Hz   |
+|                         [ Run ]           |                      |
++------------------------------------------+----------------------+
+```
+
+The right column edits **design parameters** rather than exposing every internal coefficient as an independent tuning knob. The firmware derives active gains from the current motor model and the selected design parameter. Active gains are shown read-only so the engineer can see exactly what is running:
+
+```text
+Current bandwidth  --> Id/Iq Kp, Ki
+Speed bandwidth    --> Speed Kp, Ki
+Position Kp        --> Position controller Kp
+Observer bandwidth --> Mechanical ESO observer gains
+```
+
+A tuning edit is staged by the GUI and applied as part of the next experiment. The first implementation should not continuously rewrite controller coefficients while the motor is running. During an active run the tuning controls are locked.
+
+One **Run** represents one bounded experiment:
+
+```text
+apply dirty tuning parameters
+        |
+        v
+read back active values/gains
+        |
+        v
+configure motion command
+        |
+        v
+start experiment capture
+        |
+        +-- pre-capture, default about 0.5 s
+        |
+        v
+enable / run motor
+        |
+        v
+execute requested motion
+        |
+        v
+motion complete / settling condition
+        |
+        +-- post-capture, default about 1.0 s
+        |
+        v
+stop capture and keep the waveform on screen
+```
+
+Pre/post capture are part of the experiment because startup response and post-arrival vibration are often the quantities being tuned. Capture does not stop at the exact instant the target is reached.
+
+The waveform panel is therefore not an indefinitely scrolling Scope. It starts with the experiment, stops automatically after the post-capture window, and preserves the completed record until the next run or explicit clear. It should reuse the shared acquisition/channel/uPlot infrastructure instead of creating a second telemetry implementation.
+
+Default channels depend on the experiment mode and may still be customized. Typical defaults are:
+
+```text
+Position experiment:
+  Position Ref / Encoder Position
+  Wm Ref / Mechanical ESO Wm
+  Iq Ref / Iq
+  ESO disturbance estimate
+
+Speed experiment:
+  Wm Ref / Mechanical ESO Wm
+  Encoder differentiated Wm (diagnostic)
+  Iq Ref / Iq
+  ESO disturbance estimate
+
+Current experiment:
+  Id Ref / Id
+  Iq Ref / Iq
+  Ud / Uq
+```
+
+Motion Command fields are mode-specific rather than one universal form:
+
+- Position: target position, maximum speed, acceleration, deceleration.
+- Speed: target speed, acceleration, deceleration, hold time.
+- Torque/current-oriented tests: target value and hold time.
+
+The GUI composes this workflow through the Application API. It does not write protocol frames directly. The Application layer owns sequencing, capture lifetime, motor actions and completion/error handling so the same experiment can later be invoked from GUI, CLI or automation.
 
 ### Analysis shares acquisition and plotting infrastructure
 
