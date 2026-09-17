@@ -4,7 +4,15 @@
 
 The Events / Problems page is the detailed diagnostic surface for active problems and retained event history.
 
-The top-right Problems indicator only summarizes the most important active problem and the total active count. This page shows each problem individually and explains what it means and where the user should normally go to resolve it.
+The top-right Problems indicator is deliberately minimal. Its collapsed toolbar form shows only the highest active severity icon and the total active problem count, for example:
+
+```text
+⚠ 3
+```
+
+Clicking that indicator opens a small summary popover containing only the single most important active problem as a short message. Clicking that short message navigates here for full diagnostics.
+
+This page shows each active problem individually and explains what it means and where the user should normally go to resolve it.
 
 ## Active problems
 
@@ -89,9 +97,29 @@ user explicitly clears history
 
 Merely viewing a problem does not clear it.
 
+## Top-right summary popover
+
+The toolbar indicator itself contains no persistent problem text. It shows only severity and active count:
+
+```text
+⚠ 3
+```
+
+Clicking it opens a compact popover. That popover displays only the single highest-priority active problem as a short message, for example:
+
+```text
+Encoder problem
+```
+
+The popover may also provide a compact Refresh/Recheck control.
+
+Clicking the short message navigates to this page and focuses the corresponding problem. The popover must not duplicate the full diagnostic description, repair guidance or history row.
+
+When several active problems exist, the selected message is determined first by severity and then by application-defined importance within the same severity. The popover does not rotate through problems.
+
 ## Refresh / recheck
 
-The page and top-right Problems control may expose Refresh.
+The Events page and the top-right Problems popover may expose Refresh/Recheck.
 
 Refresh re-evaluates current conditions through the Application layer and device state.
 
@@ -106,6 +134,8 @@ Refresh
 This operation is intended for cases where the user has corrected wiring, configuration, limits, encoder settings or another external condition and wants the application to verify that the problem is gone immediately.
 
 Refresh must not be implemented as "hide the warning". Resolution follows the current authoritative condition.
+
+When a recheck succeeds, the active count in the toolbar decreases immediately. The historical event remains.
 
 ## Device fault clearing is separate
 
@@ -144,24 +174,6 @@ Useful fields include:
 Resolved entries are not automatically deleted. They remain until the user explicitly invokes Clear History.
 
 Active problems must not disappear merely because history was cleared; current state can always repopulate/recreate the Active view from authoritative runtime/device conditions.
-
-## Top-toolbar relationship
-
-The top-right Problems indicator is deliberately compact:
-
-```text
-[ severity · most-important-problem  active-count ]
-```
-
-For example:
-
-```text
-[ Error · Encoder problem  3 ]
-```
-
-The badge `3` means there are three currently active problems. The text names only the single highest-priority active problem.
-
-Clicking the indicator opens this page. Hover, if provided, remains summary-level and does not duplicate this page's diagnostics.
 
 ## Application data model
 
