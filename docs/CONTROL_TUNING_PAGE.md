@@ -2,7 +2,7 @@
 
 ## Purpose
 
-Control Tuning is a servo closed-loop tuning page. It is not the same workflow as the generic Plot page.
+Control Tuning is a servo closed-loop tuning page. It is not the same workflow as the generic Plot/Scope page.
 
 The page binds three things into one repeatable experiment:
 
@@ -12,29 +12,43 @@ The page binds three things into one repeatable experiment:
 
 The intended workflow is:
 
-> select mode -> explicitly enable from the global toolbar -> adjust parameters -> configure one motion -> Run -> inspect the complete response -> adjust again.
+> explicitly Enable from the global motor controls -> select mode -> adjust parameters -> configure one motion -> Run -> inspect the complete response -> adjust again.
 
 The GUI operates through the Application API. It must not assemble low-level protocol transactions directly.
 
 ## Global motor controls are not owned by this page
 
-Connection / disconnection, motor Enable / Disable and other small top-level safety actions belong to the persistent application toolbar/header. They remain visible and keep the same state when the user changes pages.
+Connection state and motor state are global application context, but their controls have different ownership.
+
+- Connection configuration, Connect and Disconnect belong to the Connection page.
+- Motor `Enable / Disable` and `Stop` are persistent global motor controls owned by the application shell.
+- The Control Tuning page owns only the domain-specific experiment `Run` action.
+
+The shared interaction rules are defined in `UI_INTERACTION_RULES.md`.
+
+The persistent motor controls use two stable control positions:
+
+```text
+Motor state        Enable / Disable              Stop
+---------------------------------------------------------
+DISABLED           [ Enable  ]                   [ Stop ] disabled
+ENABLED            [ Disable ]                   [ Stop ] disabled
+RUN                [ Disable ]                   [ Stop ] active
+```
+
+`Enable / Disable` is one stateful button. Text, icon and color change together to show the action that pressing it will perform. `Stop` remains a separate persistent button because stopping motion is not the same operation as disabling the motor.
 
 Control Tuning must never automatically Enable or Disable the motor as a side effect of `Run`, page entry, page exit, parameter editing or capture control.
-
-Enable / Disable is an explicit human safety action. In particular, software automation must not race with or override a user who is intentionally changing the enable state.
-
-The page may read and display the global motor state, but it does not own that state transition.
 
 `Run` is only valid when the motor is already `ENABLED`. If it is not enabled, the page reports that the user must explicitly Enable the motor from the global control area; it must not enable on the user's behalf.
 
 ## Layout
 
-The first version uses three functional regions below the persistent application-level toolbar:
+The first version uses three functional regions below the persistent application shell:
 
 ```text
-Application toolbar (persistent across pages)
-[ Connect / Disconnect ]   [ Enable / Disable ]   [ small top-level actions ]
+Application shell
+Device: AxDr_L · Connected       Motor: ENABLED   [ Disable ] [ Stop ]
 
 +---------------------------------------------------------------+
 | Control Tuning                                                |
@@ -42,9 +56,9 @@ Application toolbar (persistent across pages)
 |                                         | Current Loop        |
 |                                         | Bandwidth [1000] Hz |
 |                                         | Id Kp      0.0178   |
-|                                         | Id Ki      532.3    |
-|              Experiment                 | Iq Kp      ...      |
-|              Waveform                   | Iq Ki      ...      |
+|              Experiment                 | Id Ki      532.3    |
+|              Waveform                   | Iq Kp      ...      |
+|                                         | Iq Ki      ...      |
 |                                         |                     |
 |                                         | Speed Loop          |
 |                                         | Bandwidth [50] Hz   |
@@ -53,12 +67,9 @@ Application toolbar (persistent across pages)
 |                                         |                     |
 |                                         | Position Loop       |
 |                                         | Kp         [5.0]    |
-|                                         |                     |
-|                                         | Mechanical Observer |
-|                                         | Bandwidth [100] Hz  |
 +-----------------------------------------+                     |
-| Motion Command                          |                     |
-| Mode [ Position v ]                     |                     |
+| Motion Command                          | Mechanical Observer  |
+| Mode [ Position v ]                     | Bandwidth [100] Hz  |
 | Target [...]  Speed [...]               |                     |
 | Acc [...]     Dec [...]                 |                     |
 |                         [ Run ]          |                     |
@@ -66,6 +77,8 @@ Application toolbar (persistent across pages)
 ```
 
 The left side is the experiment waveform area. The lower-left area defines the motion for the next experiment. The right side contains tuning parameters and the active gains derived by firmware.
+
+The page does not duplicate Connect/Disconnect controls or motor Enable/Disable/Stop controls inside its own content area.
 
 ## Tuning parameter semantics
 
@@ -126,13 +139,14 @@ This supports the intended workflow:
 ```text
 DISABLED
   -> parameters may be edited
-  -> user explicitly enables from global toolbar
+  -> user explicitly presses global Enable
 ENABLED
   -> parameters may still be edited
-  -> user presses Run for an experiment
+  -> user presses page-local Run for an experiment
 RUN
   -> tuning controls locked / firmware rejects tuning writes
-  -> experiment finishes and returns to ENABLED
+  -> global Stop is available
+  -> experiment finishes or Stop returns motor to ENABLED
 ENABLED
   -> user adjusts parameters and runs the next experiment
 ```
@@ -187,6 +201,16 @@ There is deliberately no implicit `Enable` or `Disable` in this sequence.
 
 While an experiment is running, the tuning controls should be locked in the first implementation. Online gain editing can be added later only if there is a concrete need.
 
+The page-local `Run` action is contextual: it means "run this configured tuning experiment". It must not be promoted to a generic global Run button.
+
+## Global Stop during an experiment
+
+The persistent global `Stop` control must remain available while a tuning experiment is in `RUN`.
+
+A user Stop terminates the active motion/task through the Application layer and returns the motor to the appropriate non-running state, normally `ENABLED`, while preserving a coherent experiment result/error state for the page.
+
+The page must not implement a second independent motor-stop path. It observes the same Application task/motor state used by the global control.
+
 ## Experiment capture
 
 This page does not use an endless scrolling Plot session.
@@ -200,6 +224,8 @@ A capture is finite and synchronized to one motor experiment. It includes time b
 The exact durations can become configurable later. The post-motion interval is important because position-loop tuning must show settling and any vibration after the target is reached.
 
 The waveform remains on screen after capture ends so the user can inspect the complete response before changing the next parameter set.
+
+If the experiment is stopped early, the capture/task layer should still finish the record coherently rather than leaving the plotting service in an unrelated running state.
 
 ## Default waveform groups
 
@@ -261,16 +287,15 @@ Torque:
 
 The first implementation may support only the modes that have a complete firmware/Application API path. Unsupported fields must not be faked in the GUI.
 
-## Difference from Plot
+## Difference from Plot / Scope
 
-`Plot` and `Control Tuning` may reuse the same lower-level streaming/capture infrastructure, but they have different product behavior.
+`Scope` and `Control Tuning` may reuse the same lower-level streaming/capture infrastructure, but they have different product behavior.
 
-Plot:
+Scope:
 
-- continuous observation;
+- continuous observation or manually controlled capture;
 - freely selected variables;
-- open-ended duration;
-- generic debugging tool.
+- open-ended/general-purpose debugging workflow.
 
 Control Tuning:
 
@@ -278,6 +303,8 @@ Control Tuning:
 - tuning parameters, motion command and waveform are bound together;
 - capture starts before the motion and ends after settling;
 - intended specifically for closed-loop tuning.
+
+Start/Stop-style controls inside Analysis should follow the shared stateful-action rule when they operate on one mutually exclusive acquisition task.
 
 ## Firmware contract required by this page
 
