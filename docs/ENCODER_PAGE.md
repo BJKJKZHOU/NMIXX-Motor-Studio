@@ -2,14 +2,15 @@
 
 ## Purpose
 
-The Encoder page configures the feedback interface and establishes the coordinate relationships required for servo control. It is not primarily a device-model selector and it is not a telemetry dashboard.
+The Encoder page configures the feedback interface and establishes the coordinate relationships required for servo control. It is not primarily a telemetry dashboard.
 
 The page owns the human workflow around:
 
-1. feedback interface configuration;
-2. phase alignment;
-3. user mechanical direction;
-4. mechanical zero and optional homing.
+1. feedback protocol/interface configuration;
+2. protocol-specific encoder configuration;
+3. phase alignment;
+4. user mechanical direction;
+5. mechanical zero and optional homing.
 
 Live motor values such as current, speed and position belong to the application-wide status area rather than being repeated on this page. Encoder health is also not shown as a permanent Ready/Valid/Fault table: normal feedback is quiet, while invalid feedback is surfaced as an application-level problem.
 
@@ -23,11 +24,10 @@ ENCODER                                             Refresh
 +--------------------------------------+--------------------------+
 | Feedback Interface                   | Mechanical Reference     |
 |                                      |                          |
-| Interface       [ ABZ v ]            | Zero reference  Not set  |
-| PPR             [ 2500 ]             |                          |
-| Counts/rev        10000              | [ Set Current as Zero ]  |
-|                                      | [ Software Homing ]      |
-| Phase Alignment                      |                          |
+| Encoder Protocol [ SPI v ]           | Zero reference  Not set  |
+| SPI Encoder      [ MT6835 v ]        |                          |
+|                                      | [ Set Current as Zero ]  |
+| Phase Alignment                      | [ Software Homing ]      |
 |                                      |                          |
 | Search current   [ 0.500 ] A         |                          |
 | Phase search     [ Start ] Success   |                          |
@@ -36,34 +36,58 @@ ENCODER                                             Refresh
 +--------------------------------------+--------------------------+
 ```
 
-Do not turn the sections into large dashboard cards. Their grouping comes from whitespace, headings and compact parameter/action rows.
+Protocol-specific controls appear only when the selected protocol requires them. Do not turn the sections into large dashboard cards. Their grouping comes from whitespace, headings and compact parameter/action rows.
 
 ## Feedback Interface
 
-The first-level concept is the feedback interface/protocol, not the encoder chip model.
+The first-level concept is the feedback protocol/interface, not the encoder chip model.
 
-Examples of protocol-oriented interfaces are:
+The current firmware/Host schema exposes this model explicitly:
 
 ```text
-ABZ
-SPI Absolute
-BiSS-C
-SSI
-...
+PARAM_ENCODER_PROTOCOL
+    -> first-level protocol selection
+
+PARAM_ENCODER_SPI_TYPE
+    -> SPI encoder selection when protocol == SPI
 ```
 
-Only interfaces actually supported by the firmware schema should be offered.
+The GUI therefore presents a protocol-oriented first selector such as:
 
-Protocol-specific fields appear dynamically beneath the interface selector. They should include only configuration that a normal user needs to supply; fixed board/driver details remain firmware implementation details.
+```text
+Encoder Protocol
+    ABZ
+    SPI
+    ... only protocols supported by the connected firmware
+```
+
+When a protocol needs a second-level device/configuration choice, that field is shown dynamically. For SPI this is `SPI Encoder`, with choices supplied by firmware schema/capability metadata rather than hard-coded as a universal list.
+
+Conceptually:
+
+```text
+Encoder Protocol
+    |
+    +-- ABZ
+    |     +-- PPR / ABZ-specific configuration when exposed
+    |
+    +-- SPI
+          +-- SPI Encoder
+                MT6816
+                MT6835
+                ... firmware-supported choices
+```
+
+The GUI must not invent unsupported protocol fields or pretend a capability exists before the firmware exposes it.
 
 ### ABZ
 
-ABZ should normally require only the encoder PPR in the first implementation:
+ABZ should normally require only the encoder PPR in the first implementation once that parameter is exposed:
 
 ```text
-Interface        ABZ
-PPR              [ 2500 ]
-Counts/rev       10000
+Encoder Protocol  ABZ
+PPR               [ 2500 ]
+Counts/rev         10000
 ```
 
 `Counts/rev` is a read-only derived presentation value. With fixed x4 quadrature decoding:
@@ -73,14 +97,6 @@ CountsPerRev = PPR * 4
 ```
 
 Do not create a second editable CPR value when it is deterministically derived from PPR.
-
-### Current firmware mismatch
-
-The current AxDr_L firmware exposes `PARAM_ENCODER_TYPE` as concrete driver models such as MT6816 and MT6835. That is not the intended host-facing abstraction for this page.
-
-The intended firmware direction is to expose an interface/protocol concept plus protocol-specific parameters. Concrete chip/driver selection should remain below that abstraction unless incompatible wire protocols genuinely require a second-level protocol choice.
-
-Until that exists, the GUI must not rename a chip-model selector to `Interface` and pretend the abstraction is already available.
 
 ## Global runtime feedback
 
@@ -122,6 +138,8 @@ Motor direction      [ Normal v ]
 The phase-search result is automatically applied by the firmware when the operation succeeds. The Encoder page therefore does not show an Apply button.
 
 The resulting encoder direction and electrical offset are implementation/calibration results. They remain readable through the generic Parameters page but are not permanently displayed on the normal Encoder page. For the normal workflow, `Success` is sufficient.
+
+Phase Search follows the shared stateful-action interaction rule in `UI_INTERACTION_RULES.md`: while the same search task is active, the action control may change from Start to Abort/Stop in the same location rather than presenting two permanently adjacent controls.
 
 ### Encoder direction versus motor direction
 
@@ -213,7 +231,7 @@ Without a valid mechanical zero, position limits cannot be enabled because their
 
 The GUI must not reproduce motor-state orchestration required to perform phase search or homing.
 
-The current AxDr_L firmware starts phase search by selecting `PHASE_SEARCH` motor mode, completing the generic motor-enable action, and then using the generic motor-run action. That device-side composition is now hidden by the Rust Application API:
+The current AxDr_L firmware starts phase search by selecting `PHASE_SEARCH` motor mode, completing the generic motor-enable action, and then using the generic motor-run action. That device-side composition is hidden by the Rust Application API:
 
 ```text
 GUI / CLI / Automation
@@ -228,12 +246,12 @@ MotorActionService
         +-- ACTION_MOTOR_ENABLE
         +-- wait for Enable completion
         +-- ACTION_MOTOR_RUN
-        +-- expose final completion as ACTION_PHASE_SEARCH_START
+        +-- expose final completion as semantic phase-search completion
 ```
 
-The desktop client calls the semantic `phase_search_start` command. It does not know or reproduce the firmware sequence.
+The desktop client calls the semantic phase-search command. It does not know or reproduce the firmware sequence.
 
-This is intentionally an Application-level compatibility adapter. If firmware later exposes a native `ACTION_PHASE_SEARCH_START`, only the Application implementation needs to change; Encoder GUI, CLI and automation semantics stay stable.
+This is intentionally an Application-level compatibility adapter. If firmware later exposes a native phase-search Action, only the Application implementation needs to change; Encoder GUI, CLI and automation semantics stay stable.
 
 The same rule applies to future Set Zero and Homing operations: clients call semantic Application operations, while any required lower-level Parameter/Action composition remains inside the Application layer.
 
@@ -241,14 +259,15 @@ The same rule applies to future Set Zero and Homing operations: clients call sem
 
 The current GUI wires parameters/actions that already have a stable business meaning:
 
+- `Encoder Protocol` through `PARAM_ENCODER_PROTOCOL`;
+- SPI encoder selection through `PARAM_ENCODER_SPI_TYPE` when SPI is selected;
 - phase-search current;
 - semantic phase search through `MotorActionService`;
 - user motor direction.
 
 It reserves but does not fake functionality whose firmware/application contract does not yet exist:
 
-- protocol-oriented feedback interface selection;
-- ABZ PPR and derived counts/rev when ABZ is not yet exposed;
+- ABZ PPR and derived counts/rev until ABZ-specific configuration is exposed;
 - zero-valid state;
 - Set Current as Zero Action;
 - Software Homing Action.
