@@ -286,6 +286,7 @@
   function handleKeydown(event: KeyboardEvent, symbol: string) {
     if (event.key === "Enter") {
       event.preventDefault();
+      void commit(symbol);
       (event.currentTarget as HTMLInputElement).blur();
     } else if (event.key === "Escape") {
       drafts = { ...drafts, [symbol]: valueText(values[symbol]) };
@@ -323,12 +324,6 @@
 <div class="encoder-root">
   <section class="page-toolbar">
     <div class="page-title">ENCODER</div>
-    <div class="toolbar-actions">
-      <button class="tool-button" disabled={!connection || loading || phaseState === "running"} onclick={() => connection && void loadEncoder(connection, ++generation)} title="Refresh encoder configuration">
-        <i class={`codicon ${loading ? "codicon-loading codicon-modifier-spin" : "codicon-refresh"}`}></i>
-        Refresh
-      </button>
-    </div>
   </section>
 
   <section class="encoder-content">
@@ -398,7 +393,6 @@
                         value={drafts[PHASE_CURRENT_SYMBOL] ?? ""}
                         disabled={!isWritable(PHASE_CURRENT_SYMBOL) || writing.has(PHASE_CURRENT_SYMBOL) || phaseState === "running"}
                         oninput={(event) => drafts = { ...drafts, [PHASE_CURRENT_SYMBOL]: (event.currentTarget as HTMLInputElement).value }}
-                        onblur={() => void commit(PHASE_CURRENT_SYMBOL)}
                         onkeydown={(event) => handleKeydown(event, PHASE_CURRENT_SYMBOL)}
                       />
                       <span class="unit">{unitFor(PHASE_CURRENT_SYMBOL)}</span>
