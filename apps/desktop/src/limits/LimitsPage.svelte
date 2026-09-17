@@ -1,7 +1,7 @@
 <script lang="ts">
-  import { untrack } from "svelte";
+  import { onMount, untrack } from "svelte";
   import type { ConnectionInfo } from "../connection/types";
-  import { listParameters, readParameters, writeParameter } from "../parameters/api";
+  import { listParameters, onParametersRefreshed, readCachedParameters, readCurrentParameters, readParameters, writeParameter } from "../parameters/api";
   import type { ParameterMetadata, ParameterValue } from "../parameters/types";
 
   type Props = {
@@ -34,6 +34,21 @@
   let loading = $state(false);
   let writing = $state<Set<string>>(new Set());
   let generation = 0;
+
+  onMount(() => {
+    let disposed = false;
+    let refreshUnlisten: (() => void) | undefined;
+    onParametersRefreshed(() => void refreshFromCache())
+      .then((stop) => {
+        if (disposed) stop();
+        else refreshUnlisten = stop;
+      })
+      .catch(onError);
+    return () => {
+      disposed = true;
+      refreshUnlisten?.();
+    };
+  });
 
   $effect(() => {
     const activeConnection = connection;
@@ -115,6 +130,19 @@
     throw new Error(`${meta.symbol}: Limits page does not edit ${meta.typeName}.`);
   }
 
+  function applyValues(entries: ParameterMetadata[], results: Awaited<ReturnType<typeof readParameters>>) {
+    const byId = new Map(results.map((item) => [item.id, item]));
+    const nextValues = { ...values };
+    const nextDrafts = { ...drafts };
+    for (const item of entries) {
+      const result = byId.get(item.id);
+      nextValues[item.symbol] = result?.value ?? null;
+      if (result?.value) nextDrafts[item.symbol] = valueText(result.value);
+    }
+    values = nextValues;
+    drafts = nextDrafts;
+  }
+
   async function loadLimits(activeConnection: ConnectionInfo, token: number) {
     loading = true;
     try {
@@ -126,25 +154,24 @@
       metadata = Object.fromEntries(entries.map((item) => [item.symbol, item]));
 
       const readable = entries.filter((item) => item.access.toLowerCase().includes("r"));
-      const results = await readParameters(readable.map((item) => item.id));
+      const results = await readCurrentParameters(readable.map((item) => item.id));
       if (token !== generation || connection !== activeConnection) return;
-
-      const byId = new Map(results.map((item) => [item.id, item]));
-      const nextValues: Record<string, ParameterValue | null> = {};
-      const nextDrafts: Record<string, string> = {};
-
-      for (const item of entries) {
-        const result = byId.get(item.id);
-        nextValues[item.symbol] = result?.value ?? null;
-        if (result?.value) nextDrafts[item.symbol] = valueText(result.value);
-      }
-
-      values = nextValues;
-      drafts = nextDrafts;
+      applyValues(readable, results);
     } catch (error) {
       if (token === generation) onError(error);
     } finally {
       if (token === generation) loading = false;
+    }
+  }
+
+  async function refreshFromCache() {
+    if (!connection || Object.keys(metadata).length === 0) return;
+    try {
+      const readable = Object.values(metadata).filter((item) => item.access.toLowerCase().includes("r"));
+      const results = await readCachedParameters(readable.map((item) => item.id));
+      applyValues(readable, results);
+    } catch (error) {
+      onError(error);
     }
   }
 
@@ -153,18 +180,7 @@
     if (readable.length === 0) return;
 
     const results = await readParameters(readable.map((item) => item.id));
-    const byId = new Map(results.map((item) => [item.id, item]));
-    const nextValues = { ...values };
-    const nextDrafts = { ...drafts };
-
-    for (const item of readable) {
-      const result = byId.get(item.id);
-      nextValues[item.symbol] = result?.value ?? null;
-      if (result?.value) nextDrafts[item.symbol] = valueText(result.value);
-    }
-
-    values = nextValues;
-    drafts = nextDrafts;
+    applyValues(readable, results);
   }
 
   async function commit(symbol: string) {
