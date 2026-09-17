@@ -13,23 +13,36 @@
   };
 
   type PhaseState = "idle" | "running" | "success" | "failed";
+  type EnumOption = { value: number; symbol: string; label: string };
 
   const PHASE_CURRENT_SYMBOL = "PARAM_PHASE_I_SEARCH";
   const MOTOR_DIR_SYMBOL = "PARAM_MOTOR_DIR";
+  const ENCODER_PROTOCOL_SYMBOL = "PARAM_ENCODER_PROTOCOL";
+  const ENCODER_SPI_TYPE_SYMBOL = "PARAM_ENCODER_SPI_TYPE";
 
   // Future semantic host contracts. The page enables these automatically when
   // firmware/Application API expose them; it does not emulate them locally.
-  const ENCODER_INTERFACE_SYMBOL = "PARAM_ENCODER_INTERFACE";
   const ABZ_PPR_SYMBOL = "PARAM_ENCODER_ABZ_PPR";
   const ZERO_VALID_SYMBOL = "PARAM_POSITION_ZERO_VALID";
   const PHASE_SEARCH_ACTION = "ACTION_PHASE_SEARCH_START";
   const SET_ZERO_ACTION = "ACTION_POSITION_SET_ZERO";
   const HOMING_ACTION = "ACTION_HOME_START";
 
+  const PROTOCOL_OPTIONS: EnumOption[] = [
+    { value: 0, symbol: "ENC_PROTOCOL_NONE", label: "None" },
+    { value: 1, symbol: "ENC_PROTOCOL_SPI", label: "SPI" },
+  ];
+
+  const SPI_TYPE_OPTIONS: EnumOption[] = [
+    { value: 1, symbol: "ENC_SPI_MT6816", label: "MT6816" },
+    { value: 2, symbol: "ENC_SPI_MT6835", label: "MT6835" },
+  ];
+
   const ALL_PARAMETER_SYMBOLS = [
     PHASE_CURRENT_SYMBOL,
     MOTOR_DIR_SYMBOL,
-    ENCODER_INTERFACE_SYMBOL,
+    ENCODER_PROTOCOL_SYMBOL,
+    ENCODER_SPI_TYPE_SYMBOL,
     ABZ_PPR_SYMBOL,
     ZERO_VALID_SYMBOL,
   ];
@@ -111,6 +124,21 @@
 
   function actionAvailable(symbol: string): boolean {
     return !!actions[symbol];
+  }
+
+  function enumOptions(symbol: string, candidates: EnumOption[]): EnumOption[] {
+    const allowedSymbols = metadata[symbol]?.allowedSymbols ?? [];
+    if (allowedSymbols.length === 0) return candidates;
+    const allowed = new Set(allowedSymbols);
+    return candidates.filter((option) => allowed.has(option.symbol));
+  }
+
+  function encoderProtocol(): number | null {
+    return numericValue(ENCODER_PROTOCOL_SYMBOL);
+  }
+
+  function isSpiProtocol(): boolean {
+    return encoderProtocol() === 1;
   }
 
   function zeroReferenceText(): string {
@@ -213,6 +241,23 @@
     }
   }
 
+  async function setU8(symbol: string, value: number) {
+    const meta = metadata[symbol];
+    if (!meta || meta.typeName !== "u8" || !isWritable(symbol) || writing.has(symbol)) return;
+
+    writing = new Set(writing).add(symbol);
+    try {
+      await writeParameter(meta.id, { type: "u8", value });
+      await refreshValues();
+    } catch (error) {
+      onError(error);
+    } finally {
+      const next = new Set(writing);
+      next.delete(symbol);
+      writing = next;
+    }
+  }
+
   async function setMotorDirection(direction: "normal" | "reversed") {
     const meta = metadata[MOTOR_DIR_SYMBOL];
     if (!meta || !isWritable(MOTOR_DIR_SYMBOL) || writing.has(MOTOR_DIR_SYMBOL)) return;
@@ -286,20 +331,50 @@
         <div class="encoder-columns">
           <div class="primary-column">
             <section class="encoder-section">
-              <div class="section-title">Feedback Interface</div>
-              <div class="setup-grid future-block" aria-label="Feedback interface">
-                <div class="field-label">Interface</div>
-                <select class="compact-select" disabled title="Firmware protocol abstraction is not exposed yet">
-                  <option>—</option>
-                </select>
+              <div class="section-title">Feedback Protocol</div>
+              <div class="setup-grid" aria-label="Encoder feedback protocol">
+                <div class="field-label">Protocol</div>
+                <div>
+                  {#if metadata[ENCODER_PROTOCOL_SYMBOL]}
+                    <select
+                      class="compact-select"
+                      disabled={!isWritable(ENCODER_PROTOCOL_SYMBOL) || writing.has(ENCODER_PROTOCOL_SYMBOL) || phaseState === "running"}
+                      value={String(numericValue(ENCODER_PROTOCOL_SYMBOL) ?? "")}
+                      onchange={(event) => void setU8(ENCODER_PROTOCOL_SYMBOL, Number((event.currentTarget as HTMLSelectElement).value))}
+                    >
+                      {#each enumOptions(ENCODER_PROTOCOL_SYMBOL, PROTOCOL_OPTIONS) as option}
+                        <option value={option.value}>{option.label}</option>
+                      {/each}
+                    </select>
+                  {:else}
+                    <span class="muted">Firmware unavailable</span>
+                  {/if}
+                </div>
 
-                <div class="field-label">PPR</div>
-                <span class="inline-editor">
-                  <input class="compact-input mono" disabled value="" />
-                </span>
+                {#if isSpiProtocol()}
+                  <div class="field-label">SPI Encoder</div>
+                  <div>
+                    {#if metadata[ENCODER_SPI_TYPE_SYMBOL]}
+                      <select
+                        class="compact-select"
+                        disabled={!isWritable(ENCODER_SPI_TYPE_SYMBOL) || writing.has(ENCODER_SPI_TYPE_SYMBOL) || phaseState === "running"}
+                        value={String(numericValue(ENCODER_SPI_TYPE_SYMBOL) ?? "")}
+                        onchange={(event) => void setU8(ENCODER_SPI_TYPE_SYMBOL, Number((event.currentTarget as HTMLSelectElement).value))}
+                      >
+                        {#each enumOptions(ENCODER_SPI_TYPE_SYMBOL, SPI_TYPE_OPTIONS) as option}
+                          <option value={option.value}>{option.label}</option>
+                        {/each}
+                      </select>
+                    {:else}
+                      <span class="muted">Firmware unavailable</span>
+                    {/if}
+                  </div>
+                {/if}
 
-                <div class="field-label">Counts/rev</div>
-                <span class="readonly-value muted">—</span>
+                {#if metadata[ABZ_PPR_SYMBOL]}
+                  <div class="field-label">PPR</div>
+                  <div class="muted">Available when ABZ protocol is exposed by firmware.</div>
+                {/if}
               </div>
             </section>
 
@@ -475,8 +550,7 @@
     border-color: var(--vscode-focusBorder);
   }
 
-  .compact-select:disabled,
-  .future-block {
+  .compact-select:disabled {
     opacity: 0.58;
   }
 
