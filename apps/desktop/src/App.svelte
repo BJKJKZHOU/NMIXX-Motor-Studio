@@ -11,7 +11,7 @@
   import LimitsPage from "./limits/LimitsPage.svelte";
   import { disableMotor, enableMotor, onActionCompleted, stopMotor } from "./actions/api";
   import type { ActionCompletion, ActionHandle } from "./actions/types";
-  import { listParameters, readParameters } from "./parameters/api";
+  import { listParameters, readParameters, refreshAllParameters as refreshParameterCache } from "./parameters/api";
   import type { ParameterMetadata, ParameterValue } from "./parameters/types";
 
   type Page = "connection" | "motor" | "encoder" | "limits" | "control" | "analysis" | "parameters" | "events" | "automation";
@@ -73,7 +73,7 @@
           .filter((item) => GLOBAL_SYMBOLS.includes(item.symbol as typeof GLOBAL_SYMBOLS[number]))
           .map((item) => [item.symbol, item.id]),
       );
-      await refreshAllParameters();
+      await refreshGlobalStatus();
       globalRefreshTimer = setInterval(() => void refreshGlobalStatus(), 500);
     } catch (error) {
       setError(error);
@@ -134,10 +134,8 @@
     if (!connection || readingParameters) return;
     readingParameters = true;
     try {
-      const readable = parameterRegistry.filter((item) => item.access.toLowerCase().includes("r"));
-      if (readable.length > 0) await readParameters(readable.map((item) => item.id));
+      await refreshParameterCache();
       await refreshGlobalStatus();
-      window.dispatchEvent(new CustomEvent("nmixx-parameters-refreshed"));
     } catch (error) {
       setError(error);
     } finally {
