@@ -20,7 +20,7 @@ Current page
     domain-specific configuration and actions
 
 Bottom status bar
-    connection/device status
+    connection/device identity
     live Current / Speed / Position
 ```
 
@@ -199,11 +199,37 @@ Detailed lifecycle and page semantics are defined in `EVENTS_PAGE.md`.
 
 The bottom status bar contains persistent low-interruption runtime information.
 
-Left side:
+### Left side
 
-- connection/device status.
+The left side shows **connection status and device identity only**.
 
-Right side, right-aligned and in this stable order:
+Typical presentation:
+
+```text
+● AxDr_L
+```
+
+Disconnected:
+
+```text
+○ Disconnected
+```
+
+Do not repeat motor enable/run state, control mode, faults/warnings, unsaved-parameter state, Scope state or acquisition statistics here. Those concepts already have dedicated UI ownership elsewhere.
+
+The status bar should present the identity of the connected device rather than detailed transport configuration. Endpoint, serial port, CAN interface/node, baud/bitrate, Host Schema and other connection details belong to the Connection page or an optional hover tooltip.
+
+If future multi-device or CAN-node workflows make disambiguation necessary, the compact identity may expand, for example:
+
+```text
+● NMIXX · Node 3
+```
+
+but single-device sessions should remain visually minimal.
+
+### Right side
+
+The right side is right-aligned and keeps this stable order:
 
 ```text
 Current    Speed    Position
