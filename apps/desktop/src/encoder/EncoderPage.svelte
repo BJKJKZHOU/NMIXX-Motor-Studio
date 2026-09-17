@@ -1,7 +1,7 @@
 <script lang="ts">
   import { untrack } from "svelte";
   import type { ConnectionInfo } from "../connection/types";
-  import { listParameters, readParameters, writeParameter } from "../parameters/api";
+  import { listParameters, onParametersRefreshed, readCachedParameters, readCurrentParameters, readParameters, writeParameter } from "../parameters/api";
   import type { ParameterMetadata, ParameterValue } from "../parameters/types";
   import { listActions, onActionCompleted } from "../actions/api";
   import type { ActionCompletion, ActionHandle, ActionMetadata } from "../actions/types";
@@ -20,8 +20,6 @@
   const ENCODER_PROTOCOL_SYMBOL = "PARAM_ENCODER_PROTOCOL";
   const ENCODER_SPI_TYPE_SYMBOL = "PARAM_ENCODER_SPI_TYPE";
 
-  // Future semantic host contracts. The page enables these automatically when
-  // firmware/Application API expose them; it does not emulate them locally.
   const ABZ_PPR_SYMBOL = "PARAM_ENCODER_ABZ_PPR";
   const ZERO_VALID_SYMBOL = "PARAM_POSITION_ZERO_VALID";
   const PHASE_SEARCH_ACTION = "ACTION_PHASE_SEARCH_START";
@@ -81,18 +79,27 @@
 
   $effect(() => {
     let disposed = false;
-    let unlisten: (() => void) | undefined;
+    let actionUnlisten: (() => void) | undefined;
+    let refreshUnlisten: (() => void) | undefined;
 
     onActionCompleted((completion) => handleActionCompleted(completion))
       .then((stop) => {
         if (disposed) stop();
-        else unlisten = stop;
+        else actionUnlisten = stop;
+      })
+      .catch(onError);
+
+    onParametersRefreshed(() => void refreshFromCache())
+      .then((stop) => {
+        if (disposed) stop();
+        else refreshUnlisten = stop;
       })
       .catch(onError);
 
     return () => {
       disposed = true;
-      unlisten?.();
+      actionUnlisten?.();
+      refreshUnlisten?.();
     };
   });
 
@@ -168,6 +175,19 @@
     throw new Error(`${meta.symbol}: Encoder page does not edit ${meta.typeName}.`);
   }
 
+  function applyValues(entries: ParameterMetadata[], results: Awaited<ReturnType<typeof readParameters>>) {
+    const byId = new Map(results.map((item) => [item.id, item]));
+    const nextValues = { ...values };
+    const nextDrafts = { ...drafts };
+    for (const item of entries) {
+      const result = byId.get(item.id);
+      nextValues[item.symbol] = result?.value ?? null;
+      if (result?.value) nextDrafts[item.symbol] = valueText(result.value);
+    }
+    values = nextValues;
+    drafts = nextDrafts;
+  }
+
   async function loadEncoder(activeConnection: ConnectionInfo, token: number) {
     loading = true;
     try {
@@ -181,25 +201,24 @@
       metadata = Object.fromEntries(entries.map((item) => [item.symbol, item]));
 
       const readable = entries.filter((item) => item.access.toLowerCase().includes("r"));
-      const results = await readParameters(readable.map((item) => item.id));
+      const results = await readCurrentParameters(readable.map((item) => item.id));
       if (token !== generation || connection !== activeConnection) return;
-
-      const byId = new Map(results.map((item) => [item.id, item]));
-      const nextValues: Record<string, ParameterValue | null> = {};
-      const nextDrafts: Record<string, string> = {};
-
-      for (const item of entries) {
-        const result = byId.get(item.id);
-        nextValues[item.symbol] = result?.value ?? null;
-        if (result?.value) nextDrafts[item.symbol] = valueText(result.value);
-      }
-
-      values = nextValues;
-      drafts = nextDrafts;
+      applyValues(readable, results);
     } catch (error) {
       if (token === generation) onError(error);
     } finally {
       if (token === generation) loading = false;
+    }
+  }
+
+  async function refreshFromCache() {
+    if (!connection || Object.keys(metadata).length === 0) return;
+    try {
+      const readable = Object.values(metadata).filter((item) => item.access.toLowerCase().includes("r"));
+      const results = await readCachedParameters(readable.map((item) => item.id));
+      applyValues(readable, results);
+    } catch (error) {
+      onError(error);
     }
   }
 
@@ -208,18 +227,7 @@
     if (readable.length === 0) return;
 
     const results = await readParameters(readable.map((item) => item.id));
-    const byId = new Map(results.map((item) => [item.id, item]));
-    const nextValues = { ...values };
-    const nextDrafts = { ...drafts };
-
-    for (const item of readable) {
-      const result = byId.get(item.id);
-      nextValues[item.symbol] = result?.value ?? null;
-      if (result?.value) nextDrafts[item.symbol] = valueText(result.value);
-    }
-
-    values = nextValues;
-    drafts = nextDrafts;
+    applyValues(readable, results);
   }
 
   async function commit(symbol: string) {
