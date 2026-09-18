@@ -613,6 +613,15 @@ fn identification_start(
 }
 
 #[tauri::command]
+fn identification_apply(
+    state: State<'_, Mutex<DesktopState>>,
+) -> Result<ActionHandleDto, String> {
+    let app = application(&state)?;
+    let handle = app.identification_apply().map_err(|error| error.to_string())?;
+    Ok(action_handle_dto(handle, "ACTION_IDENT_APPLY".to_owned()))
+}
+
+#[tauri::command]
 fn action_list(state: State<'_, Mutex<DesktopState>>) -> Result<Vec<ActionMetadataDto>, String> {
     let app = application(&state)?;
     Ok(app.schema().actions.iter().map(Into::into).collect())
@@ -638,7 +647,7 @@ fn action_start(
     Ok(result)
 }
 
-fn start_semantic_action(
+fn start_async_semantic_action(
     app_handle: tauri::AppHandle,
     app: ApplicationSession,
     symbol: &str,
@@ -654,26 +663,29 @@ fn start_semantic_action(
 
 #[tauri::command]
 fn motor_enable(
-    app_handle: tauri::AppHandle,
     state: State<'_, Mutex<DesktopState>>,
 ) -> Result<ActionHandleDto, String> {
-    start_semantic_action(app_handle, application(&state)?, "ACTION_MOTOR_ENABLE", |app| app.motor_enable())
+    let app = application(&state)?;
+    let handle = app.motor_enable().map_err(|error| error.to_string())?;
+    Ok(action_handle_dto(handle, "ACTION_MOTOR_ENABLE".to_owned()))
 }
 
 #[tauri::command]
 fn motor_stop(
-    app_handle: tauri::AppHandle,
     state: State<'_, Mutex<DesktopState>>,
 ) -> Result<ActionHandleDto, String> {
-    start_semantic_action(app_handle, application(&state)?, "ACTION_MOTOR_STOP", |app| app.motor_stop())
+    let app = application(&state)?;
+    let handle = app.motor_stop().map_err(|error| error.to_string())?;
+    Ok(action_handle_dto(handle, "ACTION_MOTOR_STOP".to_owned()))
 }
 
 #[tauri::command]
 fn motor_disable(
-    app_handle: tauri::AppHandle,
     state: State<'_, Mutex<DesktopState>>,
 ) -> Result<ActionHandleDto, String> {
-    start_semantic_action(app_handle, application(&state)?, "ACTION_MOTOR_DISABLE", |app| app.motor_disable())
+    let app = application(&state)?;
+    let handle = app.motor_disable().map_err(|error| error.to_string())?;
+    Ok(action_handle_dto(handle, "ACTION_MOTOR_DISABLE".to_owned()))
 }
 
 #[tauri::command]
@@ -683,10 +695,11 @@ fn config_save_available(state: State<'_, Mutex<DesktopState>>) -> Result<bool, 
 
 #[tauri::command]
 fn config_save(
-    app_handle: tauri::AppHandle,
     state: State<'_, Mutex<DesktopState>>,
 ) -> Result<ActionHandleDto, String> {
-    start_semantic_action(app_handle, application(&state)?, "ACTION_PARAMETER_SAVE", |app| app.config_save())
+    let app = application(&state)?;
+    let handle = app.config_save().map_err(|error| error.to_string())?;
+    Ok(action_handle_dto(handle, "ACTION_PARAMETER_SAVE".to_owned()))
 }
 
 #[tauri::command]
@@ -694,7 +707,7 @@ fn phase_search_start(
     app_handle: tauri::AppHandle,
     state: State<'_, Mutex<DesktopState>>,
 ) -> Result<ActionHandleDto, String> {
-    start_semantic_action(app_handle, application(&state)?, "ACTION_PHASE_SEARCH_START", |app| app.phase_search_start())
+    start_async_semantic_action(app_handle, application(&state)?, "ACTION_PHASE_SEARCH_START", |app| app.phase_search_start())
 }
 
 #[tauri::command]
@@ -890,6 +903,7 @@ fn main() {
             phase_search_preflight,
             identification_preflight,
             identification_start,
+            identification_apply,
             action_list,
             action_start,
             motor_enable,
