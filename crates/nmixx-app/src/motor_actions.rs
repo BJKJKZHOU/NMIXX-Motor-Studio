@@ -20,6 +20,7 @@ const MOTOR_DISABLE: &str = "ACTION_MOTOR_DISABLE";
 const IDENT_RS_LS_START: &str = "ACTION_IDENT_RS_LS_START";
 const IDENT_FLUX_START: &str = "ACTION_IDENT_FLUX_START";
 const IDENT_JB_START: &str = "ACTION_IDENT_JB_START";
+const IDENT_APPLY: &str = "ACTION_IDENT_APPLY";
 
 #[derive(Debug, Error)]
 pub enum MotorActionError {
@@ -169,6 +170,14 @@ impl MotorActionService {
             .ok_or_else(|| MotorActionError::MissingAction(action_key.to_owned()))?;
 
         Ok(IdentificationStart::Started(self.session.action_start(action.id)?))
+    }
+
+    /// Apply the latest valid identification result.
+    ///
+    /// Firmware processes IDENT_APPLY synchronously before returning the
+    /// Action response, so callers must not wait for ACTION_COMPLETE.
+    pub fn identification_apply(&self) -> Result<ActionHandle, MotorActionError> {
+        self.start_action(IDENT_APPLY)
     }
 
     /// Start servo phase search as one application-level operation.
