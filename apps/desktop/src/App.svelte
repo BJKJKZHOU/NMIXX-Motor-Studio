@@ -13,7 +13,8 @@
   import ControlTuningPage from "./control/ControlTuningPage.svelte";
   import { canSaveParameters, disableMotor, enableMotor, onActionCompleted, saveParameters, stopMotor } from "./actions/api";
   import type { ActionCompletion, ActionHandle } from "./actions/types";
-  import { listParameters, readParameters, refreshAllParameters as refreshParameterCache } from "./parameters/api";
+  import { initializePersistenceBaseline, listParameters, readParameters, refreshAllParameters as refreshParameterCache } from "./parameters/api";
+  import { clearParameterPersistence, commitParameterPersistence } from "./parameters/persistence";
   import type { ParameterMetadata, ParameterValue } from "./parameters/types";
 
   type Page = "connection" | "motor" | "encoder" | "limits" | "control" | "tuning" | "analysis" | "parameters" | "events" | "automation";
@@ -68,14 +69,18 @@
     errorText = "";
     clearGlobalStatus();
     if (!next) {
+      clearParameterPersistence();
       scopeSummary = { state: "STOPPED", selectedChannels: 0, lostFrames: 0 };
       return;
     }
+
+    clearParameterPersistence();
 
     try {
       const [registry, saveAvailable] = await Promise.all([listParameters(), canSaveParameters()]);
       parameterRegistry = registry;
       parameterSaveAvailable = saveAvailable;
+      await initializePersistenceBaseline(parameterRegistry.map((item) => item.id));
       globalIds = Object.fromEntries(
         parameterRegistry
           .filter((item) => GLOBAL_SYMBOLS.includes(item.symbol as typeof GLOBAL_SYMBOLS[number]))
@@ -173,6 +178,7 @@
     if (!completion.ok) {
       setError(`Action ${completion.symbol} failed: ${completion.status}`);
     } else if (completion.symbol === "ACTION_PARAMETER_SAVE") {
+      commitParameterPersistence();
       showSavedFeedback();
     }
 
