@@ -1,5 +1,6 @@
 <script lang="ts">
   import { motionState } from "./store";
+  import MotionTrajectoryPlot from "./MotionTrajectoryPlot.svelte";
   import type { MotionMode, MotionState, SCurveMode, TrajectoryType } from "./types";
 
   const modeLabels: Record<MotionMode, string> = {
@@ -26,19 +27,6 @@
 
   function hasTrajectory(): boolean {
     return $motionState.mode === "position" || $motionState.mode === "speed" || $motionState.mode === "sensorless-speed";
-  }
-
-  function previewPath(type: TrajectoryType): string {
-    if (type === "s-curve" && $motionState.sCurveMode === "peak-accel") {
-      return "M24 172 C72 172 86 158 110 126 C140 88 156 52 194 38 L286 38 C324 52 340 88 370 126 C394 158 408 172 456 172";
-    }
-    if (type === "s-curve") {
-      return "M24 172 C50 172 70 150 90 116 C110 82 134 48 180 38 L300 38 C346 48 370 82 390 116 C410 150 430 172 456 172";
-    }
-    if (type === "filtered") {
-      return "M24 172 C82 172 98 156 116 126 C138 92 156 54 204 42 C250 30 310 40 340 64 C372 90 390 132 408 152 C424 168 438 172 456 172";
-    }
-    return "M24 172 L116 172 L188 38 L292 38 L364 172 L456 172";
   }
 
   function trajectoryNote(): string {
@@ -209,11 +197,13 @@
 
       <div class="motion-plot-area">
         {#if hasTrajectory()}
-          <svg viewBox="0 0 480 220" role="img" aria-label="Trajectory profile preview">
-            <line x1="24" y1="172" x2="456" y2="172" class="preview-axis" />
-            <line x1="24" y1="24" x2="24" y2="172" class="preview-axis" />
-            <path d={previewPath($motionState.trajectory)} class="preview-curve" />
-          </svg>
+          <MotionTrajectoryPlot
+            trajectory={$motionState.trajectory}
+            sCurveMode={$motionState.sCurveMode}
+            acceleration={$motionState.acceleration}
+            deceleration={$motionState.deceleration}
+            filterTimeMs={$motionState.filterTimeMs}
+          />
           <div class="motion-plot-note">{trajectoryNote()}</div>
         {:else}
           <div class="motion-plot-empty">This mode has no position/speed trajectory preview.</div>
