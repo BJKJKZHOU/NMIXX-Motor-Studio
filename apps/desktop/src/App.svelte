@@ -6,8 +6,9 @@
   import ScopePage from "./analysis/scope/ScopePage.svelte";
   import type { ScopeSummary } from "./analysis/scope/types";
   import ParameterTablePage from "./parameters/ParameterTablePage.svelte";
+  import MotionPage from "./motion/MotionPage.svelte";
 
-  type Page = "connection" | "motor" | "encoder" | "limits" | "control" | "analysis" | "parameters" | "events" | "automation";
+  type Page = "connection" | "motor" | "encoder" | "limits" | "control" | "motion" | "analysis" | "parameters" | "events" | "automation";
 
   let activePage: Page = "connection";
   let connection: ConnectionInfo | undefined;
@@ -20,6 +21,7 @@
     { id: "encoder", title: "Encoder", icon: "codicon-record" },
     { id: "limits", title: "Limits / Safety", icon: "codicon-shield" },
     { id: "control", title: "Control", icon: "codicon-settings-gear" },
+    { id: "motion", title: "Motion", icon: "codicon-play-circle" },
     { id: "analysis", title: "Analysis", icon: "codicon-graph-line" },
   ];
 
@@ -73,6 +75,8 @@
     <main class="main-area">
       {#if activePage === "connection"}
         <ConnectionPage {connection} onConnected={(next) => setConnection(next)} onDisconnected={() => setConnection(undefined)} onError={setError} />
+      {:else if activePage === "motion"}
+        <MotionPage />
       {:else if activePage === "parameters"}
         <div class="parameter-page-container">
           <ParameterTablePage {connection} onError={setError} />
