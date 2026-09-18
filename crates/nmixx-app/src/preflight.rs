@@ -2,10 +2,16 @@ use thiserror::Error;
 
 use crate::{HostSchema, ParameterService, ParameterServiceError, ParameterValue};
 
+const MOTOR_PP: &str = "PARAM_MOTOR_PP";
+const MOTOR_RS: &str = "PARAM_MOTOR_RS";
+const MOTOR_LD: &str = "PARAM_MOTOR_LD";
+const MOTOR_LQ: &str = "PARAM_MOTOR_LQ";
+const MOTOR_FLUX: &str = "PARAM_MOTOR_FLUX";
 const LIMIT_I_MAX: &str = "PARAM_LIMIT_I_MAX";
 const LIMIT_WM_MAX: &str = "PARAM_LIMIT_WM_MAX";
-const IDENT_RS_LS_VALID: &str = "PARAM_IDENT_RS_LS_VALID";
-const IDENT_FLUX_VALID: &str = "PARAM_IDENT_FLUX_VALID";
+const IDENT_IF_CURRENT: &str = "PARAM_IDENT_IF_CURRENT";
+const IDENT_JB_EXCITE_RATIO: &str = "PARAM_IDENT_JB_EXCITE_RATIO";
+const IDENT_JB_EXCITE_HZ: &str = "PARAM_IDENT_JB_EXCITE_HZ";
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum IdentificationKind {
@@ -50,13 +56,17 @@ impl PreflightService {
         Self { schema, parameters }
     }
 
+    /// Check user-actionable prerequisites for an identification operation.
+    ///
+    /// This does not start, sequence, apply, or abort identification actions.
+    /// Device-side start validation remains authoritative.
     pub fn check_identification(
         &self,
         kind: IdentificationKind,
     ) -> Result<Vec<PreflightIssue>, PreflightError> {
         let mut issues = Vec::new();
 
-        self.require_positive(
+        let current_limit = self.require_positive(
             LIMIT_I_MAX,
             PreflightDomain::LimitsSafety,
             "Current limit must be configured before identification.",
@@ -72,12 +82,46 @@ impl PreflightService {
                     "Speed limit must be configured before Flux identification.",
                     &mut issues,
                 )?;
-                self.require_flag(
-                    IDENT_RS_LS_VALID,
+                self.require_positive(
+                    MOTOR_PP,
                     PreflightDomain::Motor,
-                    "Apply a valid Rs/Ls result before Flux identification.",
+                    "Pole pairs must be configured before Flux identification.",
                     &mut issues,
                 )?;
+                self.require_positive(
+                    MOTOR_RS,
+                    PreflightDomain::Motor,
+                    "Active Rs must be valid before Flux identification.",
+                    &mut issues,
+                )?;
+                self.require_positive(
+                    MOTOR_LD,
+                    PreflightDomain::Motor,
+                    "Active Ld must be valid before Flux identification.",
+                    &mut issues,
+                )?;
+                self.require_positive(
+                    MOTOR_LQ,
+                    PreflightDomain::Motor,
+                    "Active Lq must be valid before Flux identification.",
+                    &mut issues,
+                )?;
+                let if_current = self.require_positive(
+                    IDENT_IF_CURRENT,
+                    PreflightDomain::Identification,
+                    "I/F startup current must be configured before Flux identification.",
+                    &mut issues,
+                )?;
+                if let (Some(if_current), Some(current_limit)) = (if_current, current_limit) {
+                    if if_current > current_limit {
+                        self.push_issue(
+                            IDENT_IF_CURRENT,
+                            PreflightDomain::Identification,
+                            "I/F startup current must not exceed the configured current limit.",
+                            &mut issues,
+                        )?;
+                    }
+                }
             }
             IdentificationKind::Jb => {
                 self.require_positive(
@@ -86,10 +130,46 @@ impl PreflightService {
                     "Speed limit must be configured before J/B identification.",
                     &mut issues,
                 )?;
-                self.require_flag(
-                    IDENT_FLUX_VALID,
+                self.require_positive(
+                    MOTOR_PP,
                     PreflightDomain::Motor,
-                    "Apply a valid Flux result before J/B identification.",
+                    "Pole pairs must be configured before J/B identification.",
+                    &mut issues,
+                )?;
+                self.require_positive(
+                    MOTOR_RS,
+                    PreflightDomain::Motor,
+                    "Active Rs must be valid before J/B identification.",
+                    &mut issues,
+                )?;
+                self.require_positive(
+                    MOTOR_LD,
+                    PreflightDomain::Motor,
+                    "Active Ld must be valid before J/B identification.",
+                    &mut issues,
+                )?;
+                self.require_positive(
+                    MOTOR_LQ,
+                    PreflightDomain::Motor,
+                    "Active Lq must be valid before J/B identification.",
+                    &mut issues,
+                )?;
+                self.require_positive(
+                    MOTOR_FLUX,
+                    PreflightDomain::Motor,
+                    "Active Flux must be valid before J/B identification.",
+                    &mut issues,
+                )?;
+                self.require_positive(
+                    IDENT_JB_EXCITE_RATIO,
+                    PreflightDomain::Identification,
+                    "J/B excitation ratio must be configured.",
+                    &mut issues,
+                )?;
+                self.require_positive(
+                    IDENT_JB_EXCITE_HZ,
+                    PreflightDomain::Identification,
+                    "J/B excitation frequency must be configured.",
                     &mut issues,
                 )?;
             }
@@ -104,7 +184,7 @@ impl PreflightService {
         domain: PreflightDomain,
         reason: &str,
         issues: &mut Vec<PreflightIssue>,
-    ) -> Result<(), PreflightError> {
+    ) -> Result<Option<f64>, PreflightError> {
         let metadata = self
             .schema
             .parameter_by_key(key)
@@ -119,11 +199,12 @@ impl PreflightService {
                 reason: reason.to_owned(),
                 suggested_domain: domain,
             });
+            return Ok(None);
         }
-        Ok(())
+        Ok(Some(numeric))
     }
 
-    fn require_flag(
+    fn push_issue(
         &self,
         key: &str,
         domain: PreflightDomain,
@@ -134,19 +215,11 @@ impl PreflightService {
             .schema
             .parameter_by_key(key)
             .ok_or_else(|| PreflightError::MissingParameter(key.to_owned()))?;
-        let value = self.parameters.read(metadata.id)?;
-        let valid = match value {
-            ParameterValue::U8(value) => value == 1,
-            _ => return Err(PreflightError::InvalidParameterType(key.to_owned())),
-        };
-
-        if !valid {
-            issues.push(PreflightIssue {
-                parameter_id: Some(metadata.id),
-                reason: reason.to_owned(),
-                suggested_domain: domain,
-            });
-        }
+        issues.push(PreflightIssue {
+            parameter_id: Some(metadata.id),
+            reason: reason.to_owned(),
+            suggested_domain: domain,
+        });
         Ok(())
     }
 }
