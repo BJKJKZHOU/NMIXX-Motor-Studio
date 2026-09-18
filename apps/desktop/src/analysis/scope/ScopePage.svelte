@@ -641,7 +641,7 @@
     const series: uPlot.Series[] = [
       {},
       ...plotChannels.map((channel) => ({
-        label: channel.symbol,
+        label: channel.label,
         stroke: traceColor(channel),
         width: 1.25,
         show: selectedIds.has(channel.id),
@@ -743,7 +743,7 @@
                 checked={selectedIds.has(channel.id)}
                 onchange={() => toggleChannel(channel.id)}
               />
-              <button class="channel-name channel-select" onclick={() => selectActiveChannel(channel.id)}>{channel.symbol}</button>
+              <button class="channel-name channel-select" onclick={() => selectActiveChannel(channel.id)}>{channel.label}</button>
               <span class="channel-unit">{channel.unit ?? ""}</span>
               <select
                 class="channel-rate"
@@ -799,7 +799,7 @@
         {#if activeChannel}
           <div class="scope-active-channel">
             <span class="trace-mark" style={`background:${traceColor(activeChannel)}`}></span>
-            <strong>{activeChannel.symbol}</strong>
+            <strong>{activeChannel.label}</strong>
             <span>{activeChannel.unit ?? ""}</span>
           </div>
           <div class="scope-control-grid">
@@ -868,7 +868,7 @@
         {#each visibleChannels as channel, index}
           <button class="trace-key trace-key-button" onclick={() => selectActiveChannel(channel.id)}>
             <span class="trace-mark" style={`background:${traceColor(channel)}`}></span>
-            {channel.symbol}
+            {channel.label}
             <span class="value">{latestValues[index] ?? "—"}</span>
           </button>
         {/each}
