@@ -29,3 +29,14 @@ export interface MotionState {
   mitKd: number;
   mitTorqueFeedforward: number;
 }
+
+
+export interface MotionPreview {
+  times: number[];
+  primary: number[];
+  secondary: number[];
+  primaryLabel: string;
+  secondaryLabel?: string | null;
+  primaryUnit: string;
+  secondaryUnit?: string | null;
+}
