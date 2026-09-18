@@ -4,16 +4,25 @@ use std::time::{Duration, Instant};
 use thiserror::Error;
 
 use crate::{
-    ActionHandle, AxdrStatus, DeviceSession, HostSchema, ParameterService, ParameterServiceError,
-    ParameterValue, PreflightError, PreflightService, SchemaNumber, SessionError, SessionEvent,
+    ActionHandle, AxdrStatus, DeviceSession, HostSchema, IdentificationKind, ParameterService,
+    ParameterServiceError, ParameterValue, PreflightError, PreflightService, SchemaNumber,
+    SessionError, SessionEvent,
 };
 
 const MOTOR_MODE: &str = "PARAM_MOTOR_MODE";
+const MOTOR_STATE: &str = "PARAM_MOTOR_STATE";
+const IDENT_MODE: &str = "IDENT";
 const PHASE_SEARCH_MODE: &str = "PHASE_SEARCH";
+const MOTOR_STATE_DISABLED: &str = "DISABLED";
+const MOTOR_STATE_ENABLED: &str = "ENABLED";
+const MOTOR_STATE_RUN: &str = "RUN";
 const MOTOR_ENABLE: &str = "ACTION_MOTOR_ENABLE";
 const MOTOR_RUN: &str = "ACTION_MOTOR_RUN";
 const MOTOR_STOP: &str = "ACTION_MOTOR_STOP";
 const MOTOR_DISABLE: &str = "ACTION_MOTOR_DISABLE";
+const IDENT_RS_LS_START: &str = "ACTION_IDENT_RS_LS_START";
+const IDENT_FLUX_START: &str = "ACTION_IDENT_FLUX_START";
+const IDENT_JB_START: &str = "ACTION_IDENT_JB_START";
 const ACTION_COMPLETION_TIMEOUT: Duration = Duration::from_secs(5);
 
 #[derive(Debug, Error)]
@@ -32,12 +41,24 @@ pub enum MotorActionError {
     ActionCompletionTimeout(String),
     #[error("phase-search preflight failed: {0}")]
     PreflightFailed(String),
+    #[error("identification preflight failed: {0}")]
+    IdentificationPreflightFailed(String),
+    #[error("parameter '{0}' does not contain a u8 value")]
+    InvalidParameterValue(String),
+    #[error("motor must be stopped before starting identification")]
+    MotorRunning,
     #[error(transparent)]
     Preflight(#[from] PreflightError),
     #[error(transparent)]
     Parameter(#[from] ParameterServiceError),
     #[error(transparent)]
     Session(#[from] SessionError),
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum IdentificationStart {
+    RequiresEnable,
+    Started(ActionHandle),
 }
 
 #[derive(Clone)]
@@ -74,6 +95,91 @@ impl MotorActionService {
     /// Start the global motor Disable action.
     pub fn disable(&self) -> Result<ActionHandle, MotorActionError> {
         self.start_action(MOTOR_DISABLE)
+    }
+
+    /// Start one identification operation as an application-level workflow.
+    ///
+    /// Identification mode is an internal firmware detail. When the motor is
+    /// disabled, callers must explicitly authorize enabling before this method
+    /// will change mode and energize the drive.
+    pub fn identification_start(
+        &self,
+        kind: IdentificationKind,
+        allow_enable: bool,
+    ) -> Result<IdentificationStart, MotorActionError> {
+        let issues = PreflightService::new(self.parameters.clone()).check_identification(kind)?;
+        if let Some(issue) = issues.into_iter().next() {
+            return Err(MotorActionError::IdentificationPreflightFailed(issue.reason));
+        }
+
+        let mode = self
+            .schema
+            .parameter_by_key(MOTOR_MODE)
+            .ok_or_else(|| MotorActionError::MissingParameter(MOTOR_MODE.to_owned()))?;
+        let state = self
+            .schema
+            .parameter_by_key(MOTOR_STATE)
+            .ok_or_else(|| MotorActionError::MissingParameter(MOTOR_STATE.to_owned()))?;
+
+        let ident_mode = enum_u8(mode, IDENT_MODE)?;
+        let disabled = enum_u8(state, MOTOR_STATE_DISABLED)?;
+        let enabled = enum_u8(state, MOTOR_STATE_ENABLED)?;
+        let running = enum_u8(state, MOTOR_STATE_RUN)?;
+
+        let mut current_state = read_u8(&self.parameters, state)?;
+
+        if current_state == running {
+            return Err(MotorActionError::MotorRunning);
+        }
+
+        if current_state == disabled && !allow_enable {
+            return Ok(IdentificationStart::RequiresEnable);
+        }
+
+        let enable = self
+            .schema
+            .action_by_key(MOTOR_ENABLE)
+            .ok_or_else(|| MotorActionError::MissingAction(MOTOR_ENABLE.to_owned()))?;
+        let disable = self
+            .schema
+            .action_by_key(MOTOR_DISABLE)
+            .ok_or_else(|| MotorActionError::MissingAction(MOTOR_DISABLE.to_owned()))?;
+
+        let current_mode = read_u8(&self.parameters, mode)?;
+        let events = self.session.subscribe()?;
+
+        if current_state == enabled && current_mode != ident_mode {
+            let disable_handle = self.session.action_start(disable.id)?;
+            wait_for_action(&events, disable_handle, MOTOR_DISABLE)?;
+            current_state = read_u8(&self.parameters, state)?;
+            if current_state != disabled {
+                return Err(MotorActionError::InvalidParameterValue(MOTOR_STATE.to_owned()));
+            }
+        }
+
+        if current_state == disabled {
+            self.parameters.write(mode.id, ParameterValue::U8(ident_mode))?;
+
+            let enable_handle = self.session.action_start(enable.id)?;
+            wait_for_action(&events, enable_handle, MOTOR_ENABLE)?;
+
+            current_state = read_u8(&self.parameters, state)?;
+            if current_state != enabled {
+                return Err(MotorActionError::InvalidParameterValue(MOTOR_STATE.to_owned()));
+            }
+        }
+
+        let action_key = match kind {
+            IdentificationKind::RsLs => IDENT_RS_LS_START,
+            IdentificationKind::Flux => IDENT_FLUX_START,
+            IdentificationKind::Jb => IDENT_JB_START,
+        };
+        let action = self
+            .schema
+            .action_by_key(action_key)
+            .ok_or_else(|| MotorActionError::MissingAction(action_key.to_owned()))?;
+
+        Ok(IdentificationStart::Started(self.session.action_start(action.id)?))
     }
 
     /// Start servo phase search as one application-level operation.
@@ -119,6 +225,16 @@ impl MotorActionService {
             .action_by_key(key)
             .ok_or_else(|| MotorActionError::MissingAction(key.to_owned()))?;
         Ok(self.session.action_start(action.id)?)
+    }
+}
+
+fn read_u8(
+    parameters: &ParameterService,
+    parameter: &crate::ParameterMetadata,
+) -> Result<u8, MotorActionError> {
+    match parameters.read(parameter.id)? {
+        ParameterValue::U8(value) => Ok(value),
+        _ => Err(MotorActionError::InvalidParameterValue(parameter.symbol.clone())),
     }
 }
 
