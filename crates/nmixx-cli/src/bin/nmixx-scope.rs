@@ -94,7 +94,7 @@ fn run() -> Result<(), Box<dyn Error>> {
         println!(
             "  ch{}: {} (0x{:04X}) {} Hz{}",
             index,
-            channel.symbol,
+            channel.label,
             channel.id,
             channel.sample_rate_hz,
             channel.unit.as_deref().map(|unit| format!(" {unit}")).unwrap_or_default()
@@ -123,10 +123,7 @@ fn print_capabilities(capabilities: &DevicePlotCapabilities, schema: &HostSchema
     println!("---------------------------------------------------------------");
     for channel in capabilities.with_schema(schema) {
         let label = channel
-            .name
-            .as_deref()
-            .or(channel.symbol.as_deref())
-            .map(str::to_owned)
+            .label
             .unwrap_or_else(|| format!("0x{:04X}", channel.id));
         let fast = match channel.fast_scale {
             Some(scale) => format!("yes/{scale}"),
@@ -250,14 +247,14 @@ fn write_snapshot_csv(
     path: &Path,
 ) -> Result<(), Box<dyn Error>> {
     let mut file = File::create(path)?;
-    writeln!(file, "channel_id,symbol,sample_rate_hz,time_s,value")?;
+    writeln!(file, "channel_id,label,sample_rate_hz,time_s,value")?;
 
     for series in &snapshot.series {
         let symbol = config
             .channels
             .iter()
             .find(|channel| channel.id == series.id)
-            .map(|channel| channel.symbol.as_str())
+            .map(|channel| channel.label.as_str())
             .unwrap_or("unknown");
         let count = series.values.len();
         for (index, value) in series.values.iter().enumerate() {
