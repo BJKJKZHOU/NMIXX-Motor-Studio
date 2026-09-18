@@ -195,7 +195,6 @@
       <div class="motion-runbar">
         <button class="motion-run" disabled title="Application Motion API is not connected yet"><i class="codicon codicon-debug-start"></i> Run</button>
         <button disabled title="Application Motion API is not connected yet"><i class="codicon codicon-debug-stop"></i> Stop</button>
-        <span>Stop follows the configured motion profile. Disable is a separate immediate drive-off action.</span>
       </div>
     </div>
 
