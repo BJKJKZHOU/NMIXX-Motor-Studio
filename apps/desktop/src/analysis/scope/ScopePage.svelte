@@ -5,6 +5,7 @@
   import type { ConnectionInfo, PlotChannel } from "../../connection/types";
   import { clearScope, configureScope, pauseScope, readScopeSnapshot, startScope } from "./api";
   import type { ScopeConfig, ScopeSnapshot, ScopeSummary } from "./types";
+  import MotionCompactEditor from "../tuning/MotionCompactEditor.svelte";
 
   export let connection: ConnectionInfo | undefined;
   export let active = false;
@@ -297,6 +298,7 @@
       <span>State</span><strong>{snapshot?.state ?? "STOPPED"}</strong><span>FAST Rate</span><strong>{connection ? `${(connection.fastRateHz / 1000).toFixed(1)} kHz` : "—"}</strong>
       <span>History</span><strong>{scopeConfig ? `${scopeConfig.historySeconds.toFixed(3)} s` : "10.000 s"}</strong><span>Channels</span><strong>{selectedIds.size} / {connection?.fastMaxChannels ?? "—"}</strong><span>Block</span><strong>{connection?.fastBlockSamples ?? "—"}</strong>
     </div>{#if configurationDirty && snapshot?.state !== "LIVE"}<div class="scope-pending">New channels apply on Run.</div>{/if}</section>
+    <MotionCompactEditor {onError} />
   </aside>
   <section id="scope-workspace" class="scope-workspace">
     <div class="editor-tabs"><div class="editor-tab active"><i class="codicon codicon-graph-line"></i> Scope</div></div>
