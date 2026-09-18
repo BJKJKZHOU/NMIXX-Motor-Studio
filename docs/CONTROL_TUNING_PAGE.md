@@ -4,7 +4,7 @@
 
 Control Tuning is a servo closed-loop tuning page. It is not the same workflow as the generic Plot/Scope page, and it is not the control-structure construction page.
 
-Control Architecture owns controller/observer selection and structural control-path configuration such as filters, feedback selection, feedforward and other algorithm-specific blocks. Control Tuning assumes that structure already exists and concentrates the parameters engineers adjust repeatedly while observing dynamic response.
+Control Architecture is a parent domain with Current Loop, Speed Loop and Position Loop child pages. Those loop pages own controller/observer selection and structural control-path configuration such as filters, feedback selection, feedforward and other algorithm-specific blocks. Control Tuning remains a separate top-level workflow: it assumes that structure already exists and concentrates the parameters engineers adjust repeatedly while observing dynamic response.
 
 The page binds three things into one repeatable experiment:
 
@@ -81,7 +81,7 @@ Device: AxDr_L · Connected       Motor: ENABLED   [ Disable ] [ Stop ]
 
 The left side is the experiment waveform area. The lower-left area defines the motion for the next experiment. The right side contains the compact primary tuning set and the actual controller gains used by firmware. Current and speed loops expose both Bandwidth and Manual gain ownership; the active source is visible and editable.
 
-The page deliberately does not reproduce the complete control diagram. Structural configuration such as controller type, filter mode/frequency, feedback source, feedforward and algorithm-specific block options belongs to Control Architecture even when those values ultimately affect the same loop.
+The page deliberately does not reproduce the complete control diagram. Structural configuration such as controller type, filter mode/frequency, feedback source, feedforward and algorithm-specific block options belongs to the corresponding Current / Speed / Position child page under Control Architecture even when those values ultimately affect the same loop.
 
 The page does not duplicate Connect/Disconnect controls or motor Enable/Disable/Stop controls inside its own content area.
 
