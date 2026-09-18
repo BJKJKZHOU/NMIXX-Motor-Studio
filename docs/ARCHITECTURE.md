@@ -67,6 +67,18 @@ Owns host application semantics:
 - protection-aware application behavior;
 - stable public Application API.
 
+`ApplicationSession` is the runtime owner used by normal product clients. It owns one device session plus the loaded Host schema and shared domain services/capabilities for that connection.
+
+```text
+GUI -----------+
+CLI -----------+--> ApplicationSession --> domain services --> DeviceSession
+Automation ----+
+```
+
+Normal product clients must not assemble `DeviceSession + ParameterService + ScopeSession + MotionService` themselves. Tauri is a thin IPC bridge over `ApplicationSession`; the formal CLI uses the same runtime. Low-level smoke/protocol tests may intentionally use `DeviceSession` directly because their purpose is to validate the lower layer itself.
+
+Host-only models that are meaningful while disconnected, such as the editable Motion command model and theoretical preview, may outlive a device connection. When connected, the same shared model instance is injected into `ApplicationSession`; a second copy must not be created.
+
 The Application API should expose domain concepts such as `parameter.get`, `motor.enable`, `action.start`, `stream.subscribe` and `task.cancel`, not raw CAN IDs or payload bytes.
 
 ### clients
