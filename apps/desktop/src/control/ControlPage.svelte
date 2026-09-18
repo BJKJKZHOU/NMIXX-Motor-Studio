@@ -12,9 +12,12 @@
   import type { ParameterMetadata, ParameterValue } from "../parameters/types";
   import { modifiedParameterIds } from "../parameters/persistence";
 
+  export type ControlLoopPage = "current" | "speed" | "position";
+
   type Props = {
     connection: ConnectionInfo | undefined;
     motorState: number | null;
+    loop?: ControlLoopPage;
     onError?: (error: unknown) => void;
   };
 
@@ -41,7 +44,7 @@
     POSITION_KP, ESO_BW,
   ];
 
-  let { connection, motorState, onError = () => undefined }: Props = $props();
+  let { connection, motorState, loop = "current", onError = () => undefined }: Props = $props();
 
   let metadata = $state<Record<string, ParameterMetadata>>({});
   let values = $state<Record<string, ParameterValue | null>>({});
@@ -247,7 +250,7 @@
 
 <div class="control-root">
   <section class="page-toolbar">
-    <div class="page-title">CONTROL</div>
+    <div class="page-title">CONTROL ARCHITECTURE · {loop === "current" ? "CURRENT LOOP" : loop === "speed" ? "SPEED LOOP" : "POSITION LOOP"}</div>
     {#if loading}<div class="toolbar-note"><i class="codicon codicon-loading codicon-modifier-spin"></i> Reading control parameters…</div>{/if}
   </section>
 
@@ -256,6 +259,7 @@
       <div class="empty-state"><i class="codicon codicon-plug"></i><div>Connect a device to configure control structure.</div></div>
     {:else}
       <div class="control-sheet">
+        {#if loop === "current"}
         <section class="loop-section">
           <div class="loop-heading">
             <div>
@@ -307,7 +311,7 @@
           </div>
           <div class="feedback-row"><span>Current Feedback</span><span class="feedback-line">───────────────↩</span></div>
         </section>
-
+        {:else if loop === "speed"}
         <section class="loop-section">
           <div class="loop-heading">
             <div>
@@ -364,7 +368,7 @@
             <div class="feedback-line">───────────────↩</div>
           </div>
         </section>
-
+        {:else}
         <section class="loop-section">
           <div class="loop-heading">
             <div>
@@ -395,6 +399,7 @@
           </div>
           <div class="feedback-row"><span>Encoder Position</span><span class="feedback-line">───────────────↩</span></div>
         </section>
+        {/if}
 
         {#if motorState === MOTOR_RUN}<div class="state-note">Control parameter writes are locked while the motor is RUN.</div>{/if}
       </div>
