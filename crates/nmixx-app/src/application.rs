@@ -240,6 +240,14 @@ impl ApplicationSession {
         self.with_scope(|scope| scope.snapshot_tail(window))
     }
 
+    pub fn scope_snapshot_window(
+        &self,
+        window: Duration,
+        end_offset: Duration,
+    ) -> Result<MixedScopeSnapshot, ApplicationError> {
+        self.with_scope(|scope| scope.snapshot_window(window, end_offset))
+    }
+
     pub fn scope_config(&self) -> Result<MixedScopeConfig, ApplicationError> {
         self.with_scope(|scope| Ok(scope.config().clone()))
     }
