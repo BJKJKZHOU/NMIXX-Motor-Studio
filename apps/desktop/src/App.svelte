@@ -54,7 +54,7 @@
     { id: "encoder", title: "Encoder", icon: "codicon-record" },
     { id: "limits", title: "Limits / Safety", icon: "codicon-shield" },
     { id: "control", title: "Control Architecture", icon: "codicon-settings-gear" },
-    { id: "tuning", title: "Control Tuning", icon: "codicon-tune" },
+    { id: "tuning", title: "Control Tuning", icon: "codicon-pulse" },
     { id: "motion", title: "Motion", icon: "codicon-play-circle" },
     { id: "analysis", title: "Analysis", icon: "codicon-graph-line" },
   ];
