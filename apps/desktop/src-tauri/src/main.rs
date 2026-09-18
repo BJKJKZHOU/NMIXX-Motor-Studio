@@ -4,7 +4,7 @@ use std::time::Duration;
 use nmixx_app::{
     ApplicationSession, DEFAULT_USB_BAUD, HostSchema, MotionCapabilities, MotionConfig,
     MotionPreview, MotionService, ParameterMetadata, ParameterValue, PositionValue,
-    RangeMetadata, SchemaNumber, StreamState,
+    RangeMetadata, SchemaNumber, ScopeRate, ScopeSelection, StreamState,
 };
 use serde::{Deserialize, Serialize};
 use tauri::State;
@@ -181,10 +181,16 @@ struct ParameterReadResultDto {
     error: Option<String>,
 }
 
+#[derive(Debug, Clone, Deserialize)]
+#[serde(rename_all = "camelCase")]
+struct ScopeSelectionDto {
+    id: u16,
+    rate: String,
+}
+
 #[derive(Debug, Serialize)]
 #[serde(rename_all = "camelCase")]
 struct ScopeConfigDto {
-    sample_rate_hz: u32,
     history_seconds: f64,
     channels: Vec<ScopeChannelDto>,
 }
@@ -195,6 +201,8 @@ struct ScopeChannelDto {
     id: u16,
     symbol: String,
     unit: Option<String>,
+    rate: &'static str,
+    sample_rate_hz: u32,
 }
 
 #[derive(Debug, Serialize)]
@@ -208,13 +216,20 @@ struct ScopeStatusDto {
 
 #[derive(Debug, Serialize)]
 #[serde(rename_all = "camelCase")]
-struct ScopeSnapshotDto {
+struct ScopeSeriesDto {
+    id: u16,
     sample_rate_hz: u32,
+    times: Vec<f64>,
+    values: Vec<f32>,
+}
+
+#[derive(Debug, Serialize)]
+#[serde(rename_all = "camelCase")]
+struct ScopeSnapshotDto {
     sample_count: usize,
     lost_frames: u64,
     state: &'static str,
-    times: Vec<f64>,
-    series: Vec<Vec<f32>>,
+    series: Vec<ScopeSeriesDto>,
 }
 
 fn stream_state_name(state: StreamState) -> &'static str {
@@ -401,7 +416,7 @@ fn motion_stop(state: State<'_, Mutex<DesktopState>>) -> Result<(), String> {
 #[tauri::command]
 fn scope_configure(
     state: State<'_, Mutex<DesktopState>>,
-    parameter_ids: Vec<u16>,
+    selections: Vec<ScopeSelectionDto>,
     history_seconds: Option<f64>,
 ) -> Result<ScopeConfigDto, String> {
     let history_seconds = history_seconds.unwrap_or(10.0);
@@ -409,17 +424,31 @@ fn scope_configure(
         return Err("historySeconds must be positive and finite".to_owned());
     }
 
+    let selections = selections
+        .into_iter()
+        .map(|selection| {
+            let rate = match selection.rate.as_str() {
+                "fast" => Ok(ScopeRate::Fast),
+                "normal" => Ok(ScopeRate::Normal),
+                other => Err(format!("unknown Scope rate '{other}'")),
+            }?;
+            Ok(ScopeSelection {
+                id: selection.id,
+                rate,
+            })
+        })
+        .collect::<Result<Vec<_>, String>>()?;
+
     let app = application(&state)?;
     let config = app
         .scope_configure(
-            &parameter_ids,
+            &selections,
             Duration::from_secs_f64(history_seconds),
             1,
         )
         .map_err(|error| error.to_string())?;
 
     Ok(ScopeConfigDto {
-        sample_rate_hz: config.sample_rate_hz,
         history_seconds: config.history.as_secs_f64(),
         channels: config
             .channels
@@ -428,6 +457,11 @@ fn scope_configure(
                 id: channel.id,
                 symbol: channel.symbol.clone(),
                 unit: channel.unit.clone(),
+                rate: match channel.rate {
+                    ScopeRate::Fast => "fast",
+                    ScopeRate::Normal => "normal",
+                },
+                sample_rate_hz: channel.sample_rate_hz,
             })
             .collect(),
     })
@@ -468,37 +502,41 @@ fn scope_snapshot(
     let app = application(&state)?;
     let status = app.scope_status().map_err(|error| error.to_string())?;
     let config = app.scope_config().map_err(|error| error.to_string())?;
-    let rate = config.sample_rate_hz;
     let window = window_seconds.unwrap_or(0.5).clamp(0.01, config.history.as_secs_f64());
-    let wanted = (window * f64::from(rate)).ceil() as usize;
     let snapshot = app
-        .scope_snapshot_tail(wanted)
+        .scope_snapshot_tail(Duration::from_secs_f64(window))
         .map_err(|error| error.to_string())?;
-    let sample_count = snapshot.sample_count();
-    let channel_count = snapshot.config.channel_count;
     let max_points = max_points.unwrap_or(2500).clamp(100, 10_000);
-    let stride = sample_count.div_ceil(max_points).max(1);
 
-    let mut times = Vec::with_capacity(sample_count.div_ceil(stride));
-    let mut series = (0..channel_count)
-        .map(|_| Vec::with_capacity(sample_count.div_ceil(stride)))
-        .collect::<Vec<_>>();
+    let series = snapshot
+        .series
+        .into_iter()
+        .map(|series| {
+            let sample_count = series.values.len();
+            let stride = sample_count.div_ceil(max_points).max(1);
+            let mut times = Vec::with_capacity(sample_count.div_ceil(stride));
+            let mut values = Vec::with_capacity(sample_count.div_ceil(stride));
 
-    for sample_index in (0..sample_count).step_by(stride) {
-        let sample = snapshot.sample(sample_index).ok_or("snapshot indexing failed")?;
-        let t = (sample_index as f64 - sample_count.saturating_sub(1) as f64) / f64::from(rate);
-        times.push(t);
-        for (channel, value) in sample.iter().enumerate() {
-            series[channel].push(*value);
-        }
-    }
+            for index in (0..sample_count).step_by(stride) {
+                let t = (index as f64 - sample_count.saturating_sub(1) as f64)
+                    / f64::from(series.sample_rate_hz);
+                times.push(t);
+                values.push(series.values[index]);
+            }
+
+            ScopeSeriesDto {
+                id: series.id,
+                sample_rate_hz: series.sample_rate_hz,
+                times,
+                values,
+            }
+        })
+        .collect();
 
     Ok(ScopeSnapshotDto {
-        sample_rate_hz: rate,
         sample_count: status.samples,
-        lost_frames: status.lost_frames,
-        state: stream_state_name(status.state),
-        times,
+        lost_frames: snapshot.lost_frames,
+        state: stream_state_name(snapshot.state),
         series,
     })
 }
