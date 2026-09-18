@@ -136,6 +136,6 @@ vscode-button { --vscode-button-border: transparent; }
 
 
 /* RAM value differs from the last successfully persisted configuration. */
-.ram-modified {
+.ramModified {
   background: color-mix(in srgb, var(--vscode-focusBorder) 14%, var(--vscode-input-background)) !important;
 }
