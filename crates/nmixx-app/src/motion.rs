@@ -237,8 +237,8 @@ fn position_preview(config: &MotionConfig) -> MotionPreview {
     } else {
         0.0
     };
-    let total_duration = base_duration + if tau > 0.0 { 5.0 * tau } else { 0.0 };
-    let samples = 401usize;
+    let total_duration = base_duration + if tau > 0.0 { 8.0 * tau } else { 0.0 };
+    let samples = 801usize;
     let dt = total_duration.max(1e-6) / (samples - 1) as f64;
 
     let mut times = Vec::with_capacity(samples);
@@ -261,7 +261,7 @@ fn position_preview(config: &MotionConfig) -> MotionPreview {
         };
 
         let current_speed = if tau > 0.0 {
-            let alpha = dt / (tau + dt);
+            let alpha = 1.0 - (-dt / tau).exp();
             filtered_speed += alpha * (desired - filtered_speed);
             filtered_speed
         } else {
@@ -275,16 +275,6 @@ fn position_preview(config: &MotionConfig) -> MotionPreview {
         speed.push(sign * current_speed);
         position.push(sign * pos / std::f64::consts::TAU);
     }
-
-    if let Some(last) = position.last().copied() {
-        if last.abs() > 1e-9 {
-            let scale = config.position_target_turn / last;
-            for value in &mut position {
-                *value *= scale;
-            }
-        }
-    }
-
     MotionPreview {
         times,
         primary: position,
@@ -310,8 +300,8 @@ fn speed_preview(config: &MotionConfig) -> MotionPreview {
     } else {
         0.0
     };
-    let hold = 0.5_f64.max(base_ramp * 0.25);
-    let total_duration = base_ramp + hold + if tau > 0.0 { 3.0 * tau } else { 0.0 };
+    let hold = 0.5_f64.max(base_ramp * 0.25).max(if tau > 0.0 { 6.0 * tau } else { 0.0 });
+    let total_duration = base_ramp + hold;
     let samples = 301usize;
     let dt = total_duration.max(1e-6) / (samples - 1) as f64;
     let mut times = Vec::with_capacity(samples);
@@ -326,7 +316,7 @@ fn speed_preview(config: &MotionConfig) -> MotionPreview {
             magnitude * ramp_fraction(config, t / base_ramp)
         };
         let value = if tau > 0.0 {
-            let alpha = dt / (tau + dt);
+            let alpha = 1.0 - (-dt / tau).exp();
             filtered += alpha * (desired - filtered);
             filtered
         } else {
@@ -402,6 +392,36 @@ mod tests {
     fn position_preview_reaches_target() {
         let service = MotionService::default();
         let preview = service.preview().unwrap();
-        assert!((preview.primary.last().unwrap() - 1.0).abs() < 1e-6);
+        assert!((preview.primary.last().unwrap() - 1.0).abs() < 2e-3);
+    }
+
+    #[test]
+    fn filtered_position_preserves_integrated_position_and_settles_speed() {
+        let service = MotionService::default();
+        let mut config = service.get();
+        config.trajectory = TrajectoryType::Filtered;
+        config.filter_time_ms = 80.0;
+        service.set(config).unwrap();
+
+        let preview = service.preview().unwrap();
+        let final_position = *preview.primary.last().unwrap();
+        let final_speed = *preview.secondary.last().unwrap();
+
+        assert!((final_position - 1.0).abs() < 5e-3);
+        assert!(final_speed.abs() < 1e-2);
+    }
+
+    #[test]
+    fn filtered_speed_converges_to_target() {
+        let service = MotionService::default();
+        let mut config = service.get();
+        config.mode = MotionMode::Speed;
+        config.trajectory = TrajectoryType::Filtered;
+        config.filter_time_ms = 80.0;
+        config.speed_target = 20.0;
+        service.set(config).unwrap();
+
+        let preview = service.preview().unwrap();
+        assert!((preview.primary.last().unwrap() - 20.0).abs() < 1e-2);
     }
 }
