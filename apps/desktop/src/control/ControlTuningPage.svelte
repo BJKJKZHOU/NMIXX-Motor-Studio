@@ -111,7 +111,7 @@
   }
 
   function label(symbol: string): string {
-    return metadata[symbol]?.name ?? symbol;
+    return metadata[symbol]?.label ?? symbol;
   }
 
   function unit(symbol: string): string {
