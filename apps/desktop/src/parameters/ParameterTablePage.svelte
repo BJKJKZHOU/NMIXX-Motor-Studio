@@ -15,6 +15,7 @@
   import type { ConnectionInfo } from "../connection/types";
   import { listParameters, onParametersRefreshed, readCachedParameters, readCurrentParameters, readParameter, writeParameter } from "./api";
   import type { ParameterMetadata, ParameterValue } from "./types";
+  import { modifiedParameterIds } from "./persistence";
 
   type Props = {
     connection: ConnectionInfo | undefined;
@@ -310,6 +311,7 @@
                         <span class="pending-value"><i class="codicon codicon-loading codicon-modifier-spin"></i></span>
                       {:else if isWritable(row.meta)}
                         <input
+                          class:ramModified={$modifiedParameterIds.has(row.meta.id)}
                           class="parameter-value-input mono"
                           value={drafts[row.meta.id] ?? ""}
                           disabled={writing.has(row.meta.id)}
