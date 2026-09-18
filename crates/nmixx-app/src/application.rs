@@ -263,7 +263,21 @@ impl ApplicationSession {
     }
 
     pub fn motion_preview(&self) -> Result<MotionPreview, ApplicationError> {
-        self.inner.motion.preview().map_err(ApplicationError::Motion)
+        let effective_limit = self
+            .inner
+            .schema
+            .parameter_by_key("PARAM_LIMIT_WM_EFFECTIVE")
+            .map(|metadata| self.inner.parameters.read(metadata.id))
+            .transpose()?
+            .and_then(|value| match value {
+                ParameterValue::F32(value) => Some(f64::from(value)),
+                _ => None,
+            });
+
+        self.inner
+            .motion
+            .preview_with_speed_limit(effective_limit)
+            .map_err(ApplicationError::Motion)
     }
 
     pub fn motion_run(&self) -> Result<ActionHandle, ApplicationError> {
