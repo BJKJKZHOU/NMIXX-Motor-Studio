@@ -7,8 +7,8 @@ use std::time::Duration;
 use clap::{Parser, Subcommand, ValueEnum};
 use nmixx_app::{
     ActionHandle, ActionMetadata, AxdrStatus, ConfigService, DEFAULT_USB_BAUD, DeviceSession,
-    HostSchema, MotorActionService, ParameterMetadata, ParameterType, ParameterValue,
-    PositionValue, SchemaNumber, SchemaStore, SessionEvent,
+    HostSchema, MotorActionService, ParameterMetadata, ParameterService, ParameterType,
+    ParameterValue, PositionValue, SchemaNumber, SchemaStore, SessionEvent,
 };
 
 #[derive(Debug, Parser)]
@@ -81,6 +81,7 @@ enum ParamCommand {
         #[arg(long = "type", value_enum)]
         ty: Option<CliParameterType>,
     },
+    ReadAll,
 }
 
 #[derive(Debug, Subcommand)]
@@ -235,24 +236,45 @@ fn run() -> Result<(), Box<dyn Error>> {
             ParamCommand::Get { key, ty } => {
                 let session = open_session(port.as_deref(), baud)?;
                 let parameter = resolve_parameter(schema.as_ref(), &key, ty)?;
-                let value = session.parameter_read(parameter.id, parameter.ty)?;
+                let value = if let Some(schema) = schema.as_ref() {
+                    ParameterService::new(session, schema.clone()).read(parameter.id)?
+                } else {
+                    session.parameter_read(parameter.id, parameter.ty)?
+                };
                 print_parameter_value(parameter.metadata, parameter.id, value);
             }
             ParamCommand::Set { key, value, ty } => {
                 let session = open_session(port.as_deref(), baud)?;
                 let parameter = resolve_parameter(schema.as_ref(), &key, ty)?;
-                if let Some(metadata) = parameter.metadata {
-                    if metadata.access != "rw" {
-                        return Err(format!(
-                            "parameter {} (0x{:04X}) is not writable (access={})",
-                            metadata.symbol, metadata.id, metadata.access
-                        )
-                        .into());
+                let value = parse_parameter_value(parameter.ty, &value)?;
+                if let Some(schema) = schema.as_ref() {
+                    ParameterService::new(session, schema.clone()).write(parameter.id, value)?;
+                } else {
+                    session.parameter_write(parameter.id, value)?;
+                }
+                println!("OK");
+            }
+            ParamCommand::ReadAll => {
+                let schema = require_schema(schema.as_ref())?;
+                let session = open_session(port.as_deref(), baud)?;
+                let service = ParameterService::new(session, schema.clone());
+                let results = service.refresh_all()?;
+                let mut failed = 0usize;
+                for (id, result) in results {
+                    match result {
+                        Ok(value) => {
+                            let metadata = schema.parameter_by_id(id);
+                            print_parameter_value(metadata, id, value);
+                        }
+                        Err(error) => {
+                            failed += 1;
+                            eprintln!("0x{id:04X}: {error}");
+                        }
                     }
                 }
-                let value = parse_parameter_value(parameter.ty, &value)?;
-                session.parameter_write(parameter.id, value)?;
-                println!("OK");
+                if failed != 0 {
+                    return Err(format!("{failed} parameter reads failed").into());
+                }
             }
         },
         Command::Motor { command } => {
