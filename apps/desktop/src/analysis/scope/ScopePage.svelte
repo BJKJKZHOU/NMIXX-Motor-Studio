@@ -4,7 +4,7 @@
   import uPlot from "uplot";
   import type { ConnectionInfo, PlotChannel } from "../../connection/types";
   import { clearScope, configureScope, pauseScope, readScopeSnapshot, startScope } from "./api";
-  import type { ScopeConfig, ScopeSnapshot, ScopeSummary } from "./types";
+  import type { ScopeConfig, ScopeRate, ScopeSnapshot, ScopeSummary } from "./types";
   import MotionCompactEditor from "../tuning/MotionCompactEditor.svelte";
 
   export let connection: ConnectionInfo | undefined;
@@ -26,11 +26,10 @@
   let initialVerticalFit = true;
   let scopeConfig: ScopeConfig | undefined;
   let selectedIds = new Set<number>();
+  let channelRates = new Map<number, ScopeRate>();
   let plotChannels: PlotChannel[] = [];
   let visibleChannels: PlotChannel[] = [];
   let snapshot: ScopeSnapshot | undefined;
-  let carriedPlotData: uPlot.AlignedData | undefined;
-  let snapshotChannelIds: number[] = [];
   let latestValues: string[] = [];
   let activeConnection: ConnectionInfo | undefined;
   const scopeWindowSeconds = 0.5;
@@ -43,17 +42,31 @@
   $: onSummary({ state: snapshot?.state ?? "STOPPED", selectedChannels: selectedIds.size, lostFrames: snapshot?.lostFrames ?? 0 });
   $: visibleChannels = plotChannels.filter((channel) => selectedIds.has(channel.id));
   $: latestValues = visibleChannels.map((channel) => {
-    const index = snapshotChannelIds.indexOf(channel.id);
-    const values = index >= 0 ? snapshot?.series[index] : undefined;
+    const values = snapshot?.series.find((series) => series.id === channel.id)?.values;
     if (!values?.length) return "—";
     const unit = channel.unit ?? "";
     return `${values[values.length - 1].toFixed(3)}${unit ? ` ${unit}` : ""}`;
   });
+  $: fastSelected = Array.from(selectedIds).filter((id) => channelRates.get(id) === "fast").length;
+  $: normalSelected = Array.from(selectedIds).filter((id) => channelRates.get(id) === "normal").length;
 
-  function channelMode(channel: PlotChannel): string {
-    if (channel.supportsFast && channel.supportsNormal) return "FAST+N";
-    if (channel.supportsFast) return "FAST";
-    return "NORMAL";
+  function defaultRate(channel: PlotChannel): ScopeRate {
+    return channel.supportsFast ? "fast" : "normal";
+  }
+
+  function selectedRate(id: number): ScopeRate {
+    const channel = plotChannels.find((item) => item.id === id);
+    return channelRates.get(id) ?? (channel ? defaultRate(channel) : "normal");
+  }
+
+  function rateLabel(rate: ScopeRate): string {
+    if (!connection) return rate === "fast" ? "20K" : "1K";
+    const hz = rate === "fast" ? connection.fastRateHz : connection.normalRateHz;
+    return hz >= 1000 ? `${(hz / 1000).toFixed(hz % 1000 === 0 ? 0 : 1)}K` : `${hz} Hz`;
+  }
+
+  function rateAllowed(channel: PlotChannel, rate: ScopeRate): boolean {
+    return rate === "fast" ? channel.supportsFast : channel.supportsNormal;
   }
 
   function resetScope() {
@@ -63,31 +76,69 @@
     initialVerticalFit = true;
     scopeConfig = undefined;
     snapshot = undefined;
-    carriedPlotData = undefined;
-    snapshotChannelIds = [];
-    selectedIds = new Set(connection?.channels.filter((c) => c.supportsFast).slice(0, Math.min(2, connection.fastMaxChannels)).map((c) => c.id) ?? []);
-    plotChannels = connection?.channels.filter((c) => c.supportsFast) ?? [];
+    plotChannels = connection?.channels.filter((channel) => channel.supportsFast || channel.supportsNormal) ?? [];
+    const defaults = plotChannels.slice(0, 2);
+    selectedIds = new Set(defaults.map((channel) => channel.id));
+    channelRates = new Map(defaults.map((channel) => [channel.id, defaultRate(channel)]));
     rebuildPlot();
   }
 
   function toggleChannel(id: number) {
     if (!connection || commandBusy) return;
+    const channel = plotChannels.find((item) => item.id === id);
+    if (!channel) return;
+
     const next = new Set(selectedIds);
-    if (next.has(id)) next.delete(id);
-    else if (next.size < connection.fastMaxChannels) next.add(id);
-    else {
-      channelNotice = `Maximum ${connection.fastMaxChannels} FAST channels.`;
-      return;
+    const rates = new Map(channelRates);
+    if (next.has(id)) {
+      next.delete(id);
+      rates.delete(id);
+    } else {
+      const rate = rates.get(id) ?? defaultRate(channel);
+      const currentCount = Array.from(next).filter((item) => rates.get(item) === rate).length;
+      const limit = rate === "fast" ? connection.fastMaxChannels : connection.normalMaxChannels;
+      if (currentCount >= limit) {
+        channelNotice = `Maximum ${limit} ${rateLabel(rate)} channels.`;
+        return;
+      }
+      next.add(id);
+      rates.set(id, rate);
     }
+
     channelNotice = "";
-    const needsLiveChannel = snapshot?.state === "LIVE" && !!scopeConfig &&
-      next.has(id) && !scopeConfig.channels.some((channel) => channel.id === id);
     selectedIds = next;
-    configurationDirty = !!scopeConfig &&
-      (next.size !== scopeConfig.channels.length || scopeConfig.channels.some((channel) => !next.has(channel.id)));
-    const seriesIndex = plotChannels.findIndex((channel) => channel.id === id);
+    channelRates = rates;
+    configurationDirty = configurationChanged(next, rates);
+    const seriesIndex = plotChannels.findIndex((item) => item.id === id);
     if (seriesIndex >= 0) plot?.setSeries(seriesIndex + 1, { show: next.has(id) });
-    if (needsLiveChannel) void run();
+  }
+
+  function changeRate(id: number, rate: ScopeRate) {
+    if (!connection || commandBusy) return;
+    const channel = plotChannels.find((item) => item.id === id);
+    if (!channel || !rateAllowed(channel, rate)) return;
+
+    const rates = new Map(channelRates);
+    if (selectedIds.has(id)) {
+      const count = Array.from(selectedIds).filter((item) => item !== id && rates.get(item) === rate).length;
+      const limit = rate === "fast" ? connection.fastMaxChannels : connection.normalMaxChannels;
+      if (count >= limit) {
+        channelNotice = `Maximum ${limit} ${rateLabel(rate)} channels.`;
+        return;
+      }
+    }
+
+    rates.set(id, rate);
+    channelRates = rates;
+    channelNotice = "";
+    configurationDirty = configurationChanged(selectedIds, rates);
+  }
+
+  function configurationChanged(ids: Set<number>, rates: Map<number, ScopeRate>): boolean {
+    if (!scopeConfig) return false;
+    if (ids.size !== scopeConfig.channels.length) return true;
+    return scopeConfig.channels.some((channel) =>
+      !ids.has(channel.id) || rates.get(channel.id) !== channel.rate);
   }
 
   function autoFitPlot() {
@@ -115,10 +166,10 @@
   async function ensureConfigured(): Promise<boolean> {
     if (scopeConfig && !configurationDirty) return true;
     if (!connection) { onError("Connect a device before starting Scope."); return false; }
-    if (selectedIds.size === 0) { onError("Select at least one FAST channel."); return false; }
+    if (selectedIds.size === 0) { onError("Select at least one Scope channel."); return false; }
     const revision = snapshotRevision;
     try {
-      const configured = await configureScope(Array.from(selectedIds));
+      const configured = await configureScope(Array.from(selectedIds).map((id) => ({ id, rate: selectedRate(id) })));
       if (revision !== snapshotRevision) return false;
       scopeConfig = configured;
       configurationDirty = false;
@@ -126,7 +177,6 @@
     } catch (error) {
       if (revision === snapshotRevision) {
         scopeConfig = undefined;
-        carriedPlotData = undefined;
         if (snapshot) snapshot = { ...snapshot, state: "STOPPED" };
         onError(error);
       }
@@ -140,7 +190,6 @@
     if (!scopeConfig || configurationDirty) {
       snapshotRevision += 1;
       configuring = true;
-      carriedPlotData = plot?.data[0].length ? plot.data : undefined;
     }
     try {
       if (!(await ensureConfigured())) return;
@@ -166,7 +215,7 @@
       await clearScope();
       snapshotRevision += 1;
       carriedPlotData = undefined;
-      if (snapshot) snapshot = { ...snapshot, sampleCount: 0, times: [], series: snapshot.series.map(() => []) };
+      if (snapshot) snapshot = { ...snapshot, sampleCount: 0, series: snapshot.series.map((series) => ({ ...series, times: [], values: [] })) };
       plot?.setData([[], ...plotChannels.map(() => [])] as uPlot.AlignedData);
       await refreshSnapshot();
     }
@@ -174,41 +223,40 @@
     finally { commandBusy = false; }
   }
 
+  function alignedPlotData(next: ScopeSnapshot): uPlot.AlignedData {
+    const timeKeys = new Map<string, number>();
+    for (const series of next.series) {
+      for (const time of series.times) timeKeys.set(time.toFixed(7), time);
+    }
+    const times = Array.from(timeKeys.values()).sort((a, b) => a - b);
+    const indexByKey = new Map(times.map((time, index) => [time.toFixed(7), index]));
+
+    const values = plotChannels.map((channel) => {
+      const output: Array<number | null> = times.map(() => null);
+      const source = next.series.find((series) => series.id === channel.id);
+      if (!source) return output;
+      for (let index = 0; index < source.times.length; index += 1) {
+        const target = indexByKey.get(source.times[index].toFixed(7));
+        if (target !== undefined) output[target] = source.values[index];
+      }
+      return output;
+    });
+
+    return [times, ...values] as uPlot.AlignedData;
+  }
+
   async function refreshSnapshot() {
     if (!scopeConfig || configuring || snapshotBusy) return;
     snapshotBusy = true;
     const revision = snapshotRevision;
-    const channels = scopeConfig.channels.map((channel) => channel.id);
     try {
       const next = await readScopeSnapshot(scopeWindowSeconds);
       if (revision !== snapshotRevision) return;
       snapshot = next;
-      snapshotChannelIds = channels;
-      if (active && (next.times.length > 0 || plot?.data[0].length === 0)) {
-        let times = next.times;
-        let series: Array<Array<number | null | undefined>> = plotChannels.map((channel) => {
-          const index = channels.indexOf(channel.id);
-          return index >= 0 ? next.series[index] : next.times.map(() => null);
-        });
-        const previous = carriedPlotData;
-        if (previous && next.times.length > 0) {
-          const elapsed = next.sampleCount / next.sampleRateHz;
-          const firstNewTime = next.times[0];
-          const keptIndices: number[] = [];
-          for (let index = 0; index < previous[0].length; index += 1) {
-            const shifted = previous[0][index] - elapsed;
-            if (shifted >= -scopeWindowSeconds && shifted < firstNewTime) keptIndices.push(index);
-          }
-          if (keptIndices.length > 0) {
-            times = keptIndices.map((index) => previous[0][index] - elapsed).concat(next.times);
-            series = series.map((values, index) =>
-              keptIndices.map((oldIndex) => previous[index + 1][oldIndex]).concat(values));
-          } else {
-            carriedPlotData = undefined;
-          }
-        }
-        plot?.setData([times, ...series] as uPlot.AlignedData);
-        if (initialVerticalFit && times.length > 1) autoFitPlot();
+      if (active) {
+        const data = alignedPlotData(next);
+        plot?.setData(data);
+        if (initialVerticalFit && data[0].length > 1) autoFitPlot();
       }
     }
     catch (error) { if (revision === snapshotRevision) onError(error); }
@@ -224,7 +272,7 @@
     if (!plotHost) return;
     const rect = plotHost.getBoundingClientRect();
     plot?.destroy();
-    const series: uPlot.Series[] = [{}, ...plotChannels.map((channel) => ({ label: channel.symbol, stroke: traceColor(channel), width: 1.25, show: selectedIds.has(channel.id) }))];
+    const series: uPlot.Series[] = [{}, ...plotChannels.map((channel) => ({ label: channel.symbol, stroke: traceColor(channel), width: 1.25, show: selectedIds.has(channel.id), spanGaps: true }))];
     plot = new uPlot({
       width: Math.max(420, Math.floor(rect.width)),
       height: Math.max(260, Math.floor(rect.height)),
@@ -280,29 +328,38 @@
 <div class="scope-shell">
   <aside id="scope-sidebar" class="scope-sidebar">
     <section class="side-section"><div class="section-heading">CHANNELS</div><div class="channel-list">
-      {#if connection}{#each connection.channels as channel}
-        <label class:disabled-row={!channel.supportsFast} class="channel-row" for={`scope-channel-${channel.id}`}>
+      {#if connection}{#each plotChannels as channel}
+        <div class="channel-row">
           <input
             id={`scope-channel-${channel.id}`}
             class="scope-channel-checkbox"
             type="checkbox"
             checked={selectedIds.has(channel.id)}
-            disabled={!channel.supportsFast}
             onchange={() => toggleChannel(channel.id)}
           />
-          <span class="channel-name">{channel.symbol}</span><span class="channel-unit">{channel.unit ?? ""}</span><span class:normal-only={!channel.supportsFast} class="channel-mode">{channelMode(channel)}</span>
-        </label>
+          <label class="channel-name" for={`scope-channel-${channel.id}`}>{channel.symbol}</label>
+          <span class="channel-unit">{channel.unit ?? ""}</span>
+          <select
+            class="channel-rate"
+            value={selectedRate(channel.id)}
+            disabled={commandBusy}
+            onchange={(event) => changeRate(channel.id, (event.currentTarget as HTMLSelectElement).value as ScopeRate)}
+          >
+            <option value="fast" disabled={!channel.supportsFast}>{rateLabel("fast")}</option>
+            <option value="normal" disabled={!channel.supportsNormal}>{rateLabel("normal")}</option>
+          </select>
+        </div>
       {/each}{:else}<div class="empty-hint">No device connected. Open Connection first to discover acquisition channels.</div>{/if}
     </div>{#if channelNotice}<div class="scope-pending">{channelNotice}</div>{/if}</section>
     <section class="side-section acquisition"><div class="section-heading">ACQUISITION</div><div class="property-grid">
-      <span>State</span><strong>{snapshot?.state ?? "STOPPED"}</strong><span>FAST Rate</span><strong>{connection ? `${(connection.fastRateHz / 1000).toFixed(1)} kHz` : "—"}</strong>
-      <span>History</span><strong>{scopeConfig ? `${scopeConfig.historySeconds.toFixed(3)} s` : "10.000 s"}</strong><span>Channels</span><strong>{selectedIds.size} / {connection?.fastMaxChannels ?? "—"}</strong><span>Block</span><strong>{connection?.fastBlockSamples ?? "—"}</strong>
+      <span>State</span><strong>{snapshot?.state ?? "STOPPED"}</strong><span>History</span><strong>{scopeConfig ? `${scopeConfig.historySeconds.toFixed(3)} s` : "10.000 s"}</strong>
+      <span>{rateLabel("fast")}</span><strong>{fastSelected} / {connection?.fastMaxChannels ?? "—"}</strong><span>{rateLabel("normal")}</span><strong>{normalSelected} / {connection?.normalMaxChannels ?? "—"}</strong><span>FAST Block</span><strong>{connection?.fastBlockSamples ?? "—"}</strong>
     </div>{#if configurationDirty && snapshot?.state !== "LIVE"}<div class="scope-pending">New channels apply on Run.</div>{/if}</section>
     <MotionCompactEditor capabilities={connection?.motion} {onError} />
   </aside>
   <section id="scope-workspace" class="scope-workspace">
     <div class="editor-tabs"><div class="editor-tab active"><i class="codicon codicon-graph-line"></i> Scope</div></div>
-    <div class="plot-header">{#if visibleChannels.length > 0}{#each visibleChannels as channel, index}<div class="trace-key"><span class="trace-mark" style={`background:${traceColor(channel)}`}></span>{channel.symbol}<span class="value">{latestValues[index] ?? "—"}</span></div>{/each}{:else}<div class="plot-placeholder">{connection ? "Select FAST channels and press Run." : "Connect a device before using Scope."}</div>{/if}<div class="plot-meta">{snapshot?.sampleCount ?? 0} samples · loss {snapshot?.lostFrames ?? 0}</div></div>
+    <div class="plot-header">{#if visibleChannels.length > 0}{#each visibleChannels as channel, index}<div class="trace-key"><span class="trace-mark" style={`background:${traceColor(channel)}`}></span>{channel.symbol}<span class="value">{latestValues[index] ?? "—"}</span></div>{/each}{:else}<div class="plot-placeholder">{connection ? "Select channels and press Run." : "Connect a device before using Scope."}</div>{/if}<div class="plot-meta">{snapshot?.sampleCount ?? 0} samples · loss {snapshot?.lostFrames ?? 0}</div></div>
     <div bind:this={plotHost} class="plot-host"></div>
   </section>
 </div>
