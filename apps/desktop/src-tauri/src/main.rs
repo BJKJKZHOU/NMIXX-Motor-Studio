@@ -3,7 +3,7 @@ use std::time::Duration;
 
 use nmixx_app::{
     ActionHandle, ActionMetadata, ApplicationSession, AxdrStatus, DEFAULT_USB_BAUD, HostSchema,
-    IdentificationKind, MotionCapabilities, MotionConfig, MotionPreview, MotionService,
+    IdentificationKind, IdentificationStart, MotionCapabilities, MotionConfig, MotionPreview, MotionService,
     ParameterMetadata, ParameterValue, PositionValue, PreflightDomain, RangeMetadata,
     SchemaNumber, ScopeRate, ScopeSelection, StreamState,
 };
@@ -135,6 +135,13 @@ impl From<&ActionMetadata> for ActionMetadataDto {
             description: value.description.clone(),
         }
     }
+}
+
+#[derive(Debug, Serialize)]
+#[serde(tag = "status", rename_all = "snake_case")]
+enum IdentificationStartDto {
+    RequiresEnable,
+    Started { handle: ActionHandleDto },
 }
 
 #[derive(Debug, Clone, Serialize)]
@@ -572,6 +579,40 @@ fn identification_preflight(
 }
 
 #[tauri::command]
+fn identification_start(
+    app_handle: tauri::AppHandle,
+    state: State<'_, Mutex<DesktopState>>,
+    kind: String,
+    allow_enable: bool,
+) -> Result<IdentificationStartDto, String> {
+    let kind_value = match kind.as_str() {
+        "rs_ls" => IdentificationKind::RsLs,
+        "flux" => IdentificationKind::Flux,
+        "jb" => IdentificationKind::Jb,
+        other => return Err(format!("unknown identification kind '{other}'")),
+    };
+    let symbol = match kind_value {
+        IdentificationKind::RsLs => "ACTION_IDENT_RS_LS_START",
+        IdentificationKind::Flux => "ACTION_IDENT_FLUX_START",
+        IdentificationKind::Jb => "ACTION_IDENT_JB_START",
+    };
+
+    let app = application(&state)?;
+    let events = app.subscribe().map_err(|error| error.to_string())?;
+    match app
+        .identification_start(kind_value, allow_enable)
+        .map_err(|error| error.to_string())?
+    {
+        IdentificationStart::RequiresEnable => Ok(IdentificationStartDto::RequiresEnable),
+        IdentificationStart::Started(handle) => {
+            let dto = action_handle_dto(handle, symbol.to_owned());
+            spawn_action_completion(app_handle, events, handle, symbol.to_owned());
+            Ok(IdentificationStartDto::Started { handle: dto })
+        }
+    }
+}
+
+#[tauri::command]
 fn action_list(state: State<'_, Mutex<DesktopState>>) -> Result<Vec<ActionMetadataDto>, String> {
     let app = application(&state)?;
     Ok(app.schema().actions.iter().map(Into::into).collect())
@@ -848,6 +889,7 @@ fn main() {
             parameter_write,
             phase_search_preflight,
             identification_preflight,
+            identification_start,
             action_list,
             action_start,
             motor_enable,
