@@ -9,6 +9,7 @@ mod connection;
 mod motor_actions;
 mod parameter_service;
 mod plot_capabilities;
+mod preflight;
 mod schema;
 mod schema_store;
 mod scope;
@@ -22,6 +23,9 @@ pub use motor_actions::{MotorActionError, MotorActionService};
 pub use parameter_service::{ParameterService, ParameterServiceError};
 pub use plot_capabilities::{
     DevicePlotCapabilities, DevicePlotChannel, PlotCapabilitiesError, PlotChannelInfo,
+};
+pub use preflight::{
+    IdentificationKind, PreflightDomain, PreflightError, PreflightIssue, PreflightService,
 };
 pub use schema::{
     ActionMetadata, HostSchema, ParameterMetadata, RangeMetadata, SchemaError, SchemaNumber,
