@@ -7,6 +7,7 @@ export const motionState = writable<MotionState>({
   acceleration: 20,
   deceleration: 20,
   filterTimeMs: 20,
+  sCurveMode: "peak-accel",
   repeat: false,
 
   positionCommand: "incremental",
