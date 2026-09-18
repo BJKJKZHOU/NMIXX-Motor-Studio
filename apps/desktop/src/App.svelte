@@ -12,8 +12,8 @@
   import ControlPage from "./control/ControlPage.svelte";
   import ControlTuningPage from "./control/ControlTuningPage.svelte";
   import MotionPage from "./motion/MotionPage.svelte";
-  import { canSaveParameters, disableMotor, enableMotor, onActionCompleted, saveParameters, stopMotor } from "./actions/api";
-  import type { ActionCompletion, ActionHandle } from "./actions/types";
+  import { canSaveParameters, disableMotor, enableMotor, saveParameters, stopMotor } from "./actions/api";
+  import type { ActionHandle } from "./actions/types";
   import { initializePersistenceBaseline, listParameters, readParameters, refreshAllParameters as refreshParameterCache } from "./parameters/api";
   import { clearParameterPersistence, commitParameterPersistence } from "./parameters/persistence";
   import type { ParameterMetadata, ParameterValue } from "./parameters/types";
@@ -38,15 +38,11 @@
   let speedWm: number | null = null;
   let positionText = "—";
   let globalActionBusy = false;
-  let pendingGlobalAction: ActionHandle | null = null;
-  let pendingGlobalActionSymbol: string | null = null;
-  let earlyGlobalCompletion: ActionCompletion | null = null;
   let parameterSaveAvailable = false;
   let saveFeedback: "idle" | "saved" = "idle";
   let saveFeedbackTimer: ReturnType<typeof setTimeout> | undefined;
   let readingParameters = false;
   let globalRefreshTimer: ReturnType<typeof setInterval> | undefined;
-  let stopActionListener: (() => void) | undefined;
 
   const workflowPages: Array<{ id: Page; title: string; icon: string }> = [
     { id: "connection", title: "Connection", icon: "codicon-plug" },
@@ -108,9 +104,6 @@
     speedWm = null;
     positionText = "—";
     globalActionBusy = false;
-    pendingGlobalAction = null;
-    pendingGlobalActionSymbol = null;
-    earlyGlobalCompletion = null;
     parameterSaveAvailable = false;
     saveFeedback = "idle";
     if (saveFeedbackTimer) clearTimeout(saveFeedbackTimer);
@@ -120,10 +113,6 @@
 
   function pageTitle(page: Page): string {
     return [...workflowPages, ...toolPages].find((item) => item.id === page)?.title ?? page;
-  }
-
-  function actionKey(action: ActionHandle | ActionCompletion): string {
-    return `${action.txn}:${action.actionId}`;
   }
 
   function numeric(value: ParameterValue | null): number | null {
@@ -174,41 +163,21 @@
     }, 1400);
   }
 
-  function finishGlobalAction(completion: ActionCompletion) {
-    globalActionBusy = false;
-    pendingGlobalAction = null;
-    pendingGlobalActionSymbol = null;
-    earlyGlobalCompletion = null;
-
-    if (!completion.ok) {
-      setError(`Action ${completion.symbol} failed: ${completion.status}`);
-    } else if (completion.symbol === "ACTION_PARAMETER_SAVE") {
-      commitParameterPersistence();
-      showSavedFeedback();
-    }
-
-    void refreshGlobalStatus();
-  }
-
   async function startGlobalAction(symbol: string, start: () => Promise<ActionHandle>) {
     if (!connection || globalActionBusy) return;
     globalActionBusy = true;
-    pendingGlobalAction = null;
-    pendingGlobalActionSymbol = symbol;
-    earlyGlobalCompletion = null;
 
     try {
-      const handle = await start();
-      pendingGlobalAction = handle;
-      if (earlyGlobalCompletion && actionKey(earlyGlobalCompletion) === actionKey(handle)) {
-        finishGlobalAction(earlyGlobalCompletion);
+      await start();
+      if (symbol === "ACTION_PARAMETER_SAVE") {
+        commitParameterPersistence();
+        showSavedFeedback();
       }
+      await refreshGlobalStatus();
     } catch (error) {
-      globalActionBusy = false;
-      pendingGlobalAction = null;
-      pendingGlobalActionSymbol = null;
-      earlyGlobalCompletion = null;
       setError(error);
+    } finally {
+      globalActionBusy = false;
     }
   }
 
@@ -231,28 +200,6 @@
     saveFeedback = "idle";
     await startGlobalAction("ACTION_PARAMETER_SAVE", saveParameters);
   }
-
-  onMount(() => {
-    let disposed = false;
-    onActionCompleted((completion) => {
-      if (!globalActionBusy || completion.symbol !== pendingGlobalActionSymbol) return;
-      if (!pendingGlobalAction) {
-        earlyGlobalCompletion = completion;
-        return;
-      }
-      if (actionKey(completion) !== actionKey(pendingGlobalAction)) return;
-      finishGlobalAction(completion);
-    }).then((unlisten) => {
-      if (disposed) unlisten();
-      else stopActionListener = unlisten;
-    }).catch(setError);
-
-    return () => {
-      disposed = true;
-      stopActionListener?.();
-      stopActionListener = undefined;
-    };
-  });
 
   onDestroy(() => {
     clearGlobalStatus();
