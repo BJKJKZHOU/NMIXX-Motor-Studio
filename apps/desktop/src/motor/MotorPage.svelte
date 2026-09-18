@@ -28,11 +28,9 @@
   };
 
   type RowSpec = {
-    label: string;
     activeSymbol: string;
     identifiedSymbol?: string;
     identifiedValidSymbol?: string;
-    actionLabel?: string;
     identKey?: IdentKey;
   };
 
@@ -58,45 +56,36 @@
   };
 
   const ROWS: RowSpec[] = [
-    { label: "Pole pairs", activeSymbol: "PARAM_MOTOR_PP" },
+    { activeSymbol: "PARAM_MOTOR_PP" },
     {
-      label: "Rs",
       activeSymbol: "PARAM_MOTOR_RS",
       identifiedSymbol: "PARAM_IDENT_RS_RESULT",
       identifiedValidSymbol: "PARAM_IDENT_RS_LS_VALID",
-      actionLabel: "Rs/Ls",
       identKey: "rsLs",
     },
     {
-      label: "Ld",
       activeSymbol: "PARAM_MOTOR_LD",
       identifiedSymbol: "PARAM_IDENT_LS_RESULT",
       identifiedValidSymbol: "PARAM_IDENT_RS_LS_VALID",
     },
     {
-      label: "Lq",
       activeSymbol: "PARAM_MOTOR_LQ",
       identifiedSymbol: "PARAM_IDENT_LS_RESULT",
       identifiedValidSymbol: "PARAM_IDENT_RS_LS_VALID",
     },
     {
-      label: "Flux",
       activeSymbol: "PARAM_MOTOR_FLUX",
       identifiedSymbol: "PARAM_IDENT_FLUX_RESULT",
       identifiedValidSymbol: "PARAM_IDENT_FLUX_VALID",
-      actionLabel: "Flux",
       identKey: "flux",
     },
     {
-      label: "J",
       activeSymbol: "PARAM_MOTOR_J",
       identifiedSymbol: "PARAM_IDENT_J_RESULT",
       identifiedValidSymbol: "PARAM_IDENT_JB_VALID",
-      actionLabel: "J/B",
       identKey: "jb",
     },
     {
-      label: "B",
       activeSymbol: "PARAM_MOTOR_B",
       identifiedSymbol: "PARAM_IDENT_B_RESULT",
       identifiedValidSymbol: "PARAM_IDENT_JB_VALID",
@@ -199,6 +188,14 @@
 
   function unitFor(symbol: string): string {
     return metadata[symbol]?.unit ?? "";
+  }
+
+  function parameterLabel(symbol: string): string {
+    return metadata[symbol]?.name ?? symbol;
+  }
+
+  function actionLabel(symbol: string): string {
+    return actions[symbol]?.name ?? symbol;
   }
 
   function isWritable(symbol: string): boolean {
@@ -450,7 +447,7 @@
 
             {#each ROWS as row}
               <div class="grid-row" role="row">
-                <div class="parameter-name" role="cell">{row.label}</div>
+                <div class="parameter-name" role="cell">{parameterLabel(row.activeSymbol)}</div>
                 <div class="default-value muted" role="cell" title="Firmware compiled defaults are not exposed by the current HostSchema">—</div>
                 <div role="cell">
                   {#if metadata[row.activeSymbol]}
@@ -470,20 +467,21 @@
                 </div>
                 <div class="identified-value mono" role="cell">{identifiedText(row)}</div>
                 <div class="action-cell" role="cell">
-                  {#if row.actionLabel && row.identKey}
+                  {#if row.identKey}
                     {@const state = identStates[row.identKey]}
                     {@const startSymbol = IDENT_CONFIGS[row.identKey].startAction}
+                    {@const startLabel = actionLabel(startSymbol)}
                     <vscode-button
                       secondary
                       disabled={!actionAvailable(startSymbol) || identifyBusy()}
-                      title={actionAvailable(startSymbol) ? `Start ${row.actionLabel} identification` : `${row.actionLabel} identification is not exposed by this firmware`}
+                      title={actionAvailable(startSymbol) ? `Start ${startLabel}` : `${startLabel} is not exposed by this firmware`}
                       onclick={() => void startIdentification(row.identKey!)}
-                    >{row.actionLabel}</vscode-button>
+                    >{startLabel}</vscode-button>
 
                     {#if state.phase === "running"}
                       <span class="action-status state-running"><i class="codicon codicon-loading codicon-modifier-spin"></i> Running</span>
                     {:else if state.phase === "ready"}
-                      <vscode-button class="apply-button" disabled={!actionAvailable(applyActionSymbol)} onclick={() => void applyIdentification(row.identKey!)} title="Apply the latest valid identification result to Active parameters">Apply</vscode-button>
+                      <vscode-button class="apply-button" disabled={!actionAvailable(applyActionSymbol)} onclick={() => void applyIdentification(row.identKey!)} title="Apply the latest valid identification result to Active parameters">{actionLabel(applyActionSymbol)}</vscode-button>
                     {:else if state.phase === "applying"}
                       <span class="action-status state-running"><i class="codicon codicon-loading codicon-modifier-spin"></i> Applying</span>
                     {:else if state.phase === "applied"}
@@ -510,7 +508,7 @@
               <div role="columnheader">Value</div>
             </div>
             <div class="settings-row" role="row">
-              <div class="parameter-name" role="cell">I/F startup current</div>
+              <div class="parameter-name" role="cell">{parameterLabel(identificationCurrentSymbol)}</div>
               <div role="cell">
                 {#if metadata[identificationCurrentSymbol]}
                   <span class="inline-editor">
