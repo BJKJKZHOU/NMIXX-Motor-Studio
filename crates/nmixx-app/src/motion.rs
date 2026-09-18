@@ -128,7 +128,7 @@ impl MotionService {
         Ok(generate_preview(&config))
     }
 
-    pub fn run(
+    pub(crate) fn run(
         &self,
         parameters: &ParameterService,
         session: &DeviceSession,
@@ -215,7 +215,7 @@ impl MotionService {
         start_action(parameters, session, "ACTION_MOTOR_RUN")
     }
 
-    pub fn stop(
+    pub(crate) fn stop(
         &self,
         parameters: &ParameterService,
         session: &DeviceSession,
