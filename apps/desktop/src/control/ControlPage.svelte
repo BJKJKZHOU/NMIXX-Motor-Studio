@@ -12,7 +12,7 @@
   import type { ParameterMetadata, ParameterValue } from "../parameters/types";
   import { modifiedParameterIds } from "../parameters/persistence";
 
-  export type ControlLoopPage = "current" | "speed" | "position";
+  type ControlLoopPage = "current" | "speed" | "position";
 
   type Props = {
     connection: ConnectionInfo | undefined;
