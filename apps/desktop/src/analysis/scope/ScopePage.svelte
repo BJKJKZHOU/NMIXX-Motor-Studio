@@ -561,7 +561,7 @@
         plot?.setData(data);
         applyHorizontalScale();
         if (initialVerticalFit && data[0].length > 1) {
-          autoSet();
+          autoVertical(next);
           initialVerticalFit = false;
         }
       }
