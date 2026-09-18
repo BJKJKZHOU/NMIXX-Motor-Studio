@@ -232,50 +232,67 @@ fn run() -> Result<(), Box<dyn Error>> {
                 timeout,
             } => {
                 let (action_id, action_label) = resolve_action(schema.as_ref(), &key)?;
-                let (handle, events) = if let Some(schema) = schema.as_ref() {
+
+                if let Some(schema) = schema.as_ref() {
                     let app = open_application(port.as_deref(), baud, schema.clone())?;
                     let events = if no_wait { None } else { Some(app.subscribe()?) };
                     let action_key = schema
                         .action_by_id(action_id)
                         .map(|action| action.symbol.as_str())
                         .ok_or_else(|| format!("action ID 0x{action_id:04X} is not present in the loaded schema"))?;
-                    (app.action_start(action_key)?, events)
+                    let handle = app.action_start(action_key)?;
+                    println!(
+                        "accepted txn={} action={} (0x{action_id:04X})",
+                        handle.txn.get(),
+                        action_label
+                    );
+                    wait_for_action(events, handle, &action_label, action_id, timeout)?;
                 } else {
                     let session = open_raw_session(port.as_deref(), baud)?;
                     let events = if no_wait { None } else { Some(session.subscribe()?) };
-                    (session.action_start(action_id)?, events)
-                };
-                println!(
-                    "accepted txn={} action={} (0x{action_id:04X})",
-                    handle.txn.get(),
-                    action_label
-                );
-                if let Some(events) = events {
-                    loop {
-                        match events.recv_timeout(Duration::from_secs(timeout)) {
-                            Ok(SessionEvent::ActionCompleted { handle: completed, status }) if completed == handle => {
-                                match status {
-                                    AxdrStatus::Ok => println!("completed OK"),
-                                    other => println!("completed {other:?}"),
-                                }
-                                break;
-                            }
-                            Ok(_) => continue,
-                            Err(RecvTimeoutError::Timeout) => {
-                                return Err(format!(
-                                    "action {action_label} (0x{action_id:04X}) completion timed out after {timeout}s"
-                                ).into());
-                            }
-                            Err(RecvTimeoutError::Disconnected) => {
-                                return Err("device session closed while waiting for action".into());
-                            }
-                        }
-                    }
+                    let handle = session.action_start(action_id)?;
+                    println!(
+                        "accepted txn={} action={} (0x{action_id:04X})",
+                        handle.txn.get(),
+                        action_label
+                    );
+                    wait_for_action(events, handle, &action_label, action_id, timeout)?;
                 }
             }
         },
     }
     Ok(())
+}
+
+fn wait_for_action(
+    events: Option<std::sync::mpsc::Receiver<SessionEvent>>,
+    handle: nmixx_app::ActionHandle,
+    action_label: &str,
+    action_id: u16,
+    timeout: u64,
+) -> Result<(), Box<dyn Error>> {
+    let Some(events) = events else { return Ok(()); };
+
+    loop {
+        match events.recv_timeout(Duration::from_secs(timeout)) {
+            Ok(SessionEvent::ActionCompleted { handle: completed, status }) if completed == handle => {
+                match status {
+                    AxdrStatus::Ok => println!("completed OK"),
+                    other => println!("completed {other:?}"),
+                }
+                return Ok(());
+            }
+            Ok(_) => continue,
+            Err(RecvTimeoutError::Timeout) => {
+                return Err(format!(
+                    "action {action_label} (0x{action_id:04X}) completion timed out after {timeout}s"
+                ).into());
+            }
+            Err(RecvTimeoutError::Disconnected) => {
+                return Err("device session closed while waiting for action".into());
+            }
+        }
+    }
 }
 
 fn require_schema(schema: Option<&HostSchema>) -> Result<&HostSchema, Box<dyn Error>> {
