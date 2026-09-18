@@ -5,6 +5,7 @@
   import type { ParameterMetadata, ParameterValue } from "../parameters/types";
   import { listActions, onActionCompleted, startAction } from "../actions/api";
   import type { ActionCompletion, ActionHandle, ActionMetadata } from "../actions/types";
+  import { checkIdentificationPreflight } from "../preflight/api";
 
   type Props = {
     connection: ConnectionInfo | undefined;
@@ -49,8 +50,8 @@
       activeSymbols: ["PARAM_MOTOR_FLUX"],
     },
     jb: {
-      startAction: "ACTION_IDENT_J_B_START",
-      validSymbol: "PARAM_IDENT_J_B_VALID",
+      startAction: "ACTION_IDENT_JB_START",
+      validSymbol: "PARAM_IDENT_JB_VALID",
       resultSymbols: ["PARAM_IDENT_J_RESULT", "PARAM_IDENT_B_RESULT"],
       activeSymbols: ["PARAM_MOTOR_J", "PARAM_MOTOR_B"],
     },
@@ -90,7 +91,7 @@
       label: "J",
       activeSymbol: "PARAM_MOTOR_J",
       identifiedSymbol: "PARAM_IDENT_J_RESULT",
-      identifiedValidSymbol: "PARAM_IDENT_J_B_VALID",
+      identifiedValidSymbol: "PARAM_IDENT_JB_VALID",
       actionLabel: "J/B",
       identKey: "jb",
     },
@@ -98,7 +99,7 @@
       label: "B",
       activeSymbol: "PARAM_MOTOR_B",
       identifiedSymbol: "PARAM_IDENT_B_RESULT",
-      identifiedValidSymbol: "PARAM_IDENT_J_B_VALID",
+      identifiedValidSymbol: "PARAM_IDENT_JB_VALID",
     },
   ];
 
@@ -340,12 +341,18 @@
     const config = IDENT_CONFIGS[identKey];
     if (!actionAvailable(config.startAction) || identifyBusy()) return;
 
-    for (const otherKey of Object.keys(IDENT_CONFIGS) as IdentKey[]) {
-      if (otherKey !== identKey && identStates[otherKey].phase === "ready") setIdentState(otherKey, "idle");
-    }
-
-    setIdentState(identKey, "running");
     try {
+      const issues = await checkIdentificationPreflight(identKey);
+      if (issues.length > 0) {
+        setIdentState(identKey, "failed", issues[0].reason);
+        return;
+      }
+
+      for (const otherKey of Object.keys(IDENT_CONFIGS) as IdentKey[]) {
+        if (otherKey !== identKey && identStates[otherKey].phase === "ready") setIdentState(otherKey, "idle");
+      }
+
+      setIdentState(identKey, "running");
       const handle = await startAction(config.startAction);
       pendingHandles = {
         ...pendingHandles,
