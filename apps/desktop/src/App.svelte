@@ -9,7 +9,7 @@
   import MotorPage from "./motor/MotorPage.svelte";
   import EncoderPage from "./encoder/EncoderPage.svelte";
   import LimitsPage from "./limits/LimitsPage.svelte";
-  import { disableMotor, enableMotor, listActions, onActionCompleted, saveParameters, stopMotor } from "./actions/api";
+  import { disableMotor, enableMotor, onActionCompleted, parameterSaveAvailable, saveParameters, stopMotor } from "./actions/api";
   import type { ActionCompletion, ActionHandle } from "./actions/types";
   import { listParameters, readParameters, refreshAllParameters as refreshParameterCache } from "./parameters/api";
   import type { ParameterMetadata, ParameterValue } from "./parameters/types";
@@ -70,9 +70,9 @@
     }
 
     try {
-      const [registry, actions] = await Promise.all([listParameters(), listActions()]);
+      const [registry, canSaveParameters] = await Promise.all([listParameters(), parameterSaveAvailable()]);
       parameterRegistry = registry;
-      parameterSaveAvailable = actions.some((action) => action.symbol === "ACTION_PARAMETER_SAVE");
+      parameterSaveAvailable = canSaveParameters;
       globalIds = Object.fromEntries(
         parameterRegistry
           .filter((item) => GLOBAL_SYMBOLS.includes(item.symbol as typeof GLOBAL_SYMBOLS[number]))
