@@ -35,7 +35,7 @@ struct ApplicationInner {
     session: DeviceSession,
     schema: HostSchema,
     parameters: ParameterService,
-    plot_capabilities: DevicePlotCapabilities,
+    plot_capabilities: Mutex<Option<DevicePlotCapabilities>>,
     motion_capabilities: MotionCapabilities,
     motion: MotionService,
     scope: Mutex<Option<ScopeSession>>,
@@ -78,7 +78,6 @@ impl ApplicationSession {
         schema: HostSchema,
         motion: MotionService,
     ) -> Result<Self, ApplicationError> {
-        let plot_capabilities = DevicePlotCapabilities::discover(&session)?;
         let parameters = ParameterService::new(session.clone(), schema.clone());
         let motion_capabilities = MotionCapabilities::from_schema(&schema);
 
@@ -87,7 +86,7 @@ impl ApplicationSession {
                 session,
                 schema,
                 parameters,
-                plot_capabilities,
+                plot_capabilities: Mutex::new(None),
                 motion_capabilities,
                 motion,
                 scope: Mutex::new(None),
@@ -103,8 +102,16 @@ impl ApplicationSession {
         &self.inner.schema
     }
 
-    pub fn plot_capabilities(&self) -> &DevicePlotCapabilities {
-        &self.inner.plot_capabilities
+    pub fn plot_capabilities(&self) -> Result<DevicePlotCapabilities, ApplicationError> {
+        let mut slot = self
+            .inner
+            .plot_capabilities
+            .lock()
+            .map_err(|_| ApplicationError::Poisoned)?;
+        if slot.is_none() {
+            *slot = Some(DevicePlotCapabilities::discover(&self.inner.session)?);
+        }
+        Ok(slot.as_ref().expect("Plot capabilities initialized").clone())
     }
 
     pub fn motion_capabilities(&self) -> &MotionCapabilities {
@@ -179,9 +186,10 @@ impl ApplicationSession {
         history: Duration,
         config_id: u8,
     ) -> Result<ScopeConfig, ApplicationError> {
+        let plot_capabilities = self.plot_capabilities()?;
         let scope = ScopeSession::from_fast_capabilities(
             self.inner.session.clone(),
-            &self.inner.plot_capabilities,
+            &plot_capabilities,
             &self.inner.schema,
             parameter_ids,
             history,
