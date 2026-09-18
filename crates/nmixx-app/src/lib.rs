@@ -6,6 +6,7 @@
 
 mod connection;
 mod parameter_service;
+mod motion;
 mod plot_capabilities;
 mod schema;
 mod schema_store;
@@ -16,6 +17,10 @@ mod stream_pipeline;
 
 pub use connection::DEFAULT_USB_BAUD;
 pub use parameter_service::{ParameterService, ParameterServiceError};
+pub use motion::{
+    MotionConfig, MotionMode, MotionPreview, MotionService, PositionCommand, SCurveMode,
+    TrajectoryType,
+};
 pub use plot_capabilities::{
     DevicePlotCapabilities, DevicePlotChannel, PlotCapabilitiesError, PlotChannelInfo,
 };
