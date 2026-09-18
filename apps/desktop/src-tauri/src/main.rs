@@ -2,8 +2,8 @@ use std::sync::Mutex;
 use std::time::Duration;
 
 use nmixx_app::{
-    DEFAULT_USB_BAUD, DevicePlotCapabilities, DeviceSession, HostSchema, MotionConfig,
-    MotionPreview, MotionService, ParameterMetadata, ParameterService, ParameterValue,
+    DEFAULT_USB_BAUD, DevicePlotCapabilities, DeviceSession, HostSchema, MotionCapabilities,
+    MotionConfig, MotionPreview, MotionService, ParameterMetadata, ParameterService, ParameterValue,
     PositionValue, RangeMetadata, SchemaNumber, ScopeSession, StreamState,
 };
 use serde::{Deserialize, Serialize};
@@ -41,6 +41,7 @@ struct ConnectionDto {
     fast_rate_hz: u32,
     normal_rate_hz: u32,
     channels: Vec<PlotChannelDto>,
+    motion: MotionCapabilities,
 }
 
 #[derive(Debug, Clone, Copy, Serialize)]
@@ -285,6 +286,7 @@ fn device_connect(
         })
         .collect();
 
+    let motion = MotionCapabilities::from_schema(&schema);
     let result = ConnectionDto {
         port: port.clone(),
         fast_max_channels: capabilities.fast_max_channels,
@@ -293,6 +295,7 @@ fn device_connect(
         fast_rate_hz: capabilities.fast_rate_hz,
         normal_rate_hz: capabilities.normal_rate_hz,
         channels,
+        motion,
     };
 
     let mut guard = state.lock().map_err(|_| "desktop state is poisoned".to_owned())?;
