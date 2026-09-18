@@ -6,9 +6,9 @@ use std::time::Duration;
 
 use clap::{Parser, Subcommand, ValueEnum};
 use nmixx_app::{
-    ActionMetadata, ApplicationSession, AxdrStatus, DEFAULT_USB_BAUD, DeviceSession, HostSchema,
-    ParameterMetadata, ParameterType, ParameterValue, PositionValue, SchemaNumber, SchemaStore,
-    SessionEvent,
+    ActionHandle, ActionMetadata, ApplicationSession, AxdrStatus, DEFAULT_USB_BAUD, DeviceSession,
+    HostSchema, IdentificationKind, ParameterMetadata, ParameterType, ParameterValue, PositionValue,
+    SchemaNumber, SchemaStore, SessionEvent,
 };
 
 #[derive(Debug, Parser)]
@@ -42,6 +42,18 @@ enum Command {
         #[command(subcommand)]
         command: ParamCommand,
     },
+    Motor {
+        #[command(subcommand)]
+        command: MotorCommand,
+    },
+    Config {
+        #[command(subcommand)]
+        command: ConfigCommand,
+    },
+    Preflight {
+        #[command(subcommand)]
+        command: PreflightCommand,
+    },
     Action {
         #[command(subcommand)]
         command: ActionCommand,
@@ -73,6 +85,61 @@ enum ParamCommand {
         #[arg(long = "type", value_enum)]
         ty: Option<CliParameterType>,
     },
+    ReadAll,
+}
+
+#[derive(Debug, Subcommand)]
+enum MotorCommand {
+    Enable {
+        #[arg(long, default_value_t = 30)]
+        timeout: u64,
+    },
+    Disable {
+        #[arg(long, default_value_t = 30)]
+        timeout: u64,
+    },
+    Stop {
+        #[arg(long, default_value_t = 30)]
+        timeout: u64,
+    },
+    PhaseSearch {
+        #[arg(long, default_value_t = 30)]
+        timeout: u64,
+    },
+}
+
+#[derive(Debug, Subcommand)]
+enum ConfigCommand {
+    Save {
+        #[arg(long, default_value_t = 30)]
+        timeout: u64,
+    },
+}
+
+#[derive(Debug, Clone, Copy, ValueEnum)]
+enum CliIdentificationKind {
+    RsLs,
+    Flux,
+    Jb,
+}
+
+impl From<CliIdentificationKind> for IdentificationKind {
+    fn from(value: CliIdentificationKind) -> Self {
+        match value {
+            CliIdentificationKind::RsLs => Self::RsLs,
+            CliIdentificationKind::Flux => Self::Flux,
+            CliIdentificationKind::Jb => Self::Jb,
+        }
+    }
+}
+
+#[derive(Debug, Subcommand)]
+enum PreflightCommand {
+    Identification {
+        #[arg(value_enum)]
+        kind: CliIdentificationKind,
+    },
+    PhaseSearch,
 }
 
 #[derive(Debug, Subcommand)]
@@ -219,7 +286,69 @@ fn run() -> Result<(), Box<dyn Error>> {
                 }
                 println!("OK");
             }
+            ParamCommand::ReadAll => {
+                let schema = require_schema(schema.as_ref())?;
+                let app = open_application(port.as_deref(), baud, schema.clone())?;
+                let results = app.parameter_refresh_all()?;
+                let mut failed = 0usize;
+                for (id, result) in results {
+                    match result {
+                        Ok(value) => {
+                            let metadata = schema.parameter_by_id(id);
+                            print_parameter_value(metadata, id, value);
+                        }
+                        Err(error) => {
+                            failed += 1;
+                            eprintln!("0x{id:04X}: {error}");
+                        }
+                    }
+                }
+                if failed != 0 {
+                    return Err(format!("{failed} parameter reads failed").into());
+                }
+            }
         },
+        Command::Motor { command } => {
+            let schema = require_schema(schema.as_ref())?;
+            let app = open_application(port.as_deref(), baud, schema.clone())?;
+            let events = app.subscribe()?;
+            let (handle, label, timeout) = match command {
+                MotorCommand::Enable { timeout } => (app.motor_enable()?, "motor enable", timeout),
+                MotorCommand::Disable { timeout } => (app.motor_disable()?, "motor disable", timeout),
+                MotorCommand::Stop { timeout } => (app.motor_stop()?, "motor stop", timeout),
+                MotorCommand::PhaseSearch { timeout } => {
+                    (app.phase_search_start()?, "phase search", timeout)
+                }
+            };
+            println!("accepted txn={} {}", handle.txn.get(), label);
+            wait_for_action_completion(&events, handle, label, timeout)?;
+        }
+        Command::Config { command } => {
+            let schema = require_schema(schema.as_ref())?;
+            let app = open_application(port.as_deref(), baud, schema.clone())?;
+            let events = app.subscribe()?;
+            match command {
+                ConfigCommand::Save { timeout } => {
+                    let handle = app.config_save()?;
+                    println!("accepted txn={} config save", handle.txn.get());
+                    wait_for_action_completion(&events, handle, "config save", timeout)?;
+                }
+            }
+        }
+        Command::Preflight { command } => {
+            let schema = require_schema(schema.as_ref())?;
+            let app = open_application(port.as_deref(), baud, schema.clone())?;
+            match command {
+                PreflightCommand::Identification { kind } => {
+                    let issues = app.preflight_identification(kind.into())?;
+                    print_preflight_issues(&issues);
+                }
+                PreflightCommand::PhaseSearch => {
+                    let issues = app.preflight_phase_search()?;
+                    print_preflight_issues(&issues);
+                }
+            }
+        }
         Command::Action { command } => match command {
             ActionCommand::List => print_action_list(require_schema(schema.as_ref())?),
             ActionCommand::Info { key } => {
@@ -264,29 +393,38 @@ fn run() -> Result<(), Box<dyn Error>> {
     Ok(())
 }
 
-fn wait_for_action(
-    events: Option<std::sync::mpsc::Receiver<SessionEvent>>,
-    handle: nmixx_app::ActionHandle,
-    action_label: &str,
-    action_id: u16,
+fn print_preflight_issues(issues: &[nmixx_app::PreflightIssue]) {
+    if issues.is_empty() {
+        println!("ready");
+        return;
+    }
+
+    for issue in issues {
+        match issue.parameter_id {
+            Some(id) => println!("0x{id:04X}: {}", issue.reason),
+            None => println!("{}", issue.reason),
+        }
+    }
+}
+
+fn wait_for_action_completion(
+    events: &std::sync::mpsc::Receiver<SessionEvent>,
+    handle: ActionHandle,
+    label: &str,
     timeout: u64,
 ) -> Result<(), Box<dyn Error>> {
-    let Some(events) = events else { return Ok(()); };
-
     loop {
         match events.recv_timeout(Duration::from_secs(timeout)) {
             Ok(SessionEvent::ActionCompleted { handle: completed, status }) if completed == handle => {
                 match status {
                     AxdrStatus::Ok => println!("completed OK"),
-                    other => println!("completed {other:?}"),
+                    other => return Err(format!("{label} completed {other:?}").into()),
                 }
                 return Ok(());
             }
             Ok(_) => continue,
             Err(RecvTimeoutError::Timeout) => {
-                return Err(format!(
-                    "action {action_label} (0x{action_id:04X}) completion timed out after {timeout}s"
-                ).into());
+                return Err(format!("{label} completion timed out after {timeout}s").into());
             }
             Err(RecvTimeoutError::Disconnected) => {
                 return Err("device session closed while waiting for action".into());
