@@ -49,3 +49,7 @@ export function startIdentification(
     allowEnable,
   });
 }
+
+export function applyIdentification(): Promise<ActionHandle> {
+  return invoke<ActionHandle>("identification_apply");
+}
