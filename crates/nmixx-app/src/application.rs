@@ -184,28 +184,52 @@ impl ApplicationSession {
     }
 
     pub fn motor_enable(&self) -> Result<ActionHandle, ApplicationError> {
-        Ok(MotorActionService::new(self.inner.session.clone(), self.inner.schema.clone()).enable()?)
+        Ok(MotorActionService::from_shared(
+            self.inner.session.clone(),
+            self.inner.schema.clone(),
+            self.inner.parameters.clone(),
+        ).enable()?)
     }
 
     pub fn motor_stop(&self) -> Result<ActionHandle, ApplicationError> {
-        Ok(MotorActionService::new(self.inner.session.clone(), self.inner.schema.clone()).stop()?)
+        Ok(MotorActionService::from_shared(
+            self.inner.session.clone(),
+            self.inner.schema.clone(),
+            self.inner.parameters.clone(),
+        ).stop()?)
     }
 
     pub fn motor_disable(&self) -> Result<ActionHandle, ApplicationError> {
-        Ok(MotorActionService::new(self.inner.session.clone(), self.inner.schema.clone()).disable()?)
+        Ok(MotorActionService::from_shared(
+            self.inner.session.clone(),
+            self.inner.schema.clone(),
+            self.inner.parameters.clone(),
+        ).disable()?)
     }
 
     pub fn phase_search_start(&self) -> Result<ActionHandle, ApplicationError> {
-        Ok(MotorActionService::new(self.inner.session.clone(), self.inner.schema.clone())
+        Ok(MotorActionService::from_shared(
+            self.inner.session.clone(),
+            self.inner.schema.clone(),
+            self.inner.parameters.clone(),
+        )
             .phase_search_start()?)
     }
 
     pub fn config_save_available(&self) -> bool {
-        ConfigService::new(self.inner.session.clone(), self.inner.schema.clone()).save_available()
+        ConfigService::from_shared(
+            self.inner.session.clone(),
+            self.inner.schema.clone(),
+            self.inner.parameters.clone(),
+        ).save_available()
     }
 
     pub fn config_save(&self) -> Result<ActionHandle, ApplicationError> {
-        Ok(ConfigService::new(self.inner.session.clone(), self.inner.schema.clone()).save()?)
+        Ok(ConfigService::from_shared(
+            self.inner.session.clone(),
+            self.inner.schema.clone(),
+            self.inner.parameters.clone(),
+        ).save()?)
     }
 
     pub fn motion_get(&self) -> MotionConfig {
