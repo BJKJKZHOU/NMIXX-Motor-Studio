@@ -350,17 +350,20 @@ impl MixedScopeSession {
     }
 
     pub fn live(&self) -> Result<(), MixedScopeError> {
-        let mask = {
+        let (mask, already_live) = {
             let mut shared = self.shared.lock().map_err(|_| MixedScopeError::Closed)?;
             ensure_runtime_ok(&shared)?;
-            shared.state = StreamState::Live;
-            for history in shared.histories.values_mut() {
-                history.stream.live();
+            let already_live = shared.state == StreamState::Live;
+            if !already_live {
+                shared.state = StreamState::Live;
+                for history in shared.histories.values_mut() {
+                    history.stream.live();
+                }
             }
-            group_mask(&shared)
+            (group_mask(&shared), already_live)
         };
 
-        if mask != 0 {
+        if !already_live && mask != 0 {
             self.session.plot_start(mask)?;
         }
         Ok(())
