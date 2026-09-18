@@ -1,6 +1,6 @@
 <script lang="ts">
   import { motionState } from "./store";
-  import type { MotionMode, MotionState, TrajectoryType } from "./types";
+  import type { MotionMode, MotionState, SCurveMode, TrajectoryType } from "./types";
 
   const modeLabels: Record<MotionMode, string> = {
     position: "Position",
@@ -25,9 +25,27 @@
   }
 
   function previewPath(type: TrajectoryType): string {
-    if (type === "s-curve") return "M20 150 C55 150 58 126 78 112 C102 94 110 52 145 42 L252 42 C288 42 296 94 320 112 C340 126 344 150 380 150";
+    if (type === "s-curve" && $motionState.sCurveMode === "peak-accel") {
+      return "M20 150 C58 150 68 140 88 118 C116 88 132 54 166 42 L234 42 C268 54 284 88 312 118 C332 140 342 150 380 150";
+    }
+    if (type === "s-curve") {
+      return "M20 150 C44 150 60 132 78 102 C94 74 112 50 150 42 L250 42 C288 50 306 74 322 102 C340 132 356 150 380 150";
+    }
     if (type === "filtered") return "M20 150 C68 150 82 136 96 112 C114 82 128 54 164 44 C202 33 248 40 274 58 C302 78 316 116 330 134 C343 148 356 150 380 150";
     return "M20 150 L92 150 L150 42 L252 42 L310 150 L380 150";
+  }
+
+  function trajectoryNote(): string {
+    if ($motionState.trajectory === "trapezoidal") {
+      return "Acceleration and deceleration are constant ramp magnitudes.";
+    }
+    if ($motionState.trajectory === "filtered") {
+      return "Acceleration and deceleration define the base ramp; filter time smooths the command edges.";
+    }
+    if ($motionState.sCurveMode === "peak-accel") {
+      return "Acc / Dec are the maximum S-curve acceleration magnitudes. Because acceleration ramps in and out smoothly, total acceleration and deceleration time is longer than a trapezoidal profile with the same values.";
+    }
+    return "Acc / Dec define the equivalent trapezoidal ramp timing. The S-curve keeps the same acceleration and deceleration duration, so its internal peak acceleration is higher than the trapezoidal profile.";
   }
 
   function targetLabel(): string {
@@ -73,12 +91,22 @@
           </select>
         </label>
 
+        {#if $motionState.trajectory === "s-curve"}
+          <div class="motion-field span-2">
+            <span>S-curve semantics</span>
+            <div class="motion-segment">
+              <button class:active={$motionState.sCurveMode === "peak-accel"} onclick={() => update("sCurveMode", "peak-accel" as SCurveMode)}>Peak Accel</button>
+              <button class:active={$motionState.sCurveMode === "matched-time"} onclick={() => update("sCurveMode", "matched-time" as SCurveMode)}>Matched Time</button>
+            </div>
+          </div>
+        {/if}
+
         <label class="motion-field">
-          <span>Acceleration</span>
+          <span>{$motionState.trajectory === "s-curve" && $motionState.sCurveMode === "matched-time" ? "Equivalent acceleration" : "Acceleration"}</span>
           <div class="unit-field"><input type="number" value={$motionState.acceleration} oninput={(e) => update("acceleration", numberValue(e))} /><em>rad/s²</em></div>
         </label>
         <label class="motion-field">
-          <span>Deceleration</span>
+          <span>{$motionState.trajectory === "s-curve" && $motionState.sCurveMode === "matched-time" ? "Equivalent deceleration" : "Deceleration"}</span>
           <div class="unit-field"><input type="number" value={$motionState.deceleration} oninput={(e) => update("deceleration", numberValue(e))} /><em>rad/s²</em></div>
         </label>
 
@@ -88,6 +116,8 @@
             <div class="unit-field"><input type="number" value={$motionState.filterTimeMs} oninput={(e) => update("filterTimeMs", numberValue(e))} /><em>ms</em></div>
           </label>
         {/if}
+
+        <div class="trajectory-note span-2">{trajectoryNote()}</div>
 
         <label class="motion-check span-2">
           <input type="checkbox" checked={$motionState.repeat} onchange={(e) => update("repeat", (e.currentTarget as HTMLInputElement).checked)} />
@@ -176,7 +206,8 @@
           <line x1="20" y1="20" x2="20" y2="150" class="preview-axis" />
           <path d={previewPath($motionState.trajectory)} class="preview-curve" />
         </svg>
-        <div class="preview-caption">Preview describes command shaping only. Live response belongs to Analysis / Control Tuning.</div>
+        <div class="preview-caption">{trajectoryNote()}</div>
+        <div class="preview-caption preview-secondary">Preview describes command shaping only. Live response belongs to Analysis / Control Tuning.</div>
       </div>
     </section>
 
