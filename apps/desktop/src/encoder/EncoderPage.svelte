@@ -127,11 +127,11 @@
   }
 
   function parameterLabel(symbol: string, fallback?: string): string {
-    return metadata[symbol]?.name ?? fallback ?? symbol;
+    return metadata[symbol]?.label ?? fallback ?? symbol;
   }
 
   function actionLabel(symbol: string, fallback?: string): string {
-    return actions[symbol]?.name ?? fallback ?? symbol;
+    return actions[symbol]?.label ?? fallback ?? symbol;
   }
 
   function isWritable(symbol: string): boolean {
