@@ -197,16 +197,32 @@ impl ApplicationSession {
         self.with_scope(|scope| scope.live())
     }
 
+    pub fn scope_resume(&self) -> Result<(), ApplicationError> {
+        self.with_scope(|scope| scope.resume())
+    }
+
     pub fn scope_pause(&self) -> Result<(), ApplicationError> {
         self.with_scope(|scope| scope.pause())
+    }
+
+    pub fn scope_stop(&self) -> Result<(), ApplicationError> {
+        self.with_scope(|scope| scope.stop())
     }
 
     pub fn scope_clear(&self) -> Result<(), ApplicationError> {
         self.with_scope(|scope| scope.clear())
     }
 
+    pub fn scope_capture(&self, duration: Duration) -> Result<(), ApplicationError> {
+        self.with_scope(|scope| scope.capture(duration))
+    }
+
     pub fn scope_status(&self) -> Result<ScopeStatus, ApplicationError> {
         self.with_scope(|scope| scope.status())
+    }
+
+    pub fn scope_snapshot(&self) -> Result<StreamSnapshot, ApplicationError> {
+        self.with_scope(|scope| scope.snapshot())
     }
 
     pub fn scope_snapshot_tail(&self, max_samples: usize) -> Result<StreamSnapshot, ApplicationError> {
