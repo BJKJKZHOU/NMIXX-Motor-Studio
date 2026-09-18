@@ -5,6 +5,9 @@
 //! application-facing access to that device.
 
 mod application;
+mod config_service;
+mod motor_actions;
+mod preflight;
 mod connection;
 mod parameter_service;
 mod motion;
@@ -19,6 +22,7 @@ mod stream;
 mod stream_pipeline;
 
 pub use application::{ApplicationError, ApplicationSession};
+pub use config_service::{ConfigService, ConfigServiceError};
 pub use connection::DEFAULT_USB_BAUD;
 pub use parameter_service::{ParameterService, ParameterServiceError};
 pub use motion::{
@@ -26,9 +30,13 @@ pub use motion::{
     TrajectoryType,
 };
 pub use motion_capabilities::MotionCapabilities;
+pub use motor_actions::{MotorActionError, MotorActionService};
 pub use mixed_scope::{
     MixedScopeChannel, MixedScopeConfig, MixedScopeError, MixedScopeSeries, MixedScopeSession,
     MixedScopeSnapshot, MixedScopeStatus, ScopeRate, ScopeSelection,
+};
+pub use preflight::{
+    IdentificationKind, PreflightDomain, PreflightError, PreflightIssue, PreflightService,
 };
 pub use plot_capabilities::{
     DevicePlotCapabilities, DevicePlotChannel, PlotCapabilitiesError, PlotChannelInfo,
