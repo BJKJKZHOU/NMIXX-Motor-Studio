@@ -247,11 +247,12 @@ fn device_connect(
     schema_path: String,
     baud: Option<u32>,
 ) -> Result<ConnectionDto, String> {
-    {
+    let old_app = {
         let mut guard = state.lock().map_err(|_| "desktop state is poisoned".to_owned())?;
-        guard.app = None;
         guard.port = None;
-    }
+        guard.app.take()
+    };
+    drop(old_app);
 
     let schema = HostSchema::load(&schema_path).map_err(|error| error.to_string())?;
     let motion = state
