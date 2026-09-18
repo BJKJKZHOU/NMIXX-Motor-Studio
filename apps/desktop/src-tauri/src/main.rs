@@ -393,6 +393,30 @@ fn motion_preview(state: State<'_, Mutex<DesktopState>>) -> Result<MotionPreview
 }
 
 #[tauri::command]
+fn motion_run(state: State<'_, Mutex<DesktopState>>) -> Result<(), String> {
+    let (motion, parameters, session) = {
+        let guard = state.lock().map_err(|_| "desktop state is poisoned".to_owned())?;
+        let parameters = guard.parameters.clone().ok_or("device is not connected")?;
+        let session = guard.session.clone().ok_or("device is not connected")?;
+        (guard.motion.clone(), parameters, session)
+    };
+
+    motion.run(&parameters, &session).map(|_| ())
+}
+
+#[tauri::command]
+fn motion_stop(state: State<'_, Mutex<DesktopState>>) -> Result<(), String> {
+    let (motion, parameters, session) = {
+        let guard = state.lock().map_err(|_| "desktop state is poisoned".to_owned())?;
+        let parameters = guard.parameters.clone().ok_or("device is not connected")?;
+        let session = guard.session.clone().ok_or("device is not connected")?;
+        (guard.motion.clone(), parameters, session)
+    };
+
+    motion.stop(&parameters, &session).map(|_| ())
+}
+
+#[tauri::command]
 fn scope_configure(
     state: State<'_, Mutex<DesktopState>>,
     parameter_ids: Vec<u16>,
@@ -531,6 +555,8 @@ fn main() {
             motion_get,
             motion_set,
             motion_preview,
+            motion_run,
+            motion_stop,
             scope_configure,
             scope_live,
             scope_pause,
