@@ -11,19 +11,23 @@ export function startAction(key: string): Promise<ActionHandle> {
 }
 
 export function enableMotor(): Promise<ActionHandle> {
-  return startAction("ACTION_MOTOR_ENABLE");
+  return invoke<ActionHandle>("motor_enable");
 }
 
 export function disableMotor(): Promise<ActionHandle> {
-  return startAction("ACTION_MOTOR_DISABLE");
+  return invoke<ActionHandle>("motor_disable");
 }
 
 export function stopMotor(): Promise<ActionHandle> {
-  return startAction("ACTION_MOTOR_STOP");
+  return invoke<ActionHandle>("motor_stop");
+}
+
+export function parameterSaveAvailable(): Promise<boolean> {
+  return invoke<boolean>("config_save_available");
 }
 
 export function saveParameters(): Promise<ActionHandle> {
-  return startAction("ACTION_PARAMETER_SAVE");
+  return invoke<ActionHandle>("config_save");
 }
 
 export function onActionCompleted(handler: (completion: ActionCompletion) => void): Promise<UnlistenFn> {
