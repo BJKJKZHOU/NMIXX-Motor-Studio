@@ -3,8 +3,8 @@ use std::time::Duration;
 
 use nmixx_app::{
     ActionHandle, ActionMetadata, AxdrStatus, ConfigService, DEFAULT_USB_BAUD,
-    DevicePlotCapabilities, DeviceSession, HostSchema, MotorActionService, ParameterMetadata,
-    ParameterService,
+    DevicePlotCapabilities, DeviceSession, HostSchema, IdentificationKind, MotorActionService,
+    ParameterMetadata, ParameterService, PreflightDomain, PreflightService,
     ParameterValue, PositionValue, RangeMetadata, SchemaNumber, ScopeSession, SessionEvent,
     StreamState,
 };
@@ -227,6 +227,22 @@ struct ParameterReadResultDto {
     id: u16,
     value: Option<ParameterValueDto>,
     error: Option<String>,
+}
+
+#[derive(Debug, Serialize)]
+#[serde(rename_all = "camelCase")]
+struct PreflightIssueDto {
+    parameter_id: Option<u16>,
+    reason: String,
+    suggested_domain: &'static str,
+}
+
+fn preflight_domain_name(domain: PreflightDomain) -> &'static str {
+    match domain {
+        PreflightDomain::LimitsSafety => "limits",
+        PreflightDomain::Motor => "motor",
+        PreflightDomain::Identification => "identification",
+    }
 }
 
 #[derive(Debug, Serialize)]
@@ -494,6 +510,32 @@ fn parameter_write(
 ) -> Result<(), String> {
     let service = parameter_service(&state)?;
     service.write(id, value.into()).map_err(|error| error.to_string())
+}
+
+#[tauri::command]
+fn identification_preflight(
+    state: State<'_, Mutex<DesktopState>>,
+    kind: String,
+) -> Result<Vec<PreflightIssueDto>, String> {
+    let kind = match kind.as_str() {
+        "rs_ls" => IdentificationKind::RsLs,
+        "flux" => IdentificationKind::Flux,
+        "jb" => IdentificationKind::Jb,
+        other => return Err(format!("unknown identification preflight kind '{other}'")),
+    };
+
+    let service = PreflightService::new(parameter_service(&state)?);
+    let issues = service
+        .check_identification(kind)
+        .map_err(|error| error.to_string())?;
+    Ok(issues
+        .into_iter()
+        .map(|issue| PreflightIssueDto {
+            parameter_id: issue.parameter_id,
+            reason: issue.reason,
+            suggested_domain: preflight_domain_name(issue.suggested_domain),
+        })
+        .collect())
 }
 
 #[tauri::command]
@@ -787,6 +829,7 @@ fn main() {
             parameter_cached_many,
             parameter_refresh_all,
             parameter_write,
+            identification_preflight,
             action_list,
             action_start,
             motor_enable,
