@@ -6,7 +6,7 @@ use thiserror::Error;
 
 use crate::{
     ActionHandle, ConfigService, ConfigServiceError, DevicePlotCapabilities, DeviceSession,
-    HostSchema, IdentificationKind, MixedScopeConfig, MixedScopeError, MixedScopeSession,
+    HostSchema, IdentificationKind, IdentificationStart, MixedScopeConfig, MixedScopeError, MixedScopeSession,
     MixedScopeSnapshot, MixedScopeStatus, MotionCapabilities, MotionConfig, MotionPreview,
     MotionService, MotorActionError, MotorActionService, ParameterMetadata, ParameterService,
     ParameterServiceError, ParameterValue, PlotCapabilitiesError, PreflightError, PreflightIssue,
@@ -181,6 +181,19 @@ impl ApplicationSession {
         kind: IdentificationKind,
     ) -> Result<Vec<PreflightIssue>, ApplicationError> {
         Ok(PreflightService::new(self.inner.parameters.clone()).check_identification(kind)?)
+    }
+
+    pub fn identification_start(
+        &self,
+        kind: IdentificationKind,
+        allow_enable: bool,
+    ) -> Result<IdentificationStart, ApplicationError> {
+        Ok(MotorActionService::from_shared(
+            self.inner.session.clone(),
+            self.inner.schema.clone(),
+            self.inner.parameters.clone(),
+        )
+        .identification_start(kind, allow_enable)?)
     }
 
     pub fn motor_enable(&self) -> Result<ActionHandle, ApplicationError> {
