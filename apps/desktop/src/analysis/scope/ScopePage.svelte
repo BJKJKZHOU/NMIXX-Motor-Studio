@@ -3,7 +3,7 @@
   import Split from "split.js";
   import uPlot from "uplot";
   import type { ConnectionInfo, PlotChannel } from "../../connection/types";
-  import { clearScope, configureScope, readScopeSnapshot, startScope, stopScope } from "./api";
+  import { configureScope, readScopeSnapshot, startScope, stopScope } from "./api";
   import type { ScopeConfig, ScopeRate, ScopeSnapshot, ScopeSummary } from "./types";
   import MotionCompactEditor from "../tuning/MotionCompactEditor.svelte";
 
@@ -278,13 +278,138 @@
     chart.setScale(yScaleKey(id), { min: center - half, max: center + half });
   }
 
-  function autoSet() {
-    if (!snapshot) return;
+  type PeriodCandidate = {
+    period: number;
+    stability: number;
+    correlation: number;
+  };
+
+  function median(values: number[]): number {
+    if (values.length === 0) return Number.NaN;
+    const sorted = [...values].sort((a, b) => a - b);
+    const middle = Math.floor(sorted.length / 2);
+    return sorted.length % 2 === 0
+      ? (sorted[middle - 1] + sorted[middle]) / 2
+      : sorted[middle];
+  }
+
+  function estimatePeriod(times: number[], values: number[]): PeriodCandidate | undefined {
+    if (times.length < 48 || times.length !== values.length) return undefined;
+
+    const finiteValues = values.filter(Number.isFinite);
+    if (finiteValues.length < 48) return undefined;
+
+    const mean = finiteValues.reduce((sum, value) => sum + value, 0) / finiteValues.length;
+    let min = Infinity;
+    let max = -Infinity;
+    let energy = 0;
+    for (const value of finiteValues) {
+      min = Math.min(min, value);
+      max = Math.max(max, value);
+      const centered = value - mean;
+      energy += centered * centered;
+    }
+
+    const span = max - min;
+    const rms = Math.sqrt(energy / finiteValues.length);
+    if (!Number.isFinite(span) || span <= 1e-9 || rms <= 1e-9) return undefined;
+
+    const hysteresis = Math.max(rms * 0.18, span * 0.04);
+    const crossings: Array<{ time: number; index: number }> = [];
+    let armed = false;
+
+    for (let index = 0; index < values.length; index += 1) {
+      const value = values[index];
+      if (!Number.isFinite(value)) continue;
+      const centered = value - mean;
+      if (centered <= -hysteresis) {
+        armed = true;
+      } else if (armed && centered >= hysteresis) {
+        crossings.push({ time: times[index], index });
+        armed = false;
+      }
+    }
+
+    if (crossings.length < 4) return undefined;
+
+    const periods: number[] = [];
+    const lagSamples: number[] = [];
+    for (let index = 1; index < crossings.length; index += 1) {
+      const period = crossings[index].time - crossings[index - 1].time;
+      const lag = crossings[index].index - crossings[index - 1].index;
+      if (period > 0 && lag >= 8) {
+        periods.push(period);
+        lagSamples.push(lag);
+      }
+    }
+    if (periods.length < 3) return undefined;
+
+    const period = median(periods);
+    const lag = Math.round(median(lagSamples));
+    if (!Number.isFinite(period) || period <= 0 || lag < 8) return undefined;
+
+    const deviations = periods.map((value) => Math.abs(value - period));
+    const stability = median(deviations) / period;
+    if (!Number.isFinite(stability) || stability > 0.08) return undefined;
+
+    let numerator = 0;
+    let leftEnergy = 0;
+    let rightEnergy = 0;
+    let pairs = 0;
+    for (let index = 0; index + lag < values.length; index += 1) {
+      const left = values[index];
+      const right = values[index + lag];
+      if (!Number.isFinite(left) || !Number.isFinite(right)) continue;
+      const a = left - mean;
+      const b = right - mean;
+      numerator += a * b;
+      leftEnergy += a * a;
+      rightEnergy += b * b;
+      pairs += 1;
+    }
+    if (pairs < 32 || leftEnergy <= 0 || rightEnergy <= 0) return undefined;
+
+    const correlation = numerator / Math.sqrt(leftEnergy * rightEnergy);
+    if (!Number.isFinite(correlation) || correlation < 0.82) return undefined;
+
+    return { period, stability, correlation };
+  }
+
+  function consensusPeriod(candidates: PeriodCandidate[], visibleCount: number): number | undefined {
+    if (candidates.length === 0) return undefined;
+
+    if (visibleCount <= 1) {
+      const candidate = candidates[0];
+      return candidate.correlation >= 0.9 && candidate.stability <= 0.05
+        ? candidate.period
+        : undefined;
+    }
+
+    let best: PeriodCandidate[] = [];
+    for (const seed of candidates) {
+      const cluster = candidates.filter((candidate) => {
+        const reference = Math.max(seed.period, candidate.period);
+        return reference > 0 && Math.abs(candidate.period - seed.period) / reference <= 0.08;
+      });
+      if (cluster.length > best.length) best = cluster;
+    }
+
+    if (best.length < 2) return undefined;
+    return median(best.map((candidate) => candidate.period));
+  }
+
+  function nearestTimePerDiv(target: number): number {
+    return timeDivOptions.reduce((best, candidate) =>
+      Math.abs(candidate - target) < Math.abs(best - target) ? candidate : best,
+    timeDivOptions[0]);
+  }
+
+  function autoVertical(source: ScopeSnapshot) {
     const scales = new Map(verticalScale);
     const offsets = new Map(verticalOffset);
 
     for (const channel of visibleChannels) {
-      const values = snapshot.series.find((series) => series.id === channel.id)?.values ?? [];
+      const values = source.series.find((series) => series.id === channel.id)?.values ?? [];
       if (!values.length) continue;
       let min = Infinity;
       let max = -Infinity;
@@ -302,9 +427,47 @@
 
     verticalScale = scales;
     verticalOffset = offsets;
-    horizontalOffset = 0;
-    applyHorizontalScale();
     for (const id of selectedIds) applyVerticalScale(id);
+  }
+
+  async function autoSet() {
+    if (!snapshot || !scopeConfig || commandBusy) return;
+
+    commandBusy = true;
+    try {
+      horizontalOffset = 0;
+
+      const analysisWindow = Math.min(
+        historySeconds(),
+        Math.max(windowSeconds(), 3.0),
+      );
+      const analysis = await readScopeSnapshot(analysisWindow, 0, 10_000);
+
+      autoVertical(analysis);
+
+      const candidates: PeriodCandidate[] = [];
+      for (const channel of visibleChannels) {
+        const series = analysis.series.find((item) => item.id === channel.id);
+        if (!series) continue;
+        const candidate = estimatePeriod(series.times, series.values);
+        if (candidate) candidates.push(candidate);
+      }
+
+      const period = consensusPeriod(candidates, visibleChannels.length);
+      if (period !== undefined) {
+        const targetScreen = period * 2.5;
+        const nextTimePerDiv = nearestTimePerDiv(targetScreen / horizontalDivisions);
+        timePerDiv = nextTimePerDiv;
+      }
+
+      horizontalOffset = Math.min(horizontalOffset, maxHorizontalOffset());
+      applyHorizontalScale();
+      await refreshSnapshot();
+    } catch (error) {
+      onError(error);
+    } finally {
+      commandBusy = false;
+    }
   }
 
   async function ensureConfigured(): Promise<boolean> {
@@ -362,21 +525,6 @@
     else await run();
   }
 
-  async function clear() {
-    if (!scopeConfig || commandBusy) return;
-    commandBusy = true;
-    try {
-      await clearScope();
-      snapshotRevision += 1;
-      cursorA = undefined;
-      cursorB = undefined;
-      if (snapshot) snapshot = { ...snapshot, sampleCount: 0, series: snapshot.series.map((series) => ({ ...series, times: [], values: [] })) };
-      plot?.setData([[], ...plotChannels.map(() => [])] as uPlot.AlignedData);
-      await refreshSnapshot();
-    }
-    catch (error) { onError(error); }
-    finally { commandBusy = false; }
-  }
 
   function alignedPlotData(next: ScopeSnapshot): uPlot.AlignedData {
     const timeKeys = new Map<string, number>();
@@ -573,9 +721,8 @@
     <vscode-button disabled={!connection || selectedIds.size === 0 || commandBusy} onclick={toggleRunStop}>
       <i class={`codicon ${isRunning ? "codicon-debug-stop" : "codicon-play"}`}></i>&nbsp;{isRunning ? "Stop" : "Run"}
     </vscode-button>
-    <vscode-button secondary disabled={!scopeConfig} onclick={autoSet}>Auto Set</vscode-button>
+    <vscode-button secondary disabled={!scopeConfig || commandBusy} onclick={autoSet}>Auto Set</vscode-button>
     <vscode-button secondary class:scope-tool-active={cursorEnabled} disabled={!scopeConfig} onclick={toggleCursor}>Cursor</vscode-button>
-    <vscode-button secondary disabled={!scopeConfig || commandBusy} onclick={clear}>Clear</vscode-button>
   </div>
 </section>
 
