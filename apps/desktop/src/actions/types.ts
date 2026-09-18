@@ -1,7 +1,7 @@
 export type ActionMetadata = {
   id: number;
   symbol: string;
-  name: string | null;
+  label: string;
   description: string;
 };
 
