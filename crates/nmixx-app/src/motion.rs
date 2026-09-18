@@ -202,7 +202,7 @@ fn generate_preview(config: &MotionConfig) -> MotionPreview {
 }
 
 fn position_preview(config: &MotionConfig) -> MotionPreview {
-    let distance = config.position_target_turn.abs();
+    let distance = config.position_target_turn.abs() * std::f64::consts::TAU;
     if distance <= f64::EPSILON {
         return MotionPreview {
             times: vec![0.0, 1.0],
@@ -273,7 +273,7 @@ fn position_preview(config: &MotionConfig) -> MotionPreview {
         }
         times.push(t);
         speed.push(sign * current_speed);
-        position.push(sign * pos);
+        position.push(sign * pos / std::f64::consts::TAU);
     }
 
     if let Some(last) = position.last().copied() {
