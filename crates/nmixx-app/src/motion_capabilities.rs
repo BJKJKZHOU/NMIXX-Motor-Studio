@@ -28,6 +28,9 @@ pub struct MotionCapabilities {
     pub position_target: bool,
     pub speed_target: bool,
     pub torque_target: bool,
+    pub torque_ramp: bool,
+    pub sensorless_startup_current: bool,
+    pub sensorless_entry_speed: bool,
 }
 
 impl MotionCapabilities {
@@ -44,6 +47,9 @@ impl MotionCapabilities {
         let position_target = has_parameter("PARAM_TARGET_POSITION");
         let speed_target = has_parameter("PARAM_TARGET_SPEED");
         let torque_target = has_parameter("PARAM_TARGET_TORQUE");
+        let torque_ramp = has_parameter("PARAM_MOTION_TORQUE_RAMP");
+        let sensorless_startup_current = has_parameter("PARAM_SENSORLESS_STARTUP_CURRENT");
+        let sensorless_entry_speed = has_parameter("PARAM_SENSORLESS_ENTRY_SPEED");
 
         let acceleration = has_parameter("PARAM_MOTION_WM_ACC");
         let deceleration = has_parameter("PARAM_MOTION_WM_DEC");
@@ -84,6 +90,9 @@ impl MotionCapabilities {
             position_target,
             speed_target,
             torque_target,
+            torque_ramp,
+            sensorless_startup_current,
+            sensorless_entry_speed,
         }
     }
 }
