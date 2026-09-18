@@ -272,7 +272,7 @@
           </div>
         </section>
 
-        <section class="limits-section position-section unavailable-section" aria-disabled="true">
+        <section class="limits-section position-section unavailable-section">
           <div class="section-heading">
             <div class="section-title">Position Limits</div>
             <div class="section-note">Firmware unavailable</div>
