@@ -478,6 +478,11 @@ fn scope_pause(state: State<'_, Mutex<DesktopState>>) -> Result<(), String> {
 }
 
 #[tauri::command]
+fn scope_stop(state: State<'_, Mutex<DesktopState>>) -> Result<(), String> {
+    application(&state)?.scope_stop().map_err(|error| error.to_string())
+}
+
+#[tauri::command]
 fn scope_clear(state: State<'_, Mutex<DesktopState>>) -> Result<(), String> {
     application(&state)?.scope_clear().map_err(|error| error.to_string())
 }
@@ -497,14 +502,20 @@ fn scope_status(state: State<'_, Mutex<DesktopState>>) -> Result<ScopeStatusDto,
 fn scope_snapshot(
     state: State<'_, Mutex<DesktopState>>,
     window_seconds: Option<f64>,
+    end_offset_seconds: Option<f64>,
     max_points: Option<usize>,
 ) -> Result<ScopeSnapshotDto, String> {
     let app = application(&state)?;
     let status = app.scope_status().map_err(|error| error.to_string())?;
     let config = app.scope_config().map_err(|error| error.to_string())?;
-    let window = window_seconds.unwrap_or(0.5).clamp(0.01, config.history.as_secs_f64());
+    let window = window_seconds.unwrap_or(0.5).clamp(0.0005, config.history.as_secs_f64());
+    let max_offset = (config.history.as_secs_f64() - window).max(0.0);
+    let end_offset = end_offset_seconds.unwrap_or(0.0).clamp(0.0, max_offset);
     let snapshot = app
-        .scope_snapshot_tail(Duration::from_secs_f64(window))
+        .scope_snapshot_window(
+            Duration::from_secs_f64(window),
+            Duration::from_secs_f64(end_offset),
+        )
         .map_err(|error| error.to_string())?;
     let max_points = max_points.unwrap_or(2500).clamp(100, 10_000);
 
@@ -560,6 +571,7 @@ fn main() {
             scope_configure,
             scope_live,
             scope_pause,
+            scope_stop,
             scope_clear,
             scope_status,
             scope_snapshot,
