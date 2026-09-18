@@ -5,10 +5,11 @@ use std::time::Duration;
 use thiserror::Error;
 
 use crate::{
-    ActionHandle, DevicePlotCapabilities, DeviceSession, HostSchema, MotionCapabilities,
+    ActionHandle, DevicePlotCapabilities, DeviceSession, HostSchema, MixedScopeConfig,
+    MixedScopeError, MixedScopeSession, MixedScopeSnapshot, MixedScopeStatus, MotionCapabilities,
     MotionConfig, MotionPreview, MotionService, ParameterMetadata, ParameterService,
-    ParameterServiceError, ParameterValue, PlotCapabilitiesError, ScopeConfig, ScopeError,
-    ScopeSession, ScopeStatus, SessionError, SessionEvent, StreamSnapshot,
+    ParameterServiceError, ParameterValue, PlotCapabilitiesError, ScopeRate, ScopeSelection,
+    SessionError, SessionEvent,
 };
 
 #[derive(Debug, Error)]
@@ -20,7 +21,7 @@ pub enum ApplicationError {
     #[error(transparent)]
     Parameter(#[from] ParameterServiceError),
     #[error(transparent)]
-    Scope(#[from] ScopeError),
+    Scope(#[from] MixedScopeError),
     #[error("application runtime state is poisoned")]
     Poisoned,
     #[error("unknown Action '{0}' in loaded Host schema")]
@@ -38,7 +39,7 @@ struct ApplicationInner {
     plot_capabilities: Mutex<Option<DevicePlotCapabilities>>,
     motion_capabilities: MotionCapabilities,
     motion: MotionService,
-    scope: Mutex<Option<ScopeSession>>,
+    scope: Mutex<Option<MixedScopeSession>>,
 }
 
 #[derive(Clone)]
@@ -182,16 +183,16 @@ impl ApplicationSession {
 
     pub fn scope_configure(
         &self,
-        parameter_ids: &[u16],
+        selections: &[ScopeSelection],
         history: Duration,
         config_id: u8,
-    ) -> Result<ScopeConfig, ApplicationError> {
+    ) -> Result<MixedScopeConfig, ApplicationError> {
         let plot_capabilities = self.plot_capabilities()?;
-        let scope = ScopeSession::from_fast_capabilities(
+        let scope = MixedScopeSession::from_capabilities(
             self.inner.session.clone(),
             &plot_capabilities,
             &self.inner.schema,
-            parameter_ids,
+            selections,
             history,
             config_id,
         )?;
@@ -225,25 +226,21 @@ impl ApplicationSession {
         self.with_scope(|scope| scope.capture(duration))
     }
 
-    pub fn scope_status(&self) -> Result<ScopeStatus, ApplicationError> {
+    pub fn scope_status(&self) -> Result<MixedScopeStatus, ApplicationError> {
         self.with_scope(|scope| scope.status())
     }
 
-    pub fn scope_snapshot(&self) -> Result<StreamSnapshot, ApplicationError> {
-        self.with_scope(|scope| scope.snapshot())
+    pub fn scope_snapshot_tail(&self, window: Duration) -> Result<MixedScopeSnapshot, ApplicationError> {
+        self.with_scope(|scope| scope.snapshot_tail(window))
     }
 
-    pub fn scope_snapshot_tail(&self, max_samples: usize) -> Result<StreamSnapshot, ApplicationError> {
-        self.with_scope(|scope| scope.snapshot_tail(max_samples))
-    }
-
-    pub fn scope_config(&self) -> Result<ScopeConfig, ApplicationError> {
+    pub fn scope_config(&self) -> Result<MixedScopeConfig, ApplicationError> {
         self.with_scope(|scope| Ok(scope.config().clone()))
     }
 
     fn with_scope<T>(
         &self,
-        call: impl FnOnce(&ScopeSession) -> Result<T, ScopeError>,
+        call: impl FnOnce(&MixedScopeSession) -> Result<T, MixedScopeError>,
     ) -> Result<T, ApplicationError> {
         let slot = self.inner.scope.lock().map_err(|_| ApplicationError::Poisoned)?;
         let scope = slot.as_ref().ok_or(ApplicationError::ScopeNotConfigured)?;
