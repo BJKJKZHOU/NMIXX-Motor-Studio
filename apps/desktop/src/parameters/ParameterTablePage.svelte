@@ -95,7 +95,7 @@
       loadingRegistry = false;
       readingValues = false;
       search = "";
-      table.setGlobalFilter("");
+      untrack(() => table.setGlobalFilter(""));
       return;
     }
 
