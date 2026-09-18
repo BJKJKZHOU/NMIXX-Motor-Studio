@@ -340,7 +340,12 @@ impl MixedScopeSession {
         {
             let mut shared = self.shared.lock().map_err(|_| MixedScopeError::Closed)?;
             ensure_runtime_ok(&shared)?;
-            for group in groups_mut(&mut shared) {
+            if let Some(group) = shared.fast.as_mut() {
+                group.pipeline.reset_sequence();
+                group.lost_frames = 0;
+                group.pipeline.stream_mut().capture(duration)?;
+            }
+            if let Some(group) = shared.normal.as_mut() {
                 group.pipeline.reset_sequence();
                 group.lost_frames = 0;
                 group.pipeline.stream_mut().capture(duration)?;
@@ -442,9 +447,6 @@ fn groups(shared: &SharedState) -> impl Iterator<Item = &GroupRuntime> {
     shared.fast.iter().chain(shared.normal.iter())
 }
 
-fn groups_mut(shared: &mut SharedState) -> impl Iterator<Item = &mut GroupRuntime> {
-    shared.fast.iter_mut().chain(shared.normal.iter_mut())
-}
 
 fn group_states(shared: &SharedState) -> impl Iterator<Item = StreamState> + '_ {
     groups(shared).map(|group| group.pipeline.stream().state())
