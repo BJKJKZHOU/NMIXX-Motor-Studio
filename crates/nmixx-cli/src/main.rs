@@ -321,7 +321,7 @@ fn run() -> Result<(), Box<dyn Error>> {
                 }
             };
             println!("accepted txn={} {}", handle.txn.get(), label);
-            wait_for_action_completion(&events, handle, label, timeout)?;
+            wait_for_action(Some(events), handle, label, None, timeout)?;
         }
         Command::Config { command } => {
             let schema = require_schema(schema.as_ref())?;
@@ -331,7 +331,7 @@ fn run() -> Result<(), Box<dyn Error>> {
                 ConfigCommand::Save { timeout } => {
                     let handle = app.config_save()?;
                     println!("accepted txn={} config save", handle.txn.get());
-                    wait_for_action_completion(&events, handle, "config save", timeout)?;
+                    wait_for_action(Some(events), handle, "config save", None, timeout)?;
                 }
             }
         }
@@ -375,7 +375,7 @@ fn run() -> Result<(), Box<dyn Error>> {
                         handle.txn.get(),
                         action_label
                     );
-                    wait_for_action(events, handle, &action_label, action_id, timeout)?;
+                    wait_for_action(events, handle, &action_label, Some(action_id), timeout)?;
                 } else {
                     let session = open_raw_session(port.as_deref(), baud)?;
                     let events = if no_wait { None } else { Some(session.subscribe()?) };
@@ -385,7 +385,7 @@ fn run() -> Result<(), Box<dyn Error>> {
                         handle.txn.get(),
                         action_label
                     );
-                    wait_for_action(events, handle, &action_label, action_id, timeout)?;
+                    wait_for_action(events, handle, &action_label, Some(action_id), timeout)?;
                 }
             }
         },
@@ -407,24 +407,33 @@ fn print_preflight_issues(issues: &[nmixx_app::PreflightIssue]) {
     }
 }
 
-fn wait_for_action_completion(
-    events: &std::sync::mpsc::Receiver<SessionEvent>,
+fn wait_for_action(
+    events: Option<std::sync::mpsc::Receiver<SessionEvent>>,
     handle: ActionHandle,
     label: &str,
+    action_id: Option<u16>,
     timeout: u64,
 ) -> Result<(), Box<dyn Error>> {
+    let Some(events) = events else { return Ok(()); };
+
     loop {
         match events.recv_timeout(Duration::from_secs(timeout)) {
             Ok(SessionEvent::ActionCompleted { handle: completed, status }) if completed == handle => {
                 match status {
                     AxdrStatus::Ok => println!("completed OK"),
-                    other => return Err(format!("{label} completed {other:?}").into()),
+                    other => return Err(match action_id {
+                        Some(id) => format!("{label} (0x{id:04X}) completed {other:?}").into(),
+                        None => format!("{label} completed {other:?}").into(),
+                    }),
                 }
                 return Ok(());
             }
             Ok(_) => continue,
             Err(RecvTimeoutError::Timeout) => {
-                return Err(format!("{label} completion timed out after {timeout}s").into());
+                return Err(match action_id {
+                    Some(id) => format!("{label} (0x{id:04X}) completion timed out after {timeout}s").into(),
+                    None => format!("{label} completion timed out after {timeout}s").into(),
+                });
             }
             Err(RecvTimeoutError::Disconnected) => {
                 return Err("device session closed while waiting for action".into());
