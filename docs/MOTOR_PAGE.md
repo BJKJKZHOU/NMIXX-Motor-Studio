@@ -49,18 +49,20 @@ The Application layer owns Action start/completion semantics and readiness/prefl
 
 The Action cell represents one identification workflow in a stable location.
 
-Typical states are:
+Typical presentation keeps the identification start control available in its normal location and renders workflow state beside it:
 
 ```text
 idle        [ Rs/Ls ]
-running     Running
-success     [ Apply ]
-applying    Applying
-applied     Applied
-failure     Failed
+running     [ Rs/Ls ]  Running
+success     [ Rs/Ls ]  [ Apply ]
+applying    [ Rs/Ls ]  Applying
+applied     [ Rs/Ls ]  Applied
+failure     [ Rs/Ls ]  Failed
 ```
 
-A successful identification result is not automatically copied into the Active motor parameters. The latest valid result appears in the **Identified** column and the Action area changes to **Apply**.
+The start control is disabled only while the workflow is actively running/applying. After failure it becomes available again so the user can run the identification again directly.
+
+A successful identification result is not automatically copied into the Active motor parameters. The latest valid result appears in the **Identified** column and an **Apply** action appears beside the identification control.
 
 This distinction is deliberate:
 
@@ -99,6 +101,14 @@ J/B result
 ```
 
 If an Active value is edited manually after an identified result has been applied, the UI must not continue implying that the active value still represents the unchanged applied result.
+
+Identification presentation must also survive page recreation. When the Motor page is entered, it derives the stable result state from device Parameters rather than assuming `idle`:
+
+- result valid and Active values match the identified result -> `Applied`;
+- result valid and Active values differ -> `Apply` remains available;
+- no valid result -> idle.
+
+Transient `Running`, `Applying` and immediate failure feedback remain runtime UI state.
 
 ## Identification settings
 
