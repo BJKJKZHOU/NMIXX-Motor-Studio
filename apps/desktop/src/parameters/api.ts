@@ -35,8 +35,10 @@ export async function readCurrentParameters(ids: number[]): Promise<ParameterRea
   return cached.map((item) => freshById.get(item.id) ?? item);
 }
 
-export function refreshAllParameters(): Promise<ParameterReadResult[]> {
-  return invoke<ParameterReadResult[]>("parameter_refresh_all");
+export async function refreshAllParameters(): Promise<ParameterReadResult[]> {
+  const results = await invoke<ParameterReadResult[]>("parameter_refresh_all");
+  observeParameterResults(results);
+  return results;
 }
 
 export function onParametersRefreshed(handler: () => void): Promise<UnlistenFn> {
