@@ -35,6 +35,7 @@ export const motionPreview = writable<MotionPreview | undefined>(undefined);
 
 let initialized = false;
 let revision = 0;
+let writeChain: Promise<void> = Promise.resolve();
 
 export async function initializeMotion(): Promise<void> {
   if (initialized) return;
@@ -53,11 +54,17 @@ export async function updateMotion<K extends keyof MotionState>(
   const currentRevision = ++revision;
   motionState.set(next);
 
-  try {
+  const write = writeChain.then(async () => {
     const canonical = await setMotion(next);
     if (currentRevision !== revision) return;
     motionState.set(canonical);
     motionPreview.set(await getMotionPreview());
+  });
+
+  writeChain = write.catch(() => undefined);
+
+  try {
+    await write;
   } catch (error) {
     if (currentRevision === revision) motionState.set(previous);
     throw error;
