@@ -1,7 +1,10 @@
 <script lang="ts">
-  import { motionState } from "./store";
+  import { onMount } from "svelte";
+  import { initializeMotion, motionPreview, motionState, updateMotion } from "./store";
   import MotionTrajectoryPlot from "./MotionTrajectoryPlot.svelte";
   import type { MotionMode, MotionState, SCurveMode, TrajectoryType } from "./types";
+
+  export let onError: (error: unknown) => void = () => undefined;
 
   const modeLabels: Record<MotionMode, string> = {
     position: "Position",
@@ -22,8 +25,12 @@
   }
 
   function update<K extends keyof MotionState>(key: K, value: MotionState[K]) {
-    motionState.update((state) => ({ ...state, [key]: value }));
+    void updateMotion(key, value).catch(onError);
   }
+
+  onMount(() => {
+    void initializeMotion().catch(onError);
+  });
 
   function hasTrajectory(): boolean {
     return $motionState.mode === "position" || $motionState.mode === "speed" || $motionState.mode === "sensorless-speed";
@@ -196,17 +203,11 @@
       </div>
 
       <div class="motion-plot-area">
-        {#if hasTrajectory()}
-          <MotionTrajectoryPlot
-            trajectory={$motionState.trajectory}
-            sCurveMode={$motionState.sCurveMode}
-            acceleration={$motionState.acceleration}
-            deceleration={$motionState.deceleration}
-            filterTimeMs={$motionState.filterTimeMs}
-          />
-          <div class="motion-plot-note">{trajectoryNote()}</div>
+        {#if $motionPreview && $motionPreview.times.length > 1}
+          <MotionTrajectoryPlot preview={$motionPreview} />
+          {#if hasTrajectory()}<div class="motion-plot-note">{trajectoryNote()}</div>{/if}
         {:else}
-          <div class="motion-plot-empty">This mode has no position/speed trajectory preview.</div>
+          <div class="motion-plot-empty">No trajectory preview for this command mode.</div>
         {/if}
       </div>
     </div>
