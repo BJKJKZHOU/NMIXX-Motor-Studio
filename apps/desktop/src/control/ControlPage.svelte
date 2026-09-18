@@ -92,7 +92,7 @@
   }
 
   function label(symbol: string, fallback: string): string {
-    return metadata[symbol]?.name ?? fallback;
+    return metadata[symbol]?.label ?? fallback;
   }
 
   function unit(symbol: string): string {
