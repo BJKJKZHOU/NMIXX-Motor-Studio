@@ -603,11 +603,6 @@
     font-size: 10px;
   }
 
-  .gain-grid strong {
-    font-size: 11px;
-    font-weight: 500;
-  }
-
   .gain-input {
     height: 25px;
     font-size: 11px;
