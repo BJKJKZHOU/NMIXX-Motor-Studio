@@ -3,6 +3,7 @@
   import type { ConnectionInfo } from "../connection/types";
   import { listParameters, onParametersRefreshed, readCachedParameters, readCurrentParameters, readParameters, writeParameter } from "../parameters/api";
   import type { ParameterMetadata, ParameterValue } from "../parameters/types";
+  import { modifiedParameterIds } from "../parameters/persistence";
 
   type Props = {
     connection: ConnectionInfo | undefined;
@@ -245,6 +246,7 @@
                   {#if metadata[row.userSymbol]}
                     <span class="inline-editor">
                       <input
+                        class:ramModified={$modifiedParameterIds.has(metadata[row.userSymbol].id)}
                         class="compact-input mono"
                         value={drafts[row.userSymbol] ?? ""}
                         disabled={!isWritable(row.userSymbol) || writing.has(row.userSymbol)}
