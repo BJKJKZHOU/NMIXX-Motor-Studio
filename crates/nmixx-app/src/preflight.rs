@@ -12,6 +12,10 @@ const LIMIT_WM_MAX: &str = "PARAM_LIMIT_WM_MAX";
 const IDENT_IF_CURRENT: &str = "PARAM_IDENT_IF_CURRENT";
 const IDENT_JB_EXCITE_RATIO: &str = "PARAM_IDENT_JB_EXCITE_RATIO";
 const IDENT_JB_EXCITE_HZ: &str = "PARAM_IDENT_JB_EXCITE_HZ";
+const ENCODER_READY: &str = "PARAM_ENCODER_READY";
+const ENCODER_VALID: &str = "PARAM_ENCODER_VALID";
+const ENCODER_FAULT: &str = "PARAM_ENCODER_FAULT";
+const PHASE_I_SEARCH: &str = "PARAM_PHASE_I_SEARCH";
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum IdentificationKind {
@@ -24,6 +28,7 @@ pub enum IdentificationKind {
 pub enum PreflightDomain {
     LimitsSafety,
     Motor,
+    Encoder,
     Identification,
 }
 
@@ -176,6 +181,80 @@ impl PreflightService {
         }
 
         Ok(issues)
+    }
+
+    pub fn check_phase_search(&self) -> Result<Vec<PreflightIssue>, PreflightError> {
+        let mut issues = Vec::new();
+
+        self.require_flag(
+            ENCODER_READY,
+            true,
+            PreflightDomain::Encoder,
+            "Encoder must be ready before phase search.",
+            &mut issues,
+        )?;
+        self.require_flag(
+            ENCODER_VALID,
+            true,
+            PreflightDomain::Encoder,
+            "Encoder feedback must be valid before phase search.",
+            &mut issues,
+        )?;
+        self.require_flag(
+            ENCODER_FAULT,
+            false,
+            PreflightDomain::Encoder,
+            "Clear the encoder fault before phase search.",
+            &mut issues,
+        )?;
+        self.require_positive(
+            MOTOR_PP,
+            PreflightDomain::Motor,
+            "Pole pairs must be configured before phase search.",
+            &mut issues,
+        )?;
+        self.require_positive(
+            LIMIT_I_MAX,
+            PreflightDomain::LimitsSafety,
+            "Current limit must be configured before phase search.",
+            &mut issues,
+        )?;
+        self.require_positive(
+            PHASE_I_SEARCH,
+            PreflightDomain::Encoder,
+            "Phase-search current must be configured.",
+            &mut issues,
+        )?;
+
+        Ok(issues)
+    }
+
+    fn require_flag(
+        &self,
+        key: &str,
+        expected: bool,
+        domain: PreflightDomain,
+        reason: &str,
+        issues: &mut Vec<PreflightIssue>,
+    ) -> Result<(), PreflightError> {
+        let metadata = self
+            .schema
+            .parameter_by_key(key)
+            .ok_or_else(|| PreflightError::MissingParameter(key.to_owned()))?;
+        let value = self.parameters.read(metadata.id)?;
+        let actual = match value {
+            ParameterValue::U8(value) => value != 0,
+            _ => return Err(PreflightError::InvalidParameterType(key.to_owned())),
+        };
+
+        if actual != expected {
+            issues.push(PreflightIssue {
+                parameter_id: Some(metadata.id),
+                reason: reason.to_owned(),
+                suggested_domain: domain,
+            });
+        }
+        Ok(())
     }
 
     fn require_positive(
