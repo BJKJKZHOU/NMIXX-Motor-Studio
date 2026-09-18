@@ -261,10 +261,6 @@
 </script>
 
 <div class="workbench">
-  <header class="titlebar">
-    <div class="brand">NMIXX Motor Studio</div>
-  </header>
-
   <div class="body">
     <nav class="activity-bar" aria-label="Commissioning workflow">
       {#each workflowPages as page}
@@ -282,7 +278,10 @@
     </nav>
 
     <div class="global-toolbar">
-      <div class="global-actions">
+      <div class="global-toolbar-left">
+        <div class="brand">NMIXX Motor Studio</div>
+        <div class="global-toolbar-divider" aria-hidden="true"></div>
+        <div class="global-actions">
         <button
           class:enable-action={motorState === MOTOR_DISABLED}
           class:disable-action={motorState !== null && motorState !== MOTOR_DISABLED}
@@ -319,6 +318,7 @@
           <i class={`codicon ${saveFeedback === "saved" ? "codicon-check" : "codicon-save"}`}></i>
           {saveFeedback === "saved" ? "Saved" : "Save"}
         </button>
+        </div>
       </div>
       <button class="problems-indicator" disabled title="Problems service is not implemented yet">
         <i class="codicon codicon-warning"></i><span>0</span>
@@ -406,9 +406,23 @@
     align-items: center;
     justify-content: space-between;
     gap: 12px;
-    padding: 0 10px 0 58px;
-    background: #1e1e1e;
+    padding: 0 10px 0 14px;
+    background: #181818;
     border-bottom: 1px solid var(--vscode-panel-border, #2b2b2b);
+  }
+
+  .global-toolbar-left {
+    min-width: 0;
+    display: flex;
+    align-items: center;
+    gap: 12px;
+  }
+
+  .global-toolbar-divider {
+    width: 1px;
+    height: 22px;
+    flex: 0 0 auto;
+    background: var(--vscode-panel-border, #303030);
   }
 
   .global-actions {
