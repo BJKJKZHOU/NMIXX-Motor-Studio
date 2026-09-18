@@ -5,7 +5,7 @@ use thiserror::Error;
 
 use crate::{
     ActionHandle, AxdrStatus, DeviceSession, HostSchema, ParameterService, ParameterServiceError,
-    ParameterValue, SchemaNumber, SessionError, SessionEvent,
+    ParameterValue, PreflightError, PreflightService, SchemaNumber, SessionError, SessionEvent,
 };
 
 const MOTOR_MODE: &str = "PARAM_MOTOR_MODE";
@@ -30,6 +30,10 @@ pub enum MotorActionError {
     ActionFailed { action: String, status: AxdrStatus },
     #[error("timed out waiting for action '{0}' to complete")]
     ActionCompletionTimeout(String),
+    #[error("phase-search preflight failed: {0}")]
+    PreflightFailed(String),
+    #[error(transparent)]
+    Preflight(#[from] PreflightError),
     #[error(transparent)]
     Parameter(#[from] ParameterServiceError),
     #[error(transparent)]
@@ -70,6 +74,11 @@ impl MotorActionService {
     /// motor mode + enable + run primitives. Clients must not depend on that
     /// device-side composition, so it is contained here.
     pub fn phase_search_start(&self) -> Result<ActionHandle, MotorActionError> {
+        let issues = PreflightService::new(self.parameters.clone()).check_phase_search()?;
+        if let Some(issue) = issues.into_iter().next() {
+            return Err(MotorActionError::PreflightFailed(issue.reason));
+        }
+
         let mode = self
             .schema
             .parameter_by_key(MOTOR_MODE)
