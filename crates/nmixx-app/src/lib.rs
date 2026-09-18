@@ -30,7 +30,7 @@ pub use motion::{
     TrajectoryType,
 };
 pub use motion_capabilities::MotionCapabilities;
-pub use motor_actions::{MotorActionError, MotorActionService};
+pub use motor_actions::{IdentificationStart, MotorActionError, MotorActionService};
 pub use mixed_scope::{
     MixedScopeChannel, MixedScopeConfig, MixedScopeError, MixedScopeSeries, MixedScopeSession,
     MixedScopeSnapshot, MixedScopeStatus, ScopeRate, ScopeSelection,
