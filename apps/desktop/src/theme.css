@@ -303,8 +303,7 @@ vscode-button { --vscode-button-border: transparent; }
 }
 .motion-panel-body { padding: 10px; }
 .motion-runbar {
-  display: grid;
-  grid-template-columns: 88px 88px minmax(0, 1fr);
+  display: flex;
   gap: 7px;
   align-items: center;
   padding-top: 2px;
@@ -318,11 +317,6 @@ vscode-button { --vscode-button-border: transparent; }
 }
 .motion-runbar .motion-run { background: #40506a; }
 .motion-runbar button:disabled { opacity: .45; }
-.motion-runbar span {
-  color: #6f6f6f;
-  font-size: 10.5px;
-  line-height: 1.35;
-}
 .motion-simple-right {
   min-width: 0;
   min-height: 0;
