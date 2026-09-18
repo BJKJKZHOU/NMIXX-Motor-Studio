@@ -86,6 +86,21 @@ Save
 
 A future Reload Saved Configuration operation, if added, is a distinct destructive action because it would overwrite current RAM changes from Flash. It must not be conflated with Read.
 
+### RAM-modified presentation
+
+After a successful Parameter write, the control that presents that Parameter keeps a low-intensity modified background while its current RAM value differs from the last successfully persisted configuration.
+
+This state is session-wide, not page-local:
+
+- navigating away from a page and returning must not clear it;
+- refreshing a page from the shared Parameter cache must not clear it;
+- the generic Parameters page and business pages must reflect the same modified state for the same Parameter;
+- writing the value back to the persisted baseline removes the modified state for that Parameter;
+- a successful global `Save` establishes the current RAM values as the new persisted baseline and clears the remaining modified indications;
+- a failed or unavailable Save does not clear them.
+
+Do not confuse this with an input draft. A draft is text that has not yet been committed with Enter; the RAM-modified state begins only after the write succeeds.
+
 ## Stateful paired actions
 
 When two actions are mutually exclusive transitions of the same resource, use one stateful button in a stable location rather than two adjacent Start/Stop-style buttons.
