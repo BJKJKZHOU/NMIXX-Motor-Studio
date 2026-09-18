@@ -244,6 +244,13 @@ The mode selector itself is shared state. If a view is allowed to change the act
 
 Motion configuration includes the trajectory-generator behavior appropriate to the selected mode. Position motion may use trapezoidal/T-profile, S-curve, filtered trajectory or future trajectory types. Speed motion also uses a configurable trajectory rather than jumping directly to a speed setpoint; acceleration, deceleration and the selected shaping method are part of the same Motion state. Other modes may expose their own mode-specific command shaping when meaningful.
 
+The current trajectory semantics are explicit:
+
+- **T / Trapezoidal**: Acc and Dec are the constant acceleration/deceleration magnitudes of the base profile.
+- **S-curve / Peak Accel**: Acc and Dec are the actual maximum acceleration/deceleration magnitudes. Smooth acceleration shaping therefore takes longer than a T-profile using the same values.
+- **S-curve / Matched Time**: Acc and Dec describe the equivalent T-profile timing. Acceleration/deceleration duration is kept equal to the T-profile, so the internal S-curve peak acceleration is higher.
+- **Filtered**: Acc and Dec define a base T-profile. Filter Time is the time constant of a causal first-order low-pass applied to the base speed command. Position is obtained by integrating the filtered speed; preview code must not rescale position independently from speed merely to force the endpoint.
+
 The exact trajectory implementations belong behind the Application-level Motion API. GUI pages select and edit trajectory semantics; they do not implement their own ramp, S-curve or filter generators.
 
 Mode-specific command fields also share one owner. Conceptually the Application API should expose one coherent Motion domain such as:
