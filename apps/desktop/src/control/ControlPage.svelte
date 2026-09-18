@@ -357,7 +357,7 @@
           <div class="speed-feedback-path">
             <div class="feedback-source-note">Feedback / Observer Path</div>
             <div class="feedback-path-line">
-              <div class="signal-chip feedback-signal">Motor / current signals</div>
+              <div class="signal-chip feedback-signal">Observer inputs</div>
               <div class="arrow">→</div>
               <div class="control-block observer-block">
                 <div class="block-title">Mechanical ESO</div>
@@ -369,7 +369,7 @@
                 {/if}
               </div>
               <div class="arrow">→</div>
-              <div class="signal-chip feedback-signal">Wm feedback</div>
+              <div class="signal-chip feedback-signal">Wm estimate</div>
               <div class="feedback-return">↩ to speed error summing point</div>
             </div>
           </div>
