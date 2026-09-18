@@ -4,6 +4,7 @@
 //! this layer. A `DeviceSession` owns one transport and exposes shared
 //! application-facing access to that device.
 
+mod application;
 mod connection;
 mod parameter_service;
 mod motion;
@@ -16,6 +17,7 @@ mod session;
 mod stream;
 mod stream_pipeline;
 
+pub use application::{ApplicationError, ApplicationSession};
 pub use connection::DEFAULT_USB_BAUD;
 pub use parameter_service::{ParameterService, ParameterServiceError};
 pub use motion::{
