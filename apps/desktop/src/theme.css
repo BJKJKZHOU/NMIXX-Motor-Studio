@@ -375,3 +375,77 @@ vscode-button { --vscode-button-border: transparent; }
 .motion-uplot-host .uplot {
   width: 100% !important;
 }
+
+.tuning-motion-section { padding-bottom: 10px; }
+.tuning-motion-form {
+  display: grid;
+  gap: 7px;
+  padding: 2px 9px 0;
+}
+.tuning-motion-form > label,
+.tuning-motion-pair label {
+  min-width: 0;
+  display: grid;
+  gap: 4px;
+  color: #858585;
+  font-size: 10.5px;
+}
+.tuning-motion-form input,
+.tuning-motion-form select {
+  width: 100%;
+  min-width: 0;
+  height: 26px;
+  padding: 2px 6px;
+  border: 1px solid var(--vscode-input-border);
+  border-radius: 2px;
+  outline: none;
+  color: var(--vscode-input-foreground);
+  background: var(--vscode-input-background);
+  font-size: 11px;
+}
+.tuning-motion-form input:focus,
+.tuning-motion-form select:focus { border-color: var(--vscode-focusBorder); }
+.tuning-motion-pair {
+  min-width: 0;
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 6px;
+}
+.compact-unit-field {
+  min-width: 0;
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) auto;
+}
+.compact-unit-field input { border-radius: 2px 0 0 2px; }
+.compact-unit-field em {
+  min-width: 46px;
+  height: 26px;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  padding: 0 5px;
+  border: 1px solid var(--vscode-input-border);
+  border-left: 0;
+  border-radius: 0 2px 2px 0;
+  color: #747474;
+  background: #25282d;
+  font-style: normal;
+  font-family: "SFMono-Regular", Consolas, "Liberation Mono", monospace;
+  font-size: 9.5px;
+}
+.tuning-motion-actions {
+  display: flex;
+  gap: 6px;
+  padding-top: 2px;
+}
+.tuning-motion-actions button {
+  min-width: 64px;
+  height: 26px;
+  border: 1px solid #3b414b;
+  border-radius: 2px;
+  color: #bdbdbd;
+  background: #2d3035;
+  font-size: 11px;
+}
+.tuning-motion-actions button:first-child { background: #40506a; }
+.tuning-motion-actions button:disabled { opacity: .45; }
