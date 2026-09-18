@@ -76,7 +76,7 @@
       {#if activePage === "connection"}
         <ConnectionPage {connection} onConnected={(next) => setConnection(next)} onDisconnected={() => setConnection(undefined)} onError={setError} />
       {:else if activePage === "motion"}
-        <MotionPage />
+        <MotionPage onError={setError} />
       {:else if activePage === "parameters"}
         <div class="parameter-page-container">
           <ParameterTablePage {connection} onError={setError} />
