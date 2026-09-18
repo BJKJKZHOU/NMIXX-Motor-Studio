@@ -1,5 +1,5 @@
 import { get, writable } from "svelte/store";
-import { getMotion, getMotionPreview, setMotion } from "./api";
+import { getMotion, getMotionPreview, runMotion, setMotion, stopMotion } from "./api";
 import type { MotionPreview, MotionState } from "./types";
 
 const defaultMotion: MotionState = {
@@ -73,4 +73,14 @@ export async function updateMotion<K extends keyof MotionState>(
 
 export async function refreshMotionPreview(): Promise<void> {
   motionPreview.set(await getMotionPreview());
+}
+
+
+export async function executeMotion(): Promise<void> {
+  await writeChain;
+  await runMotion();
+}
+
+export async function stopMotionExecution(): Promise<void> {
+  await stopMotion();
 }
