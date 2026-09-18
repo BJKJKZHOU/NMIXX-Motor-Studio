@@ -21,7 +21,7 @@ struct DesktopState {
 #[serde(rename_all = "camelCase")]
 struct PlotChannelDto {
     id: u16,
-    symbol: String,
+    label: String,
     unit: Option<String>,
     supports_fast: bool,
     supports_normal: bool,
@@ -88,7 +88,7 @@ impl From<&RangeMetadata> for ParameterRangeDto {
 struct ParameterMetadataDto {
     id: u16,
     symbol: String,
-    name: Option<String>,
+    label: String,
     type_name: String,
     access: String,
     unit: Option<String>,
@@ -104,7 +104,7 @@ impl From<&ParameterMetadata> for ParameterMetadataDto {
         Self {
             id: value.id,
             symbol: value.symbol.clone(),
-            name: value.name.clone(),
+            label: value.label.clone(),
             type_name: value.type_name.clone(),
             access: value.access.clone(),
             unit: value.unit.clone(),
@@ -122,7 +122,7 @@ impl From<&ParameterMetadata> for ParameterMetadataDto {
 struct ActionMetadataDto {
     id: u16,
     symbol: String,
-    name: Option<String>,
+    label: String,
     description: String,
 }
 
@@ -131,7 +131,7 @@ impl From<&ActionMetadata> for ActionMetadataDto {
         Self {
             id: value.id,
             symbol: value.symbol.clone(),
-            name: value.name.clone(),
+            label: value.label.clone(),
             description: value.description.clone(),
         }
     }
@@ -401,9 +401,8 @@ fn device_connect(
         .into_iter()
         .map(|channel| PlotChannelDto {
             id: channel.id,
-            symbol: channel
-                .name
-                .or(channel.symbol)
+            label: channel
+                .label
                 .unwrap_or_else(|| format!("0x{:04X}", channel.id)),
             unit: channel.unit,
             supports_fast: channel.supports_fast,
@@ -736,7 +735,7 @@ fn scope_configure(
             .iter()
             .map(|channel| ScopeChannelDto {
                 id: channel.id,
-                symbol: channel.symbol.clone(),
+                label: channel.label.clone(),
                 unit: channel.unit.clone(),
                 rate: match channel.rate {
                     ScopeRate::Fast => "fast",
