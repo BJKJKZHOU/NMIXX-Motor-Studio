@@ -90,7 +90,10 @@ App shell
   +-- Motor
   +-- Encoder
   +-- Limits / Safety
-  +-- Control
+  +-- Control Architecture
+  |     +-- Current Loop
+  |     +-- Speed Loop
+  |     +-- Position Loop
   +-- Control Tuning
   |
   +-- Analysis
@@ -209,7 +212,7 @@ The order communicates the normal engineering sequence without turning the appli
 - **Motor** owns the motor parameter view. Unknown parameters are obtained through identification tools attached to this page instead of a separate top-level Identification page.
 - **Encoder** configures feedback protocol/interface and protocol-specific parameters. Phase search current, homing and zero-setting tools belong here because they establish position/electrical alignment.
 - **Limits / Safety** configures user operating limits and other software safety boundaries while keeping hardware protection semantics distinct.
-- **Control Architecture** configures the control structure itself: controller type, loop topology, feedback/observer choice, filters, feedforward and the Parameters that belong to those blocks. It may expose editable Bandwidth/Kp/Ki inside the diagram when those Parameters are part of the active block, but it is not the primary repeated tune-run-inspect workspace. Detailed page rules are in `CONTROL_ARCHITECTURE_PAGE.md`.
+- **Control Architecture** is a parent workflow with three child pages: **Current Loop**, **Speed Loop**, and **Position Loop**. Each child configures that loop's control structure: controller type, topology, feedback/observer choice, filters, feedforward and the Parameters that belong to those blocks. It may expose editable Bandwidth/Kp/Ki inside the diagram when those Parameters are part of the active block, but it is not the primary repeated tune-run-inspect workspace. Detailed page rules are in `CONTROL_ARCHITECTURE_PAGE.md`.
 - **Control Tuning** runs bounded tuning experiments for the already selected structure: it repeats only the common / primary tuning Parameters, binds them to one motion command, captures the synchronized response, and preserves the completed waveform for comparison. It does not absorb structural options such as controller type, filters, feedback selection or feedforward.
 - **Analysis** provides general-purpose continuous or manually triggered engineering analysis. Scope, FFT and Bode share acquisition and plotting infrastructure but are not responsible for the Control Tuning experiment workflow.
 
@@ -226,8 +229,11 @@ Parameter service
       +--> Motor page         (motor-related parameter view)
       +--> Encoder page       (feedback-related parameter view)
       +--> Limits page        (operating/safety limits)
-      +--> Control page       (algorithm selection and defaults)
-      +--> Control Tuning     (controller design parameters and active gains)
+      +--> Control Architecture
+      |      +--> Current Loop
+      |      +--> Speed Loop
+      |      +--> Position Loop
+      +--> Control Tuning     (primary tuning parameters and experiments)
       +--> other domain pages
 ```
 
@@ -237,7 +243,16 @@ The Parameters page uses TanStack Table for table behavior. TanStack owns sortin
 
 ## Control Architecture and Control Tuning are different workflows
 
-The **Control Architecture** page is diagram-oriented. It represents how the control system is built and allows configuration in the block where each setting acts.
+The **Control Architecture** domain is diagram-oriented and contains three child pages rather than one combined three-loop page:
+
+```text
+Control Architecture
+├─ Current Loop
+├─ Speed Loop
+└─ Position Loop
+```
+
+Each child page represents how that loop is built and allows configuration in the block where each setting acts. The parent is primarily a navigation/grouping concept; it does not require an additional overview page.
 
 Typical responsibilities include:
 
