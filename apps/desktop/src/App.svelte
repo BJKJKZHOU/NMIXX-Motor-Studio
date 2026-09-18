@@ -9,7 +9,7 @@
   import MotorPage from "./motor/MotorPage.svelte";
   import EncoderPage from "./encoder/EncoderPage.svelte";
   import LimitsPage from "./limits/LimitsPage.svelte";
-  import { disableMotor, enableMotor, onActionCompleted, saveParameters, stopMotor } from "./actions/api";
+  import { disableMotor, enableMotor, listActions, onActionCompleted, saveParameters, stopMotor } from "./actions/api";
   import type { ActionCompletion, ActionHandle } from "./actions/types";
   import { listParameters, readParameters, refreshAllParameters as refreshParameterCache } from "./parameters/api";
   import type { ParameterMetadata, ParameterValue } from "./parameters/types";
@@ -30,10 +30,13 @@
   let currentIq: number | null = null;
   let speedWm: number | null = null;
   let positionText = "—";
-  let motorActionBusy = false;
-  let pendingMotorAction: ActionHandle | null = null;
-  let pendingMotorActionSymbol: string | null = null;
-  let earlyMotorCompletion: ActionCompletion | null = null;
+  let globalActionBusy = false;
+  let pendingGlobalAction: ActionHandle | null = null;
+  let pendingGlobalActionSymbol: string | null = null;
+  let earlyGlobalCompletion: ActionCompletion | null = null;
+  let parameterSaveAvailable = false;
+  let saveFeedback: "idle" | "saved" = "idle";
+  let saveFeedbackTimer: ReturnType<typeof setTimeout> | undefined;
   let readingParameters = false;
   let globalRefreshTimer: ReturnType<typeof setInterval> | undefined;
   let stopActionListener: (() => void) | undefined;
@@ -67,7 +70,9 @@
     }
 
     try {
-      parameterRegistry = await listParameters();
+      const [registry, actions] = await Promise.all([listParameters(), listActions()]);
+      parameterRegistry = registry;
+      parameterSaveAvailable = actions.some((action) => action.symbol === "ACTION_PARAMETER_SAVE");
       globalIds = Object.fromEntries(
         parameterRegistry
           .filter((item) => GLOBAL_SYMBOLS.includes(item.symbol as typeof GLOBAL_SYMBOLS[number]))
@@ -89,10 +94,14 @@
     currentIq = null;
     speedWm = null;
     positionText = "—";
-    motorActionBusy = false;
-    pendingMotorAction = null;
-    pendingMotorActionSymbol = null;
-    earlyMotorCompletion = null;
+    globalActionBusy = false;
+    pendingGlobalAction = null;
+    pendingGlobalActionSymbol = null;
+    earlyGlobalCompletion = null;
+    parameterSaveAvailable = false;
+    saveFeedback = "idle";
+    if (saveFeedbackTimer) clearTimeout(saveFeedbackTimer);
+    saveFeedbackTimer = undefined;
     readingParameters = false;
   }
 
@@ -143,66 +152,82 @@
     }
   }
 
-  function finishMotorAction(completion: ActionCompletion) {
-    motorActionBusy = false;
-    pendingMotorAction = null;
-    pendingMotorActionSymbol = null;
-    earlyMotorCompletion = null;
-    if (!completion.ok) setError(`Motor action ${completion.symbol} failed: ${completion.status}`);
+  function showSavedFeedback() {
+    saveFeedback = "saved";
+    if (saveFeedbackTimer) clearTimeout(saveFeedbackTimer);
+    saveFeedbackTimer = setTimeout(() => {
+      saveFeedback = "idle";
+      saveFeedbackTimer = undefined;
+    }, 1400);
+  }
+
+  function finishGlobalAction(completion: ActionCompletion) {
+    globalActionBusy = false;
+    pendingGlobalAction = null;
+    pendingGlobalActionSymbol = null;
+    earlyGlobalCompletion = null;
+
+    if (!completion.ok) {
+      setError(`Action ${completion.symbol} failed: ${completion.status}`);
+    } else if (completion.symbol === "ACTION_PARAMETER_SAVE") {
+      showSavedFeedback();
+    }
+
     void refreshGlobalStatus();
   }
 
-  async function startGlobalMotorAction(symbol: string, start: () => Promise<ActionHandle>) {
-    if (!connection || motorActionBusy) return;
-    motorActionBusy = true;
-    pendingMotorAction = null;
-    pendingMotorActionSymbol = symbol;
-    earlyMotorCompletion = null;
+  async function startGlobalAction(symbol: string, start: () => Promise<ActionHandle>) {
+    if (!connection || globalActionBusy) return;
+    globalActionBusy = true;
+    pendingGlobalAction = null;
+    pendingGlobalActionSymbol = symbol;
+    earlyGlobalCompletion = null;
 
     try {
       const handle = await start();
-      pendingMotorAction = handle;
-      if (earlyMotorCompletion && actionKey(earlyMotorCompletion) === actionKey(handle)) {
-        finishMotorAction(earlyMotorCompletion);
+      pendingGlobalAction = handle;
+      if (earlyGlobalCompletion && actionKey(earlyGlobalCompletion) === actionKey(handle)) {
+        finishGlobalAction(earlyGlobalCompletion);
       }
     } catch (error) {
-      motorActionBusy = false;
-      pendingMotorAction = null;
-      pendingMotorActionSymbol = null;
-      earlyMotorCompletion = null;
+      globalActionBusy = false;
+      pendingGlobalAction = null;
+      pendingGlobalActionSymbol = null;
+      earlyGlobalCompletion = null;
       setError(error);
     }
   }
 
   async function toggleMotorEnable() {
-    if (!connection || motorState === null || motorActionBusy) return;
+    if (!connection || motorState === null || globalActionBusy) return;
     if (motorState === MOTOR_DISABLED) {
-      await startGlobalMotorAction("ACTION_MOTOR_ENABLE", enableMotor);
+      await startGlobalAction("ACTION_MOTOR_ENABLE", enableMotor);
     } else {
-      await startGlobalMotorAction("ACTION_MOTOR_DISABLE", disableMotor);
+      await startGlobalAction("ACTION_MOTOR_DISABLE", disableMotor);
     }
   }
 
   async function stopCurrentMotorOperation() {
-    if (!connection || motorState !== MOTOR_RUN || motorActionBusy) return;
-    await startGlobalMotorAction("ACTION_MOTOR_STOP", stopMotor);
+    if (!connection || motorState !== MOTOR_RUN || globalActionBusy) return;
+    await startGlobalAction("ACTION_MOTOR_STOP", stopMotor);
   }
 
   async function savePersistentParameters() {
-    if (!connection || motorState !== MOTOR_DISABLED || motorActionBusy) return;
-    await startGlobalMotorAction("ACTION_PARAMETER_SAVE", saveParameters);
+    if (!connection || !parameterSaveAvailable || motorState !== MOTOR_DISABLED || globalActionBusy) return;
+    saveFeedback = "idle";
+    await startGlobalAction("ACTION_PARAMETER_SAVE", saveParameters);
   }
 
   onMount(() => {
     let disposed = false;
     onActionCompleted((completion) => {
-      if (!motorActionBusy || completion.symbol !== pendingMotorActionSymbol) return;
-      if (!pendingMotorAction) {
-        earlyMotorCompletion = completion;
+      if (!globalActionBusy || completion.symbol !== pendingGlobalActionSymbol) return;
+      if (!pendingGlobalAction) {
+        earlyGlobalCompletion = completion;
         return;
       }
-      if (actionKey(completion) !== actionKey(pendingMotorAction)) return;
-      finishMotorAction(completion);
+      if (actionKey(completion) !== actionKey(pendingGlobalAction)) return;
+      finishGlobalAction(completion);
     }).then((unlisten) => {
       if (disposed) unlisten();
       else stopActionListener = unlisten;
@@ -249,7 +274,7 @@
             class:enable-action={motorState === MOTOR_DISABLED}
             class:disable-action={motorState !== null && motorState !== MOTOR_DISABLED}
             class="tool-button global-action"
-            disabled={!connection || motorState === null || motorActionBusy}
+            disabled={!connection || motorState === null || globalActionBusy}
             onclick={() => void toggleMotorEnable()}
             title={motorState === MOTOR_DISABLED ? "Enable motor" : "Disable motor"}
           >
@@ -258,7 +283,7 @@
           </button>
           <button
             class="tool-button global-action stop-action"
-            disabled={!connection || motorState !== MOTOR_RUN || motorActionBusy}
+            disabled={!connection || motorState !== MOTOR_RUN || globalActionBusy}
             onclick={() => void stopCurrentMotorOperation()}
             title="Stop current motor operation"
           >
@@ -270,11 +295,16 @@
           </button>
           <button
             class="tool-button global-action"
-            disabled={!connection || motorState !== MOTOR_DISABLED || motorActionBusy}
+            disabled={!connection || !parameterSaveAvailable || motorState !== MOTOR_DISABLED || globalActionBusy}
             onclick={() => void savePersistentParameters()}
-            title="Save persistent RAM parameters to device storage"
+            title={!parameterSaveAvailable
+              ? "Parameter persistence is not exposed by this firmware"
+              : motorState !== MOTOR_DISABLED
+                ? "Disable the motor before saving persistent parameters"
+                : "Save persistent RAM parameters to device storage"}
           >
-            <i class="codicon codicon-save"></i> Save
+            <i class={`codicon ${saveFeedback === "saved" ? "codicon-check" : "codicon-save"}`}></i>
+            {saveFeedback === "saved" ? "Saved" : "Save"}
           </button>
         </div>
         <button class="problems-indicator" disabled title="Problems service is not implemented yet">
