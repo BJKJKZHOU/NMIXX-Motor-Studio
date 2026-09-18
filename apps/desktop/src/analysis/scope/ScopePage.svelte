@@ -26,6 +26,7 @@
   let split: Split.Instance | undefined;
   let resizeObserver: ResizeObserver | undefined;
   let refreshTimer: ReturnType<typeof setInterval> | undefined;
+  let reconfigureTimer: ReturnType<typeof setTimeout> | undefined;
 
   let snapshotBusy = false;
   let commandBusy = false;
@@ -174,6 +175,7 @@
     selectedIds = next;
     channelRates = rates;
     configurationDirty = configurationChanged(next, rates);
+    scheduleHotReconfigure();
     const seriesIndex = plotChannels.findIndex((item) => item.id === id);
     if (seriesIndex >= 0) plot?.setSeries(seriesIndex + 1, { show: next.has(id) });
   }
@@ -197,6 +199,32 @@
     channelRates = rates;
     channelNotice = "";
     configurationDirty = configurationChanged(selectedIds, rates);
+    scheduleHotReconfigure();
+  }
+
+  function scheduleHotReconfigure() {
+    if (!scopeConfig || !isRunning) return;
+    if (reconfigureTimer) clearTimeout(reconfigureTimer);
+    reconfigureTimer = setTimeout(() => {
+      void hotReconfigure();
+    }, 80);
+  }
+
+  async function hotReconfigure() {
+    if (!scopeConfig || !isRunning || commandBusy || !configurationDirty) return;
+    commandBusy = true;
+    try {
+      const configured = await configureScope(
+        Array.from(selectedIds).map((id) => ({ id, rate: selectedRate(id) })),
+      );
+      scopeConfig = configured;
+      configurationDirty = false;
+      channelNotice = "";
+    } catch (error) {
+      onError(error);
+    } finally {
+      commandBusy = false;
+    }
   }
 
   function configurationChanged(ids: Set<number>, rates: Map<number, ScopeRate>): boolean {
@@ -529,7 +557,13 @@
         void refreshSnapshot();
       }
     }, 50);
-    return () => { if (refreshTimer) clearInterval(refreshTimer); resizeObserver?.disconnect(); plot?.destroy(); split?.destroy(); };
+    return () => {
+      if (refreshTimer) clearInterval(refreshTimer);
+      if (reconfigureTimer) clearTimeout(reconfigureTimer);
+      resizeObserver?.disconnect();
+      plot?.destroy();
+      split?.destroy();
+    };
   });
 </script>
 
@@ -578,7 +612,7 @@
         {/if}
       </div>
       {#if channelNotice}<div class="scope-pending">{channelNotice}</div>{/if}
-      {#if configurationDirty}<div class="scope-pending">Channel/rate changes apply on Run.</div>{/if}
+      {#if configurationDirty}<div class="scope-pending">{isRunning ? "Applying channel/rate change…" : "Channel/rate changes apply on Run."}</div>{/if}
     </section>
 
     <section class="side-section">
