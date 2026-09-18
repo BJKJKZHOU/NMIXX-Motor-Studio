@@ -355,7 +355,7 @@
     <section class="side-section acquisition"><div class="section-heading">ACQUISITION</div><div class="property-grid">
       <span>State</span><strong>{snapshot?.state ?? "STOPPED"}</strong><span>History</span><strong>{scopeConfig ? `${scopeConfig.historySeconds.toFixed(3)} s` : "10.000 s"}</strong>
       <span>{rateLabel("fast")}</span><strong>{fastSelected} / {connection?.fastMaxChannels ?? "—"}</strong><span>{rateLabel("normal")}</span><strong>{normalSelected} / {connection?.normalMaxChannels ?? "—"}</strong><span>FAST Block</span><strong>{connection?.fastBlockSamples ?? "—"}</strong>
-    </div>{#if configurationDirty && snapshot?.state !== "LIVE"}<div class="scope-pending">New channels apply on Run.</div>{/if}</section>
+    </div>{#if configurationDirty}<div class="scope-pending">Channel/rate changes apply on Run.</div>{/if}</section>
     <MotionCompactEditor capabilities={connection?.motion} {onError} />
   </aside>
   <section id="scope-workspace" class="scope-workspace">
