@@ -192,11 +192,11 @@
   }
 
   function parameterLabel(symbol: string): string {
-    return metadata[symbol]?.name ?? symbol;
+    return metadata[symbol]?.label ?? symbol;
   }
 
   function actionLabel(symbol: string): string {
-    return actions[symbol]?.name ?? symbol;
+    return actions[symbol]?.label ?? symbol;
   }
 
   function isWritable(symbol: string): boolean {
