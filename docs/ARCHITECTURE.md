@@ -211,7 +211,9 @@ For example, selecting position/speed control may choose the position, speed and
 
 ### Motion is a shared runtime model, not page-local state
 
-Motion is a first-class application domain. The full Motion page and the compact Motion controls shown during Control Tuning are two views over the **same Application-level Motion model**.
+Motion is a first-class application domain. It owns the complete motor-motion command and trajectory-generation model, not merely a target setpoint.
+
+The full Motion page and the compact Motion controls shown during Control Tuning are two views over the **same Application-level Motion model**.
 
 ```text
                     Application / Motion model
@@ -240,19 +242,25 @@ The initial operating/control modes exposed by Motion are broader than the tradi
 
 The mode selector itself is shared state. If a view is allowed to change the active mode, every other Motion view observes that same active mode.
 
+Motion configuration includes the trajectory-generator behavior appropriate to the selected mode. Position motion may use trapezoidal/T-profile, S-curve, filtered trajectory or future trajectory types. Speed motion also uses a configurable trajectory rather than jumping directly to a speed setpoint; acceleration, deceleration and the selected shaping method are part of the same Motion state. Other modes may expose their own mode-specific command shaping when meaningful.
+
+The exact trajectory implementations belong behind the Application-level Motion API. GUI pages select and edit trajectory semantics; they do not implement their own ramp, S-curve or filter generators.
+
 Mode-specific command fields also share one owner. Conceptually the Application API should expose one coherent Motion domain such as:
 
 ```text
 motion.mode
 
+motion.trajectory.type
+motion.trajectory.acc
+motion.trajectory.dec
+motion.trajectory.filter
+...
+
 motion.position.target
 motion.position.speed
-motion.position.acc
-motion.position.dec
 
 motion.speed.target
-motion.speed.acc
-motion.speed.dec
 
 motion.sensorless_speed.target
 ...
@@ -268,14 +276,21 @@ The exact public API names may evolve, but GUI components must not create parall
 
 The distinction between the two GUI surfaces is therefore **capability and density**, not ownership:
 
-- **Motion page**: complete mode-specific command configuration, trajectory/command preview, advanced motion options where applicable, and Run/Stop.
+- **Motion page**: complete mode-specific command configuration, trajectory type and shaping configuration, command/trajectory preview, advanced motion options where applicable, and Run/Stop.
 - **Control Tuning**: compact controls for the same Motion state beside Scope/Bode/FFT-oriented tuning tools.
 
-Run and Stop follow the same rule. Motion-page buttons and Control-Tuning buttons call the same Application-level motion execution/stop semantics rather than separate command paths.
+Run, Stop and Disable have intentionally different semantics:
+
+- **Run** executes the currently configured Motion command using the selected trajectory generator.
+- **Stop** is a normal controlled stop. It must transition the current command toward the stopped state using the active trajectory/deceleration semantics instead of abruptly removing motor drive.
+- **Disable** is the emergency/immediate drive-off operation at the application level. It removes motor enable rather than following the normal motion trajectory.
+
+Therefore a Stop button on the Motion page and a Stop button in Control Tuning must invoke the same Application-level controlled-stop operation. They must not be implemented as aliases for Disable. Likewise, any global Disable control must remain semantically distinct and visually recognizable from normal Stop.
 
 Sensorless Speed remains a separate operating mode rather than a checkbox on normal Speed because startup and observer handover have distinct runtime semantics. The Motion page should expose only the user-facing startup controls needed for normal operation; low-level observer/handover tuning belongs to deeper control/debug configuration.
 
 MIT is also represented as its own mode because its command surface is inherently different from trajectory Position/Speed control: position reference, velocity reference, Kp, Kd and torque feedforward are edited as one MIT command set.
+
 
 ### Analysis shares acquisition and plotting infrastructure
 
