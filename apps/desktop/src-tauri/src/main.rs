@@ -255,7 +255,7 @@ struct ScopeConfigDto {
 #[serde(rename_all = "camelCase")]
 struct ScopeChannelDto {
     id: u16,
-    symbol: String,
+    label: String,
     unit: Option<String>,
     rate: &'static str,
     sample_rate_hz: u32,
