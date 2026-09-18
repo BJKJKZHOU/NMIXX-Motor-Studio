@@ -1,11 +1,13 @@
 <script lang="ts">
   import { onMount } from "svelte";
-  import { initializeMotion, motionState, updateMotion } from "../../motion/store";
+  import { executeMotion, initializeMotion, motionState, stopMotionExecution, updateMotion } from "../../motion/store";
   import type { MotionCapabilities } from "../../connection/types";
   import type { MotionMode, MotionState, TrajectoryType } from "../../motion/types";
 
   export let capabilities: MotionCapabilities | undefined;
   export let onError: (error: unknown) => void = () => undefined;
+
+  let actionBusy = false;
 
   const modeLabels: Record<MotionMode, string> = {
     position: "Position",
@@ -49,6 +51,27 @@
     if (trajectory === "trapezoidal") return capabilities.trajectoryTrapezoidal;
     if (trajectory === "s-curve") return capabilities.trajectorySCurve;
     return capabilities.trajectoryFiltered;
+  }
+
+  function canRun(): boolean {
+    if (!capabilities || !capabilities.run || !modeSupported($motionState.mode)) return false;
+    return !hasTrajectory() || trajectorySupported($motionState.trajectory);
+  }
+
+  async function run() {
+    if (!canRun() || actionBusy) return;
+    actionBusy = true;
+    try { await executeMotion(); }
+    catch (error) { onError(error); }
+    finally { actionBusy = false; }
+  }
+
+  async function stop() {
+    if (!capabilities?.stop || actionBusy) return;
+    actionBusy = true;
+    try { await stopMotionExecution(); }
+    catch (error) { onError(error); }
+    finally { actionBusy = false; }
   }
 
   onMount(() => {
@@ -110,13 +133,15 @@
           <em>N·m</em>
         </div>
       </label>
-      <label>
-        <span>Ramp</span>
-        <div class="compact-unit-field">
-          <input type="number" value={$motionState.torqueRampNmPerS} oninput={(e) => update("torqueRampNmPerS", numberValue(e))} />
-          <em>N·m/s</em>
-        </div>
-      </label>
+      {#if !capabilities || capabilities.torqueRamp}
+        <label>
+          <span>Ramp</span>
+          <div class="compact-unit-field">
+            <input type="number" value={$motionState.torqueRampNmPerS} oninput={(e) => update("torqueRampNmPerS", numberValue(e))} />
+            <em>N·m/s</em>
+          </div>
+        </label>
+      {/if}
     {:else}
       <label>
         <span>Position</span>
@@ -177,8 +202,8 @@
     {/if}
 
     <div class="tuning-motion-actions">
-      <button disabled title="Application Motion execution is not connected yet">Run</button>
-      <button disabled title="Application Motion execution is not connected yet">Stop</button>
+      <button disabled={!canRun() || actionBusy} onclick={run}>Run</button>
+      <button disabled={!capabilities?.stop || actionBusy} onclick={stop}>Stop</button>
     </div>
   </div>
 </section>
