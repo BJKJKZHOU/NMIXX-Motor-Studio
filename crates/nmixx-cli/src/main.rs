@@ -7,8 +7,9 @@ use std::time::Duration;
 use clap::{Parser, Subcommand, ValueEnum};
 use nmixx_app::{
     ActionHandle, ActionMetadata, AxdrStatus, ConfigService, DEFAULT_USB_BAUD, DeviceSession,
-    HostSchema, MotorActionService, ParameterMetadata, ParameterService, ParameterType,
-    ParameterValue, PositionValue, SchemaNumber, SchemaStore, SessionEvent,
+    HostSchema, IdentificationKind, MotorActionService, ParameterMetadata, ParameterService,
+    ParameterType, ParameterValue, PositionValue, PreflightService, SchemaNumber, SchemaStore,
+    SessionEvent,
 };
 
 #[derive(Debug, Parser)]
@@ -49,6 +50,10 @@ enum Command {
     Config {
         #[command(subcommand)]
         command: ConfigCommand,
+    },
+    Preflight {
+        #[command(subcommand)]
+        command: PreflightCommand,
     },
     Action {
         #[command(subcommand)]
@@ -109,6 +114,31 @@ enum ConfigCommand {
     Save {
         #[arg(long, default_value_t = 30)]
         timeout: u64,
+    },
+}
+
+#[derive(Debug, Clone, Copy, ValueEnum)]
+enum CliIdentificationKind {
+    RsLs,
+    Flux,
+    Jb,
+}
+
+impl From<CliIdentificationKind> for IdentificationKind {
+    fn from(value: CliIdentificationKind) -> Self {
+        match value {
+            CliIdentificationKind::RsLs => Self::RsLs,
+            CliIdentificationKind::Flux => Self::Flux,
+            CliIdentificationKind::Jb => Self::Jb,
+        }
+    }
+}
+
+#[derive(Debug, Subcommand)]
+enum PreflightCommand {
+    Identification {
+        #[arg(value_enum)]
+        kind: CliIdentificationKind,
     },
 }
 
@@ -303,6 +333,27 @@ fn run() -> Result<(), Box<dyn Error>> {
                     let handle = service.save()?;
                     println!("accepted txn={} config save", handle.txn.get());
                     wait_for_action_completion(&events, handle, "config save", timeout)?;
+                }
+            }
+        }
+        Command::Preflight { command } => {
+            let schema = require_schema(schema.as_ref())?;
+            let session = open_session(port.as_deref(), baud)?;
+            let parameters = ParameterService::new(session, schema.clone());
+            let service = PreflightService::new(parameters);
+            match command {
+                PreflightCommand::Identification { kind } => {
+                    let issues = service.check_identification(kind.into())?;
+                    if issues.is_empty() {
+                        println!("ready");
+                    } else {
+                        for issue in issues {
+                            match issue.parameter_id {
+                                Some(id) => println!("0x{id:04X}: {}", issue.reason),
+                                None => println!("{}", issue.reason),
+                            }
+                        }
+                    }
                 }
             }
         }
