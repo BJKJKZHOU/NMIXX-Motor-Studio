@@ -7,6 +7,7 @@
 mod connection;
 mod parameter_service;
 mod motion;
+mod motion_capabilities;
 mod plot_capabilities;
 mod schema;
 mod schema_store;
@@ -21,6 +22,7 @@ pub use motion::{
     MotionConfig, MotionMode, MotionPreview, MotionService, PositionCommand, SCurveMode,
     TrajectoryType,
 };
+pub use motion_capabilities::MotionCapabilities;
 pub use plot_capabilities::{
     DevicePlotCapabilities, DevicePlotChannel, PlotCapabilitiesError, PlotChannelInfo,
 };
