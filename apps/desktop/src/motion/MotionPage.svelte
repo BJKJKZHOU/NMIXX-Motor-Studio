@@ -1,12 +1,14 @@
 <script lang="ts">
   import { onMount } from "svelte";
-  import { initializeMotion, motionPreview, motionState, updateMotion } from "./store";
+  import { executeMotion, initializeMotion, motionPreview, motionState, stopMotionExecution, updateMotion } from "./store";
   import MotionTrajectoryPlot from "./MotionTrajectoryPlot.svelte";
   import type { MotionCapabilities } from "../connection/types";
   import type { MotionMode, MotionState, SCurveMode, TrajectoryType } from "./types";
 
   export let capabilities: MotionCapabilities | undefined;
   export let onError: (error: unknown) => void = () => undefined;
+
+  let actionBusy = false;
 
   const modeLabels: Record<MotionMode, string> = {
     position: "Position",
@@ -54,6 +56,27 @@
     return capabilities.trajectoryFiltered;
   }
 
+  function canRun(): boolean {
+    if (!capabilities || !capabilities.run || !modeSupported($motionState.mode)) return false;
+    return !hasTrajectory() || trajectorySupported($motionState.trajectory);
+  }
+
+  async function run() {
+    if (!canRun() || actionBusy) return;
+    actionBusy = true;
+    try { await executeMotion(); }
+    catch (error) { onError(error); }
+    finally { actionBusy = false; }
+  }
+
+  async function stop() {
+    if (!capabilities?.stop || actionBusy) return;
+    actionBusy = true;
+    try { await stopMotionExecution(); }
+    catch (error) { onError(error); }
+    finally { actionBusy = false; }
+  }
+
   function trajectoryNote(): string {
     if ($motionState.trajectory === "trapezoidal") {
       return "Acc / Dec are constant acceleration and deceleration magnitudes.";
@@ -86,7 +109,7 @@
       <span>Mode</span>
       <select value={$motionState.mode} onchange={(event) => update("mode", (event.currentTarget as HTMLSelectElement).value as MotionMode)}>
         {#each Object.entries(modeLabels) as [value, label]}
-          <option value={value}>{label}</option>
+          <option value={value} disabled={!modeSupported(value as MotionMode)}>{label}</option>
         {/each}
       </select>
     </label>
@@ -120,23 +143,29 @@
               <span>Target speed</span>
               <div class="unit-field"><input type="number" value={$motionState.sensorlessSpeedTarget} oninput={(e) => update("sensorlessSpeedTarget", numberValue(e))} /><em>rad/s</em></div>
             </label>
-            <label class="motion-field">
-              <span>Startup current</span>
-              <div class="unit-field"><input type="number" value={$motionState.sensorlessStartupCurrent} oninput={(e) => update("sensorlessStartupCurrent", numberValue(e))} /><em>A</em></div>
-            </label>
-            <label class="motion-field">
-              <span>Entry speed</span>
-              <div class="unit-field"><input type="number" value={$motionState.sensorlessEntrySpeed} oninput={(e) => update("sensorlessEntrySpeed", numberValue(e))} /><em>rad/s</em></div>
-            </label>
+            {#if !capabilities || capabilities.sensorlessStartupCurrent}
+              <label class="motion-field">
+                <span>Startup current</span>
+                <div class="unit-field"><input type="number" value={$motionState.sensorlessStartupCurrent} oninput={(e) => update("sensorlessStartupCurrent", numberValue(e))} /><em>A</em></div>
+              </label>
+            {/if}
+            {#if !capabilities || capabilities.sensorlessEntrySpeed}
+              <label class="motion-field">
+                <span>Entry speed</span>
+                <div class="unit-field"><input type="number" value={$motionState.sensorlessEntrySpeed} oninput={(e) => update("sensorlessEntrySpeed", numberValue(e))} /><em>rad/s</em></div>
+              </label>
+            {/if}
           {:else if $motionState.mode === "torque"}
             <label class="motion-field">
               <span>Target torque</span>
               <div class="unit-field"><input type="number" value={$motionState.torqueTargetNm} oninput={(e) => update("torqueTargetNm", numberValue(e))} /><em>N·m</em></div>
             </label>
-            <label class="motion-field">
-              <span>Torque ramp</span>
-              <div class="unit-field"><input type="number" value={$motionState.torqueRampNmPerS} oninput={(e) => update("torqueRampNmPerS", numberValue(e))} /><em>N·m/s</em></div>
-            </label>
+            {#if !capabilities || capabilities.torqueRamp}
+              <label class="motion-field">
+                <span>Torque ramp</span>
+                <div class="unit-field"><input type="number" value={$motionState.torqueRampNmPerS} oninput={(e) => update("torqueRampNmPerS", numberValue(e))} /><em>N·m/s</em></div>
+              </label>
+            {/if}
           {:else}
             <label class="motion-field">
               <span>Position ref</span>
@@ -206,8 +235,8 @@
       {/if}
 
       <div class="motion-runbar">
-        <button class="motion-run" disabled title="Application Motion API is not connected yet"><i class="codicon codicon-debug-start"></i> Run</button>
-        <button disabled title="Application Motion API is not connected yet"><i class="codicon codicon-debug-stop"></i> Stop</button>
+        <button class="motion-run" disabled={!canRun() || actionBusy} onclick={run}><i class="codicon codicon-debug-start"></i> Run</button>
+        <button disabled={!capabilities?.stop || actionBusy} onclick={stop}><i class="codicon codicon-debug-stop"></i> Stop</button>
       </div>
     </div>
 
