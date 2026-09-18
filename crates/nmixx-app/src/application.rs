@@ -187,6 +187,12 @@ impl ApplicationSession {
         history: Duration,
         config_id: u8,
     ) -> Result<MixedScopeConfig, ApplicationError> {
+        let old_scope = {
+            let mut slot = self.inner.scope.lock().map_err(|_| ApplicationError::Poisoned)?;
+            slot.take()
+        };
+        drop(old_scope);
+
         let plot_capabilities = self.plot_capabilities()?;
         let scope = MixedScopeSession::from_capabilities(
             self.inner.session.clone(),
