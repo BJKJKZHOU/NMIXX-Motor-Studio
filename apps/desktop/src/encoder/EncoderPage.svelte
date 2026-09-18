@@ -125,6 +125,14 @@
     return metadata[symbol]?.unit ?? "";
   }
 
+  function parameterLabel(symbol: string, fallback?: string): string {
+    return metadata[symbol]?.name ?? fallback ?? symbol;
+  }
+
+  function actionLabel(symbol: string, fallback?: string): string {
+    return actions[symbol]?.name ?? fallback ?? symbol;
+  }
+
   function isWritable(symbol: string): boolean {
     return metadata[symbol]?.access.toLowerCase().includes("w") ?? false;
   }
@@ -336,7 +344,7 @@
             <section class="encoder-section">
               <div class="section-title">Feedback Protocol</div>
               <div class="setup-grid" aria-label="Encoder feedback protocol">
-                <div class="field-label">Protocol</div>
+                <div class="field-label">{parameterLabel(ENCODER_PROTOCOL_SYMBOL, "Protocol")}</div>
                 <div>
                   {#if metadata[ENCODER_PROTOCOL_SYMBOL]}
                     <select
@@ -355,7 +363,7 @@
                 </div>
 
                 {#if isSpiProtocol()}
-                  <div class="field-label">SPI Encoder</div>
+                  <div class="field-label">{parameterLabel(ENCODER_SPI_TYPE_SYMBOL, "SPI Encoder")}</div>
                   <div>
                     {#if metadata[ENCODER_SPI_TYPE_SYMBOL]}
                       <select
@@ -375,7 +383,7 @@
                 {/if}
 
                 {#if metadata[ABZ_PPR_SYMBOL]}
-                  <div class="field-label">PPR</div>
+                  <div class="field-label">{parameterLabel(ABZ_PPR_SYMBOL, "PPR")}</div>
                   <div class="muted">Available when ABZ protocol is exposed by firmware.</div>
                 {/if}
               </div>
@@ -384,7 +392,7 @@
             <section class="encoder-section">
               <div class="section-title">Phase Alignment</div>
               <div class="setup-grid">
-                <div class="field-label">Search current</div>
+                <div class="field-label">{parameterLabel(PHASE_CURRENT_SYMBOL, "Search current")}</div>
                 <div>
                   {#if metadata[PHASE_CURRENT_SYMBOL]}
                     <span class="inline-editor">
@@ -409,7 +417,7 @@
                     disabled={phaseState === "running"}
                     title="Start phase search"
                     onclick={() => void startPhaseSearch()}
-                  >Start</vscode-button>
+                  >{actionLabel(PHASE_SEARCH_ACTION, "Start")}</vscode-button>
 
                   {#if phaseState === "running"}
                     <span class="action-status state-running"><i class="codicon codicon-loading codicon-modifier-spin"></i> Running</span>
@@ -420,7 +428,7 @@
                   {/if}
                 </div>
 
-                <div class="field-label">Motor direction</div>
+                <div class="field-label">{parameterLabel(MOTOR_DIR_SYMBOL, "Motor direction")}</div>
                 <div>
                   {#if metadata[MOTOR_DIR_SYMBOL]}
                     <select
@@ -444,16 +452,16 @@
             <section class="encoder-section">
               <div class="section-title">Mechanical Reference</div>
               <div class="reference-row">
-                <span class="field-label">Zero reference</span>
+                <span class="field-label">{parameterLabel(ZERO_VALID_SYMBOL, "Zero reference")}</span>
                 <span class="readonly-value">{zeroReferenceText()}</span>
               </div>
 
               <div class="reference-actions">
                 <vscode-button secondary disabled={!actionAvailable(SET_ZERO_ACTION)} title={actionAvailable(SET_ZERO_ACTION) ? "Set current position as mechanical zero" : "Firmware/Application zero action is not exposed yet"}>
-                  Set Current as Zero
+                  {actionLabel(SET_ZERO_ACTION, "Set Current as Zero")}
                 </vscode-button>
                 <vscode-button secondary disabled={!actionAvailable(HOMING_ACTION)} title={actionAvailable(HOMING_ACTION) ? "Start software homing" : "Firmware/Application homing action is not exposed yet"}>
-                  Software Homing
+                  {actionLabel(HOMING_ACTION, "Software Homing")}
                 </vscode-button>
               </div>
 
