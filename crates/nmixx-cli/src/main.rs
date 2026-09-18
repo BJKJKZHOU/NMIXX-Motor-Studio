@@ -521,11 +521,11 @@ fn resolve_parameter<'a>(schema: Option<&'a HostSchema>, key: &str, type_overrid
 fn resolve_action(schema: Option<&HostSchema>, key: &str) -> Result<(u16, String), Box<dyn Error>> {
     if let Some(schema) = schema {
         if let Some(action) = schema.action_by_key(key) {
-            return Ok((action.id, action.name.as_deref().unwrap_or(&action.symbol).to_owned()));
+            return Ok((action.id, action.label.as_str().to_owned()));
         }
         if let Ok(id) = parse_u16(key) {
             if let Some(action) = schema.action_by_id(id) {
-                return Ok((id, action.name.as_deref().unwrap_or(&action.symbol).to_owned()));
+                return Ok((id, action.label.as_str().to_owned()));
             }
             return Ok((id, format!("0x{id:04X}")));
         }
@@ -580,7 +580,7 @@ fn print_schema_info(key: &str, path: &std::path::Path, schema: &HostSchema) {
 
 fn print_parameter_list(schema: &HostSchema) {
     for parameter in &schema.parameters {
-        let key = parameter.name.as_deref().unwrap_or(&parameter.symbol);
+        let key = parameter.label.as_str();
         let unit = parameter.unit.as_deref().unwrap_or("");
         println!("0x{:04X}  {:<28} {:<8} {:<2} {}", parameter.id, key, parameter.type_name, parameter.access, unit);
     }
@@ -588,14 +588,14 @@ fn print_parameter_list(schema: &HostSchema) {
 
 fn print_action_list(schema: &HostSchema) {
     for action in &schema.actions {
-        let key = action.name.as_deref().unwrap_or(&action.symbol);
+        let key = action.label.as_str();
         println!("0x{:04X}  {}", action.id, key);
     }
 }
 
 fn print_parameter_info(parameter: &ParameterMetadata) {
     println!("symbol: {}", parameter.symbol);
-    if let Some(name) = parameter.name.as_deref() { println!("name: {name}"); }
+    println!("label: {}", parameter.label);
     println!("id: 0x{:04X}", parameter.id);
     println!("type: {}", parameter.type_name);
     println!("access: {}", parameter.access);
@@ -618,7 +618,7 @@ fn print_parameter_info(parameter: &ParameterMetadata) {
 
 fn print_action_info(action: &ActionMetadata) {
     println!("symbol: {}", action.symbol);
-    if let Some(name) = action.name.as_deref() { println!("name: {name}"); }
+    println!("label: {}", action.label);
     println!("id: 0x{:04X}", action.id);
     println!("description: {}", action.description);
 }
@@ -633,7 +633,7 @@ fn format_schema_number(value: SchemaNumber) -> String {
 fn print_parameter_value(metadata: Option<&ParameterMetadata>, id: u16, value: ParameterValue) {
     match metadata {
         Some(metadata) => {
-            let label = metadata.name.as_deref().unwrap_or(&metadata.symbol);
+            let label = metadata.label.as_str();
             match metadata.unit.as_deref() {
                 Some(unit) => println!("{label} (0x{id:04X}) = {} {unit}", format_value(value)),
                 None => println!("{label} (0x{id:04X}) = {}", format_value(value)),
