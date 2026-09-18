@@ -1,12 +1,10 @@
-use std::sync::mpsc::Receiver;
-use std::time::{Duration, Instant};
+use std::time::Duration;
 
 use thiserror::Error;
 
 use crate::{
-    ActionHandle, AxdrStatus, DeviceSession, HostSchema, IdentificationKind, ParameterService,
+    ActionHandle, DeviceSession, HostSchema, IdentificationKind, ParameterService,
     ParameterServiceError, ParameterValue, PreflightError, PreflightService, SchemaNumber,
-    SessionError, SessionEvent,
 };
 
 const MOTOR_MODE: &str = "PARAM_MOTOR_MODE";
@@ -23,7 +21,6 @@ const MOTOR_DISABLE: &str = "ACTION_MOTOR_DISABLE";
 const IDENT_RS_LS_START: &str = "ACTION_IDENT_RS_LS_START";
 const IDENT_FLUX_START: &str = "ACTION_IDENT_FLUX_START";
 const IDENT_JB_START: &str = "ACTION_IDENT_JB_START";
-const ACTION_COMPLETION_TIMEOUT: Duration = Duration::from_secs(5);
 
 #[derive(Debug, Error)]
 pub enum MotorActionError {
@@ -146,11 +143,9 @@ impl MotorActionService {
             .ok_or_else(|| MotorActionError::MissingAction(MOTOR_DISABLE.to_owned()))?;
 
         let current_mode = read_u8(&self.parameters, mode)?;
-        let events = self.session.subscribe()?;
 
         if current_state == enabled && current_mode != ident_mode {
-            let disable_handle = self.session.action_start(disable.id)?;
-            wait_for_action(&events, disable_handle, MOTOR_DISABLE)?;
+            self.session.action_start(disable.id)?;
             current_state = read_u8(&self.parameters, state)?;
             if current_state != disabled {
                 return Err(MotorActionError::InvalidParameterValue(MOTOR_STATE.to_owned()));
@@ -160,8 +155,7 @@ impl MotorActionService {
         if current_state == disabled {
             self.parameters.write(mode.id, ParameterValue::U8(ident_mode))?;
 
-            let enable_handle = self.session.action_start(enable.id)?;
-            wait_for_action(&events, enable_handle, MOTOR_ENABLE)?;
+            self.session.action_start(enable.id)?;
 
             current_state = read_u8(&self.parameters, state)?;
             if current_state != enabled {
@@ -210,10 +204,10 @@ impl MotorActionService {
 
         self.parameters.write(mode.id, ParameterValue::U8(phase_search))?;
 
-        // Subscribe before starting Enable so a fast completion cannot be lost.
-        let events = self.session.subscribe()?;
-        let enable_handle = self.session.action_start(enable.id)?;
-        wait_for_action(&events, enable_handle, MOTOR_ENABLE)?;
+        // Enable is an immediate Action: a successful action_start response means
+        // firmware has already executed Motor_Enable(). ACTION_COMPLETE is only
+        // emitted for the finite phase-search operation itself.
+        self.session.action_start(enable.id)?;
 
         // The returned handle represents the finite phase-search operation.
         Ok(self.session.action_start(run.id)?)
@@ -282,37 +276,4 @@ fn enum_u8(
         parameter: parameter.symbol.clone(),
         symbol: wanted_symbol.to_owned(),
     })
-}
-
-fn wait_for_action(
-    events: &Receiver<SessionEvent>,
-    wanted: ActionHandle,
-    action_name: &str,
-) -> Result<(), MotorActionError> {
-    let deadline = Instant::now() + ACTION_COMPLETION_TIMEOUT;
-    loop {
-        let now = Instant::now();
-        if now >= deadline {
-            return Err(MotorActionError::ActionCompletionTimeout(action_name.to_owned()));
-        }
-
-        match events.recv_timeout(deadline.saturating_duration_since(now)) {
-            Ok(SessionEvent::ActionCompleted { handle, status }) if handle == wanted => {
-                if status == AxdrStatus::Ok {
-                    return Ok(());
-                }
-                return Err(MotorActionError::ActionFailed {
-                    action: action_name.to_owned(),
-                    status,
-                });
-            }
-            Ok(_) => continue,
-            Err(std::sync::mpsc::RecvTimeoutError::Timeout) => {
-                return Err(MotorActionError::ActionCompletionTimeout(action_name.to_owned()));
-            }
-            Err(std::sync::mpsc::RecvTimeoutError::Disconnected) => {
-                return Err(SessionError::Closed.into());
-            }
-        }
-    }
 }
