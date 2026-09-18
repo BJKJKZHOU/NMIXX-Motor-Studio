@@ -22,6 +22,9 @@ export type MotionCapabilities = {
   positionTarget: boolean;
   speedTarget: boolean;
   torqueTarget: boolean;
+  torqueRamp: boolean;
+  sensorlessStartupCurrent: boolean;
+  sensorlessEntrySpeed: boolean;
 };
 
 export type PlotChannel = {
