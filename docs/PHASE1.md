@@ -1,5 +1,7 @@
 # Phase 1
 
+> Status: Completed historical milestone. This document records the original headless core bring-up scope; it is not the current product roadmap. The repository has since added the Tauri/Svelte desktop client, Scope, domain pages and shared Application services.
+
 ## Goal
 
 Prove the core path from a host process to the current AxDr_L firmware without any GUI.
@@ -13,7 +15,7 @@ Prove the core path from a host process to the current AxDr_L firmware without a
 5. Action trigger with accepted/completed lifecycle.
 6. Minimal `nmixxctl` commands for real hardware validation.
 
-## Out of scope
+## Out of scope for Phase 1
 
 - GUI / Tauri / Svelte;
 - commissioning workflows;
@@ -22,7 +24,9 @@ Prove the core path from a host process to the current AxDr_L firmware without a
 - recorder/replay;
 - Plot UI.
 
-Telemetry decoding may be added after Parameter/Action are verified on hardware.
+These exclusions describe only the original Phase 1 milestone and do not constrain the current architecture.
+
+Telemetry decoding could be added after Parameter/Action were verified on hardware.
 
 ## Hardware validation target
 
