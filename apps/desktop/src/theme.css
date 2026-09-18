@@ -91,11 +91,12 @@ vscode-button { --vscode-button-border: transparent; }
 .app-error { position: absolute; left: 10px; right: 10px; bottom: 10px; z-index: 20; }
 
 .channel-list { display: flex; flex-direction: column; }
-.channel-row { min-height: 28px; display: grid; grid-template-columns: 24px minmax(0, 1fr) 42px 54px; align-items: center; padding: 0 7px; cursor: default; }
+.channel-row { min-height: 30px; display: grid; grid-template-columns: 24px minmax(0, 1fr) 42px 62px; gap: 4px; align-items: center; padding: 0 7px; cursor: default; }
 .channel-row:hover { background: #242424; }
 .channel-row.disabled-row { opacity: .58; }
 .channel-name { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; color: #d0d0d0; font-family: "SFMono-Regular", Consolas, "Liberation Mono", monospace; font-size: 12px; }
 .channel-unit, .channel-mode { color: #858585; font-size: 11px; text-align: right; }
+.channel-rate { width: 60px; min-width: 60px; height: 22px; padding: 0 4px; border: 1px solid #3a3a3a; background: #252526; color: #c8c8c8; font-size: 11px; }
 .channel-mode { color: #9ba8bb; }
 .channel-mode.normal-only { color: #8b8b8b; }
 .empty-hint { padding: 5px 10px 9px; color: #757575; font-size: 11px; line-height: 1.45; }
