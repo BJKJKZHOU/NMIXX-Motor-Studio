@@ -196,6 +196,15 @@ impl ApplicationSession {
         .identification_start(kind, allow_enable)?)
     }
 
+    pub fn identification_apply(&self) -> Result<ActionHandle, ApplicationError> {
+        Ok(MotorActionService::from_shared(
+            self.inner.session.clone(),
+            self.inner.schema.clone(),
+            self.inner.parameters.clone(),
+        )
+        .identification_apply()?)
+    }
+
     pub fn motor_enable(&self) -> Result<ActionHandle, ApplicationError> {
         Ok(MotorActionService::from_shared(
             self.inner.session.clone(),
