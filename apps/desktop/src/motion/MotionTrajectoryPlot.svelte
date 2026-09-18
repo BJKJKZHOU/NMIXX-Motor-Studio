@@ -71,7 +71,7 @@
     plot = new uPlot({
       width: Math.max(320, Math.floor(rect.width)),
       height: Math.max(220, Math.floor(rect.height)),
-      legend: { show: true },
+      legend: { show: false },
       cursor: { show: false },
       select: { show: false },
       scales: {
