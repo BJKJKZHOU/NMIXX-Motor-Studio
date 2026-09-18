@@ -79,7 +79,7 @@ Normal product clients must not assemble `DeviceSession + ParameterService + Sco
 
 Host-only models that are meaningful while disconnected, such as the editable Motion command model and theoretical preview, may outlive a device connection. When connected, the same shared model instance is injected into `ApplicationSession`; a second copy must not be created.
 
-The Application API should expose domain concepts such as `parameter.get`, `motor.enable`, `action.start`, `stream.subscribe` and `task.cancel`, not raw CAN IDs or payload bytes.
+The Application API should expose domain concepts such as `parameter.get`, `motor.enable`, `motor.disable`, `motor.stop`, `action.start`, `stream.subscribe` and `task.cancel`, not raw CAN IDs or payload bytes.
 
 ### clients
 
@@ -99,10 +99,14 @@ App shell
   |     +-- CAN FD
   |     +-- future transports
   |
-  +-- Parameters
-  |     +-- full parameter table
-  |     +-- read/write/search/filter
-  |     +-- import/export
+  +-- Motor
+  +-- Encoder
+  +-- Limits / Safety
+  +-- Control Architecture
+  |     +-- Current Loop
+  |     +-- Speed Loop
+  |     +-- Position Loop
+  +-- Control Tuning
   |
   +-- Analysis
   |     +-- shared acquisition
@@ -111,16 +115,42 @@ App shell
   |     +-- Bode
   |     +-- capture/export
   |
-  +-- Motor
-  +-- Encoder
-  +-- Limits / Safety
-  +-- Control
+  +-- Parameters
   +-- Events
+  +-- Automation
 ```
 
-`App.svelte` is the workbench shell. It owns navigation, global connection summary, global notifications and the status bar. Device and analysis behavior belongs in domain modules.
+`App.svelte` is the workbench shell. It owns navigation, global connection summary, global notifications, global motor controls and the status bar. Device and analysis behavior belongs in domain modules.
 
-### UI reuse boundary
+Shared interaction behavior is defined in `UI_INTERACTION_RULES.md`.
+
+## Workbench-level state and controls
+
+The shell continuously presents application-global context. It may include:
+
+- device connection state;
+- motor state;
+- compact live position/speed/current feedback;
+- global motor `Enable / Disable` control;
+- global motor `Stop` control.
+
+Connection configuration and Connect/Disconnect are not duplicated in the shell. They belong to the Connection page because establishing a Device Session may require transport, endpoint and other transport-specific configuration.
+
+Global motor controls follow these semantics:
+
+```text
+DISABLED   [ Enable ]   [ Stop ] disabled
+ENABLED    [ Disable ]  [ Stop ] disabled
+RUN        [ Disable ]  [ Stop ] active
+```
+
+`Enable / Disable` is one stateful button in a stable location. Text, icon and color change together to indicate the action that pressing the button will perform. `Stop` is a separate persistent button because stopping current motion/task and changing motor enable state are different operations.
+
+`Run` is not a global shell action. Run always has workflow context: position/speed/torque motion, a tuning experiment, identification internals, Bode excitation, or another domain operation. The page/domain that defines the command owns the Run/Start action.
+
+Other mutually exclusive Start/Stop-style operations should normally use one stateful button in a stable location when both actions operate on the same task/resource. See `UI_INTERACTION_RULES.md`.
+
+## UI reuse boundary
 
 NMIXX owns product semantics, information architecture and presentation style. Generic interaction mechanisms should use mature libraries when they are already solved well.
 
@@ -162,7 +192,7 @@ Introduce only when the corresponding product need exists:
 
 Avoid using Ant Design, Material UI, Bootstrap, dashboard templates or a second general-purpose chart framework as the product's visual foundation.
 
-### Workflow-oriented navigation
+## Workflow-oriented navigation
 
 The primary Activity Bar is ordered by the normal motor commissioning and control workflow, not by software implementation modules.
 
@@ -182,6 +212,9 @@ Limits / Safety
 Control architecture
     |
     v
+Control Tuning
+    |
+    v
 Analysis: Scope / FFT / Bode
 ```
 
@@ -189,14 +222,15 @@ The order communicates the normal engineering sequence without turning the appli
 
 - **Connection** establishes the Device Session and transport. It is the first page and is independent from Scope or other analysis tools.
 - **Motor** owns the motor parameter view. Unknown parameters are obtained through identification tools attached to this page instead of a separate top-level Identification page.
-- **Encoder** configures feedback type/interface and generic encoder parameters. Phase search current, homing and zero-setting tools belong here because they establish position/electrical alignment.
+- **Encoder** configures feedback protocol/interface and protocol-specific parameters. Phase search current, homing and zero-setting tools belong here because they establish position/electrical alignment.
 - **Limits / Safety** configures user operating limits and other software safety boundaries while keeping hardware protection semantics distinct.
-- **Control** chooses the operating mode and control architecture: loop controllers, startup strategy, observer and related defaults. Detailed tuning is intentionally not centered here.
-- **Analysis** is where detailed tuning happens while observing data. Scope, FFT and Bode share acquisition and plotting infrastructure.
+- **Control Architecture** is a parent workflow with three child pages: **Current Loop**, **Speed Loop**, and **Position Loop**. Each child configures that loop's control structure: controller type, topology, feedback/observer choice, filters, feedforward and the Parameters that belong to those blocks. It may expose editable Bandwidth/Kp/Ki inside the diagram when those Parameters are part of the active block, but it is not the primary repeated tune-run-inspect workspace. Detailed page rules are in `CONTROL_ARCHITECTURE_PAGE.md`.
+- **Control Tuning** runs bounded tuning experiments for the already selected structure: it repeats only the common / primary tuning Parameters, binds them to one motion command, captures the synchronized response, and preserves the completed waveform for comparison. It does not absorb structural options such as controller type, filters, feedback selection or feedforward.
+- **Analysis** provides general-purpose continuous or manually triggered engineering analysis. Scope, FFT and Bode share acquisition and plotting infrastructure but are not responsible for the Control Tuning experiment workflow.
 
-Cross-workflow expert tools are visually separated from the commissioning sequence. The generic **Parameters** table, **Events**, and future **Automation** entry belong to this secondary group rather than interrupting the primary workflow.
+Cross-workflow expert tools are visually separated from the commissioning sequence. The generic **Parameters** table, **Events**, and **Automation** entry belong to this secondary group rather than interrupting the primary workflow.
 
-### Parameter is a shared service, not one page
+## Parameter is a shared service, not one page
 
 The Parameter subsystem is the single source of truth for host-visible parameters. The generic Parameters page is an expert view over the complete registry, but domain pages reuse the same Parameter API:
 
@@ -207,7 +241,11 @@ Parameter service
       +--> Motor page         (motor-related parameter view)
       +--> Encoder page       (feedback-related parameter view)
       +--> Limits page        (operating/safety limits)
-      +--> Control page       (algorithm selection and defaults)
+      +--> Control Architecture
+      |      +--> Current Loop
+      |      +--> Speed Loop
+      |      +--> Position Loop
+      +--> Control Tuning     (primary tuning parameters and experiments)
       +--> other domain pages
 ```
 
@@ -215,13 +253,139 @@ A value such as motor resistance must not have separate storage or write paths i
 
 The Parameters page uses TanStack Table for table behavior. TanStack owns sorting/filtering/table state; NMIXX owns markup, styling, device reads/writes and value editing semantics. Table code must not bypass `ParameterService`.
 
-### Control setup and tuning are different workflows
+## Control Architecture and Control Tuning are different workflows
 
-The Control page selects the active control structure and supplies usable default parameters. Fine tuning belongs with live analysis because tuning decisions depend on observed waveforms and frequency response.
+The **Control Architecture** domain is diagram-oriented and contains three child pages rather than one combined three-loop page:
 
-For example, selecting position/speed control may choose the position, speed and current-loop controller types. A sensorless mode may additionally choose startup strategy and observer. Once the structure is selected, detailed gain adjustment can be surfaced beside Scope/Bode/FFT views while still using the same Parameter service underneath.
+```text
+Control Architecture
+├─ Current Loop
+├─ Speed Loop
+└─ Position Loop
+```
 
-### Motion is a shared runtime model, not page-local state
+Each child page represents how that loop is built and allows configuration in the block where each setting acts. The parent is primarily a navigation/grouping concept; it does not require an additional overview page.
+
+Typical responsibilities include:
+
+- controller selection for each loop;
+- feedback / observer selection;
+- filters and their parameters;
+- feedforward blocks;
+- anti-windup or other controller-specific structural options;
+- Bandwidth / Kp / Ki when those Parameters belong to the selected controller block.
+
+Conceptually:
+
+```text
+Speed Ref
+   |
+   v
+[ Acc / Dec ]
+   |
+   v
+  (+) <---------------------------------- Speed Feedback
+   |
+   v
++-----------------------+
+| Speed Controller      |
+| Type         [ PI v ] |
+| Source       [ ...  ] |
+| Bandwidth    [ ...  ] |
+| Kp / Ki      [ ...  ] |
++-----------------------+
+   |
+   v
+[ Output Filter ]
+   |
+   v
+  (+) <------------------------- [ Feedforward ]
+   |
+   v
+Iq Ref
+```
+
+A Parameter shown here is still the same shared Parameter exposed by the generic Parameters page and any other domain view. Page placement does not create a separate value or write path.
+
+The **Control Tuning** page serves a different workflow: change a small set of frequently adjusted Parameters, run one bounded motion experiment, and inspect the resulting waveform.
+
+The first Control Tuning layout keeps three functional regions:
+
+```text
++------------------------------------------+----------------------+
+|                                          | Current Loop         |
+|                                          | Source [Bandwidth v]|
+|                                          | Bandwidth [1000] Hz |
+|              Experiment Waveform         | Id/Iq Kp/Ki [...]   |
+|                                          |                      |
+|                                          | Speed Loop           |
+|                                          | Source [Bandwidth v]|
+|                                          | Bandwidth [50] Hz   |
+|                                          | Kp / Ki [...]       |
+|                                          |                      |
++------------------------------------------+ Position / Observer  |
+| Motion Command                           | primary params       |
+| mode / target / speed / acc / dec        |                      |
+|                         [ Run ]           |                      |
++------------------------------------------+----------------------+
+```
+
+The tuning page intentionally repeats some Parameters that also appear inside Control Architecture. This is a workflow convenience, not duplicated state:
+
+```text
+Control Architecture ----+
+                         +--> ParameterService --> Device Parameter API
+Control Tuning ----------+
+Parameters page ---------+
+```
+
+Typical Parameters shared by Architecture and Tuning are Current/Speed Bandwidth, actual controller Kp/Ki, Position Kp and Mechanical ESO Bandwidth.
+
+Structural controls such as controller type, filter mode/frequency, feedback selection, feedforward and algorithm-specific topology options remain on Control Architecture unless there is a concrete reason they become high-frequency tuning controls.
+
+One **Run** on Control Tuning represents one bounded experiment:
+
+```text
+verify no uncommitted tuning draft
+        |
+        +-- no --> reject and ask the user to commit/discard
+        |
+       yes
+        v
+verify motor state == ENABLED
+        |
+        +-- no --> reject with explicit "Enable motor first"
+        |
+       yes
+        v
+read back effective tuning values
+        |
+        v
+configure motion command
+        |
+        v
+start finite capture
+        |
+        +-- pre-capture
+        v
+run configured experiment
+        |
+        v
+motion complete / settling condition
+        |
+        v
+return to ENABLED
+        |
+        +-- post-capture
+        v
+stop capture and keep waveform
+```
+
+There is deliberately no implicit Enable/Disable in the experiment. The global Stop control remains available while an experiment is running and stops the active motion/task through the same Application state used by the page.
+
+The waveform panel is not an indefinitely scrolling Scope. It reuses shared acquisition/uPlot infrastructure but is finite and synchronized to the tuning experiment.
+
+## Motion is a shared runtime model, not page-local state
 
 Motion is a first-class application domain. It owns the complete motor-motion command and trajectory-generation model, not merely a target setpoint.
 
@@ -311,7 +475,7 @@ Sensorless Speed remains a separate operating mode rather than a checkbox on nor
 MIT is also represented as its own mode because its command surface is inherently different from trajectory Position/Speed control: position reference, velocity reference, Kp, Kd and torque feedforward are edited as one MIT command set.
 
 
-### Analysis shares acquisition and plotting infrastructure
+## Analysis shares acquisition and plotting infrastructure
 
 Scope, FFT and Bode are related analysis functions, but not identical workflows. They share channel metadata, acquisition buffers, plotting, cursors, units and export infrastructure where practical.
 
@@ -323,11 +487,13 @@ The GUI must not open its own transport or decode telemetry wire frames for any 
 
 Chart interaction should use uPlot capabilities and plugins instead of recreating generic plotting behavior in Svelte. Unit metadata should drive reusable scale/axis policy rather than page-specific conditionals.
 
-### Connection is transport-oriented
+## Connection is transport-oriented
 
 Connection UI is a functional domain because the product will support more than one transport. Serial, native CAN FD and future transports present transport-specific configuration but converge on the same device/session API above them. The rest of the GUI must not assume that a connected device is represented by a serial port string.
 
-Connection state is global, but connection control belongs only to the Connection page. Scope, Motor, Control and other workflow pages consume the current Device Session; they do not embed their own Connect/Disconnect UI.
+Connection state is global, but connection configuration and Connect/Disconnect control belong to the Connection page. Scope, Motor, Control and other workflow pages consume the current Device Session; they do not embed their own Connect/Disconnect UI.
+
+Disconnect is session teardown, not a substitute for motor Stop or Disable. Motor safety behavior during communication loss must be defined independently by firmware/Application policy.
 
 ## Concurrency and ownership
 
