@@ -241,6 +241,7 @@ fn preflight_domain_name(domain: PreflightDomain) -> &'static str {
     match domain {
         PreflightDomain::LimitsSafety => "limits",
         PreflightDomain::Motor => "motor",
+        PreflightDomain::Encoder => "encoder",
         PreflightDomain::Identification => "identification",
     }
 }
@@ -510,6 +511,24 @@ fn parameter_write(
 ) -> Result<(), String> {
     let service = parameter_service(&state)?;
     service.write(id, value.into()).map_err(|error| error.to_string())
+}
+
+#[tauri::command]
+fn phase_search_preflight(
+    state: State<'_, Mutex<DesktopState>>,
+) -> Result<Vec<PreflightIssueDto>, String> {
+    let service = PreflightService::new(parameter_service(&state)?);
+    let issues = service
+        .check_phase_search()
+        .map_err(|error| error.to_string())?;
+    Ok(issues
+        .into_iter()
+        .map(|issue| PreflightIssueDto {
+            parameter_id: issue.parameter_id,
+            reason: issue.reason,
+            suggested_domain: preflight_domain_name(issue.suggested_domain),
+        })
+        .collect())
 }
 
 #[tauri::command]
@@ -829,6 +848,7 @@ fn main() {
             parameter_cached_many,
             parameter_refresh_all,
             parameter_write,
+            phase_search_preflight,
             identification_preflight,
             action_list,
             action_start,
