@@ -1,6 +1,6 @@
 <script lang="ts">
   import { motionState } from "./store";
-  import type { MotionMode, TrajectoryType } from "./types";
+  import type { MotionMode, MotionState, TrajectoryType } from "./types";
 
   const modeLabels: Record<MotionMode, string> = {
     position: "Position",
@@ -20,7 +20,7 @@
     return Number((event.currentTarget as HTMLInputElement).value);
   }
 
-  function update<K extends keyof typeof $motionState>(key: K, value: (typeof $motionState)[K]) {
+  function update<K extends keyof MotionState>(key: K, value: MotionState[K]) {
     motionState.update((state) => ({ ...state, [key]: value }));
   }
 
@@ -60,6 +60,7 @@
       </div>
     </section>
 
+    {#if $motionState.mode === "position" || $motionState.mode === "speed" || $motionState.mode === "sensorless-speed"}
     <section class="motion-card">
       <div class="motion-card-title">Trajectory</div>
       <div class="motion-card-body motion-grid">
@@ -94,6 +95,7 @@
         </label>
       </div>
     </section>
+    {/if}
 
     <section class="motion-card motion-command-card">
       <div class="motion-card-title">{modeLabels[$motionState.mode]} command</div>
