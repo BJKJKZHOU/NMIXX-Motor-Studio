@@ -268,7 +268,7 @@ fn device_connect(
     )
     .map_err(|error| error.to_string())?;
 
-    let capabilities = app.plot_capabilities();
+    let capabilities = app.plot_capabilities().map_err(|error| error.to_string())?;
     let channels = capabilities
         .with_schema(app.schema())
         .into_iter()
