@@ -309,29 +309,30 @@
         <aside class="parameter-column">
           {#each LOOP_SPECS as spec}
             <section class="tuning-section">
-              <div class="section-heading">
-                <div class="section-title">{spec.title}</div>
-                <span class="source-state">{sourceText(spec.source)}</span>
-              </div>
+              <div class="section-title">{spec.title}</div>
 
               <div class="field-grid">
                 <div class="field-label">{label(spec.source)}</div>
-                <select
-                  class="compact-select"
-                  disabled={locked(spec.source)}
-                  value={sourceText(spec.source)}
-                  onchange={(event) => {
-                    const next = (event.currentTarget as HTMLSelectElement).value;
-                    void setSource(
-                      spec.source,
-                      next === "Manual" ? "CTRL_TUNE_MANUAL" : "CTRL_TUNE_BANDWIDTH",
-                      sourceSymbols(spec),
-                    );
-                  }}
-                >
-                  <option value="Bandwidth">Bandwidth</option>
-                  <option value="Manual">Manual</option>
-                </select>
+                {#if metadata[spec.source]}
+                  <select
+                    class="compact-select"
+                    disabled={locked(spec.source)}
+                    value={sourceText(spec.source)}
+                    onchange={(event) => {
+                      const next = (event.currentTarget as HTMLSelectElement).value;
+                      void setSource(
+                        spec.source,
+                        next === "Manual" ? "CTRL_TUNE_MANUAL" : "CTRL_TUNE_BANDWIDTH",
+                        sourceSymbols(spec),
+                      );
+                    }}
+                  >
+                    <option value="Bandwidth">Bandwidth</option>
+                    <option value="Manual">Manual</option>
+                  </select>
+                {:else}
+                  <span class="unavailable">Firmware unavailable</span>
+                {/if}
 
                 <div class="field-label">{label(spec.bandwidth)}</div>
                 <div class="editor">
@@ -339,7 +340,7 @@
                     class:dirty={dirty(spec.bandwidth)}
                     class="compact-input mono"
                     value={drafts[spec.bandwidth] ?? ""}
-                    disabled={locked(spec.bandwidth)}
+                    disabled={!metadata[spec.bandwidth] || locked(spec.bandwidth)}
                     oninput={(event) => drafts = { ...drafts, [spec.bandwidth]: event.currentTarget.value }}
                     onkeydown={(event) => keydown(event, spec.bandwidth, gainRefresh(spec))}
                   />
@@ -353,7 +354,7 @@
                       class:dirty={dirty(gain)}
                       class="compact-input mono"
                       value={drafts[gain] ?? ""}
-                      disabled={locked(gain)}
+                      disabled={!metadata[gain] || locked(gain)}
                       oninput={(event) => drafts = { ...drafts, [gain]: event.currentTarget.value }}
                       onkeydown={(event) => keydown(event, gain, gainRefresh(spec))}
                     />
@@ -373,7 +374,7 @@
                   class:dirty={dirty(POSITION_KP)}
                   class="compact-input mono"
                   value={drafts[POSITION_KP] ?? ""}
-                  disabled={locked(POSITION_KP)}
+                  disabled={!metadata[POSITION_KP] || locked(POSITION_KP)}
                   oninput={(event) => drafts = { ...drafts, [POSITION_KP]: event.currentTarget.value }}
                   onkeydown={(event) => keydown(event, POSITION_KP)}
                 />
@@ -391,7 +392,7 @@
                   class:dirty={dirty(ESO_BW)}
                   class="compact-input mono"
                   value={drafts[ESO_BW] ?? ""}
-                  disabled={locked(ESO_BW)}
+                  disabled={!metadata[ESO_BW] || locked(ESO_BW)}
                   oninput={(event) => drafts = { ...drafts, [ESO_BW]: event.currentTarget.value }}
                   onkeydown={(event) => keydown(event, ESO_BW)}
                 />
@@ -493,26 +494,10 @@
     padding: 14px;
   }
 
-  .section-heading {
-    display: flex;
-    align-items: baseline;
-    justify-content: space-between;
-    gap: 12px;
-  }
-
   .section-title {
     margin-bottom: 12px;
     font-size: 13px;
     font-weight: 600;
-  }
-
-  .section-heading .section-title {
-    margin-bottom: 12px;
-  }
-
-  .source-state {
-    color: var(--vscode-descriptionForeground);
-    font-size: 11px;
   }
 
   .field-grid {
@@ -562,6 +547,7 @@
   }
 
   .unit,
+  .unavailable,
   .loading-note,
   .state-note {
     color: var(--vscode-descriptionForeground);
