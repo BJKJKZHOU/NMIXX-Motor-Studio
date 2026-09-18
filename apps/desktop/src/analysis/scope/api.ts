@@ -13,10 +13,18 @@ export function pauseScope(): Promise<void> {
   return invoke("scope_pause");
 }
 
+export function stopScope(): Promise<void> {
+  return invoke("scope_stop");
+}
+
 export function clearScope(): Promise<void> {
   return invoke("scope_clear");
 }
 
-export function readScopeSnapshot(windowSeconds = 0.5, maxPoints = 2500): Promise<ScopeSnapshot> {
-  return invoke<ScopeSnapshot>("scope_snapshot", { windowSeconds, maxPoints });
+export function readScopeSnapshot(
+  windowSeconds = 0.5,
+  endOffsetSeconds = 0,
+  maxPoints = 2500,
+): Promise<ScopeSnapshot> {
+  return invoke<ScopeSnapshot>("scope_snapshot", { windowSeconds, endOffsetSeconds, maxPoints });
 }
