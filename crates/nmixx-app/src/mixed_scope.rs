@@ -1,13 +1,17 @@
+use std::collections::HashMap;
 use std::sync::{Arc, Mutex, mpsc};
 use std::thread::{self, JoinHandle};
 use std::time::Duration;
 
+use nmixx_core::protocol::{
+    SequenceTracker, StreamDecodeError, decode_fast_data, decode_normal_data,
+};
 use thiserror::Error;
 
 use crate::{
     DevicePlotCapabilities, DeviceSession, HostSchema, PLOT_FAST_MASK, PLOT_GROUP_FAST,
     PLOT_GROUP_NORMAL, PLOT_NORMAL_MASK, SessionError, SessionEvent, StreamConfig, StreamError,
-    StreamPipeline, StreamPipelineError, StreamSession, StreamState, StreamWireMode,
+    StreamSession, StreamState,
 };
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -77,6 +81,10 @@ pub enum MixedScopeError {
     NotNormalCapable(u16),
     #[error("FAST channel 0x{0:04X} has invalid plot scale")]
     InvalidFastScale(u16),
+    #[error("Scope group already has a pending hot reconfiguration")]
+    ReconfigurePending,
+    #[error("Scope received unknown Config_ID {0}")]
+    UnknownConfig(u8),
     #[error("Scope runtime failed: {0}")]
     Runtime(String),
     #[error(transparent)]
@@ -84,20 +92,35 @@ pub enum MixedScopeError {
     #[error(transparent)]
     Stream(#[from] StreamError),
     #[error(transparent)]
-    Pipeline(#[from] StreamPipelineError),
+    Decode(#[from] StreamDecodeError),
     #[error("Scope worker is closed")]
     Closed,
 }
 
-struct GroupRuntime {
+#[derive(Clone)]
+struct GroupLayout {
+    config_id: u8,
     ids: Vec<u16>,
-    pipeline: StreamPipeline,
+    scales: Vec<f32>,
+}
+
+struct GroupRuntime {
+    active: GroupLayout,
+    pending: Option<GroupLayout>,
+    sequence: SequenceTracker,
     lost_frames: u64,
+}
+
+struct ChannelHistory {
+    rate: ScopeRate,
+    stream: StreamSession,
 }
 
 struct SharedState {
     fast: Option<GroupRuntime>,
     normal: Option<GroupRuntime>,
+    histories: HashMap<u16, ChannelHistory>,
+    state: StreamState,
     runtime_error: Option<String>,
 }
 
@@ -107,9 +130,11 @@ enum ScopeCommand {
 
 pub struct MixedScopeSession {
     session: DeviceSession,
-    config: MixedScopeConfig,
-    group_mask: u8,
+    capabilities: DevicePlotCapabilities,
+    schema: HostSchema,
+    config: Mutex<MixedScopeConfig>,
     shared: Arc<Mutex<SharedState>>,
+    next_config_id: Mutex<u8>,
     command_tx: mpsc::Sender<ScopeCommand>,
     worker: Option<JoinHandle<()>>,
 }
@@ -123,138 +148,46 @@ impl MixedScopeSession {
         history: Duration,
         config_id: u8,
     ) -> Result<Self, MixedScopeError> {
-        if selections.is_empty() {
-            return Err(MixedScopeError::EmptyChannels);
-        }
-
-        let fast_count = selections.iter().filter(|item| item.rate == ScopeRate::Fast).count();
-        let normal_count = selections.iter().filter(|item| item.rate == ScopeRate::Normal).count();
-        if fast_count > capabilities.fast_max_channels as usize {
-            return Err(MixedScopeError::TooManyFastChannels {
-                actual: fast_count,
-                max: capabilities.fast_max_channels as usize,
-            });
-        }
-        if normal_count > capabilities.normal_max_channels as usize {
-            return Err(MixedScopeError::TooManyNormalChannels {
-                actual: normal_count,
-                max: capabilities.normal_max_channels as usize,
-            });
-        }
-
-        let mut channels = Vec::with_capacity(selections.len());
-        for selection in selections {
-            let capability = capabilities
-                .channel(selection.id)
-                .ok_or(MixedScopeError::UnknownChannel(selection.id))?;
-            match selection.rate {
-                ScopeRate::Fast if !capability.supports_fast() => {
-                    return Err(MixedScopeError::NotFastCapable(selection.id));
-                }
-                ScopeRate::Normal if !capability.supports_normal() => {
-                    return Err(MixedScopeError::NotNormalCapable(selection.id));
-                }
-                _ => {}
-            }
-
-            if selection.rate == ScopeRate::Fast
-                && (!capability.fast_scale.is_finite() || capability.fast_scale <= 0.0)
-            {
-                return Err(MixedScopeError::InvalidFastScale(selection.id));
-            }
-
-            let metadata = schema.parameter_by_id(selection.id);
-            channels.push(MixedScopeChannel {
-                id: selection.id,
-                symbol: metadata
-                    .map(|value| value.symbol.clone())
-                    .unwrap_or_else(|| format!("0x{:04X}", selection.id)),
-                unit: metadata.and_then(|value| value.unit.clone()),
-                rate: selection.rate,
-                sample_rate_hz: match selection.rate {
-                    ScopeRate::Fast => capabilities.fast_rate_hz,
-                    ScopeRate::Normal => capabilities.normal_rate_hz,
-                },
-                scale: if selection.rate == ScopeRate::Fast {
-                    capability.fast_scale
-                } else {
-                    1.0
-                },
-            });
-        }
-
-        let config = MixedScopeConfig {
-            config_id,
-            history,
-            channels,
-        };
-        Self::new(session, config)
+        let config = build_config(capabilities, schema, selections, history, config_id)?;
+        Self::new_with_context(session, capabilities.clone(), schema.clone(), config)
     }
 
-    pub fn new(session: DeviceSession, config: MixedScopeConfig) -> Result<Self, MixedScopeError> {
-        let fast_channels: Vec<&MixedScopeChannel> = config
-            .channels
-            .iter()
-            .filter(|channel| channel.rate == ScopeRate::Fast)
-            .collect();
-        let normal_channels: Vec<&MixedScopeChannel> = config
-            .channels
-            .iter()
-            .filter(|channel| channel.rate == ScopeRate::Normal)
-            .collect();
+    fn new_with_context(
+        session: DeviceSession,
+        capabilities: DevicePlotCapabilities,
+        schema: HostSchema,
+        config: MixedScopeConfig,
+    ) -> Result<Self, MixedScopeError> {
+        let fast_layout = group_layout(&config, ScopeRate::Fast);
+        let normal_layout = group_layout(&config, ScopeRate::Normal);
 
-        let mut group_mask = 0u8;
-        let fast = if fast_channels.is_empty() {
-            None
-        } else {
-            let ids: Vec<u16> = fast_channels.iter().map(|channel| channel.id).collect();
-            session.plot_config(PLOT_GROUP_FAST, config.config_id, &ids)?;
-            let stream = StreamSession::new(StreamConfig {
-                sample_rate_hz: fast_channels[0].sample_rate_hz,
-                channel_count: ids.len(),
-                history: config.history,
-            })?;
-            let pipeline = StreamPipeline::new(
-                config.config_id,
-                StreamWireMode::Fast {
-                    scales: fast_channels.iter().map(|channel| channel.scale).collect(),
+        if let Some(layout) = &fast_layout {
+            session.plot_config(PLOT_GROUP_FAST, layout.config_id, &layout.ids)?;
+        }
+        if let Some(layout) = &normal_layout {
+            session.plot_config(PLOT_GROUP_NORMAL, layout.config_id, &layout.ids)?;
+        }
+
+        let mut histories = HashMap::new();
+        for channel in &config.channels {
+            histories.insert(
+                channel.id,
+                ChannelHistory {
+                    rate: channel.rate,
+                    stream: StreamSession::new(StreamConfig {
+                        sample_rate_hz: channel.sample_rate_hz,
+                        channel_count: 1,
+                        history: config.history,
+                    })?,
                 },
-                stream,
-            )?;
-            group_mask |= PLOT_FAST_MASK;
-            Some(GroupRuntime {
-                ids,
-                pipeline,
-                lost_frames: 0,
-            })
-        };
-
-        let normal = if normal_channels.is_empty() {
-            None
-        } else {
-            let ids: Vec<u16> = normal_channels.iter().map(|channel| channel.id).collect();
-            session.plot_config(PLOT_GROUP_NORMAL, config.config_id, &ids)?;
-            let stream = StreamSession::new(StreamConfig {
-                sample_rate_hz: normal_channels[0].sample_rate_hz,
-                channel_count: ids.len(),
-                history: config.history,
-            })?;
-            let pipeline = StreamPipeline::new(config.config_id, StreamWireMode::Normal, stream)?;
-            group_mask |= PLOT_NORMAL_MASK;
-            Some(GroupRuntime {
-                ids,
-                pipeline,
-                lost_frames: 0,
-            })
-        };
-
-        if group_mask == 0 {
-            return Err(MixedScopeError::EmptyChannels);
+            );
         }
 
         let shared = Arc::new(Mutex::new(SharedState {
-            fast,
-            normal,
+            fast: fast_layout.map(group_runtime),
+            normal: normal_layout.map(group_runtime),
+            histories,
+            state: StreamState::Stopped,
             runtime_error: None,
         }));
         let events = session.subscribe()?;
@@ -266,42 +199,169 @@ impl MixedScopeSession {
             .spawn(move || scope_worker(worker_session, events, command_rx, worker_shared))
             .map_err(|_| MixedScopeError::Closed)?;
 
+        let next_config_id = if config.config_id == u8::MAX {
+            1
+        } else {
+            config.config_id + 1
+        };
+
         Ok(Self {
             session,
-            config,
-            group_mask,
+            capabilities,
+            schema,
+            config: Mutex::new(config),
             shared,
+            next_config_id: Mutex::new(next_config_id),
             command_tx,
             worker: Some(worker),
         })
     }
 
-    pub fn config(&self) -> &MixedScopeConfig {
-        &self.config
+    pub fn config(&self) -> Result<MixedScopeConfig, MixedScopeError> {
+        self.config
+            .lock()
+            .map_err(|_| MixedScopeError::Closed)
+            .map(|config| config.clone())
     }
 
-    pub fn live(&self) -> Result<(), MixedScopeError> {
-        let already_live = {
-            let mut shared = self.shared.lock().map_err(|_| MixedScopeError::Closed)?;
+    pub fn reconfigure(&self, selections: &[ScopeSelection]) -> Result<MixedScopeConfig, MixedScopeError> {
+        let old_config = self.config()?;
+        let mut new_config = build_config(
+            &self.capabilities,
+            &self.schema,
+            selections,
+            old_config.history,
+            old_config.config_id,
+        )?;
+
+        let new_fast_ids = ids_for_rate(&new_config, ScopeRate::Fast);
+        let new_normal_ids = ids_for_rate(&new_config, ScopeRate::Normal);
+
+        let (state, old_fast_ids, old_normal_ids, fast_pending, normal_pending) = {
+            let shared = self.shared.lock().map_err(|_| MixedScopeError::Closed)?;
             ensure_runtime_ok(&shared)?;
-            let already_live = group_states(&shared)
-                .all(|state| state == StreamState::Live);
-            if !already_live {
-                for_each_group_mut(&mut shared, |group| {
-                    group.pipeline.reset_sequence();
-                    group.lost_frames = 0;
-                    group.pipeline.stream_mut().live();
-                });
-            }
-            already_live
+            (
+                shared.state,
+                shared.fast.as_ref().map(|group| group.active.ids.clone()).unwrap_or_default(),
+                shared.normal.as_ref().map(|group| group.active.ids.clone()).unwrap_or_default(),
+                shared.fast.as_ref().is_some_and(|group| group.pending.is_some()),
+                shared.normal.as_ref().is_some_and(|group| group.pending.is_some()),
+            )
         };
-        if !already_live {
-            if let Err(error) = self.session.plot_start(self.group_mask) {
+
+        let fast_changed = old_fast_ids != new_fast_ids;
+        let normal_changed = old_normal_ids != new_normal_ids;
+
+        if (fast_changed && fast_pending) || (normal_changed && normal_pending) {
+            return Err(MixedScopeError::ReconfigurePending);
+        }
+
+        prepare_histories(&self.shared, &new_config)?;
+
+        if fast_changed {
+            self.reconfigure_group(ScopeRate::Fast, &new_config, state)?;
+        }
+        if normal_changed {
+            self.reconfigure_group(ScopeRate::Normal, &new_config, state)?;
+        }
+
+        new_config.config_id = self.current_config_marker()?;
+        *self.config.lock().map_err(|_| MixedScopeError::Closed)? = new_config.clone();
+        Ok(new_config)
+    }
+
+    fn reconfigure_group(
+        &self,
+        rate: ScopeRate,
+        config: &MixedScopeConfig,
+        state: StreamState,
+    ) -> Result<(), MixedScopeError> {
+        let ids = ids_for_rate(config, rate);
+        let mask = rate_mask(rate);
+        let group = rate_group(rate);
+
+        if ids.is_empty() {
+            let had_group = {
+                let shared = self.shared.lock().map_err(|_| MixedScopeError::Closed)?;
+                group_ref(&shared, rate).is_some()
+            };
+            if had_group && matches!(state, StreamState::Live | StreamState::Capturing) {
+                self.session.plot_stop(mask)?;
+            }
+            let mut shared = self.shared.lock().map_err(|_| MixedScopeError::Closed)?;
+            *group_mut(&mut shared, rate) = None;
+            return Ok(());
+        }
+
+        let layout = GroupLayout {
+            config_id: self.allocate_config_id()?,
+            ids,
+            scales: scales_for_rate(config, rate),
+        };
+
+        let had_group = {
+            let shared = self.shared.lock().map_err(|_| MixedScopeError::Closed)?;
+            group_ref(&shared, rate).is_some()
+        };
+
+        if had_group && matches!(state, StreamState::Live | StreamState::Capturing) {
+            {
+                let mut shared = self.shared.lock().map_err(|_| MixedScopeError::Closed)?;
+                let runtime = group_mut(&mut shared, rate)
+                    .as_mut()
+                    .ok_or(MixedScopeError::Closed)?;
+                runtime.pending = Some(layout.clone());
+            }
+            if let Err(error) = self.session.plot_config(group, layout.config_id, &layout.ids) {
                 if let Ok(mut shared) = self.shared.lock() {
-                    for_each_group_mut(&mut shared, |group| group.pipeline.stream_mut().pause());
+                    if let Some(runtime) = group_mut(&mut shared, rate).as_mut() {
+                        runtime.pending = None;
+                    }
                 }
                 return Err(error.into());
             }
+            return Ok(());
+        }
+
+        self.session.plot_config(group, layout.config_id, &layout.ids)?;
+
+        {
+            let mut shared = self.shared.lock().map_err(|_| MixedScopeError::Closed)?;
+            *group_mut(&mut shared, rate) = Some(group_runtime(layout));
+        }
+
+        if !had_group && matches!(state, StreamState::Live | StreamState::Capturing) {
+            self.session.plot_start(mask)?;
+        }
+
+        Ok(())
+    }
+
+    fn allocate_config_id(&self) -> Result<u8, MixedScopeError> {
+        let mut next = self.next_config_id.lock().map_err(|_| MixedScopeError::Closed)?;
+        let value = *next;
+        *next = if value == u8::MAX { 1 } else { value + 1 };
+        Ok(value)
+    }
+
+    fn current_config_marker(&self) -> Result<u8, MixedScopeError> {
+        let next = self.next_config_id.lock().map_err(|_| MixedScopeError::Closed)?;
+        Ok(next.wrapping_sub(1).max(1))
+    }
+
+    pub fn live(&self) -> Result<(), MixedScopeError> {
+        let mask = {
+            let mut shared = self.shared.lock().map_err(|_| MixedScopeError::Closed)?;
+            ensure_runtime_ok(&shared)?;
+            shared.state = StreamState::Live;
+            for history in shared.histories.values_mut() {
+                history.stream.live();
+            }
+            group_mask(&shared)
+        };
+
+        if mask != 0 {
+            self.session.plot_start(mask)?;
         }
         Ok(())
     }
@@ -311,68 +371,83 @@ impl MixedScopeSession {
     }
 
     pub fn pause(&self) -> Result<(), MixedScopeError> {
-        if self.is_running()? {
-            self.session.plot_stop(self.group_mask)?;
+        let mask = {
+            let shared = self.shared.lock().map_err(|_| MixedScopeError::Closed)?;
+            ensure_runtime_ok(&shared)?;
+            group_mask(&shared)
+        };
+        if mask != 0 {
+            self.session.plot_stop(mask)?;
         }
         let mut shared = self.shared.lock().map_err(|_| MixedScopeError::Closed)?;
-        for_each_group_mut(&mut shared, |group| group.pipeline.stream_mut().pause());
+        shared.state = StreamState::Paused;
+        for history in shared.histories.values_mut() {
+            history.stream.pause();
+        }
         Ok(())
     }
 
     pub fn stop(&self) -> Result<(), MixedScopeError> {
-        if self.is_running()? {
-            self.session.plot_stop(self.group_mask)?;
+        let mask = {
+            let shared = self.shared.lock().map_err(|_| MixedScopeError::Closed)?;
+            ensure_runtime_ok(&shared)?;
+            group_mask(&shared)
+        };
+        if mask != 0 {
+            self.session.plot_stop(mask)?;
         }
         let mut shared = self.shared.lock().map_err(|_| MixedScopeError::Closed)?;
-        for_each_group_mut(&mut shared, |group| group.pipeline.stream_mut().stop());
+        shared.state = StreamState::Stopped;
+        for history in shared.histories.values_mut() {
+            history.stream.stop();
+        }
         Ok(())
     }
 
     pub fn clear(&self) -> Result<(), MixedScopeError> {
         let mut shared = self.shared.lock().map_err(|_| MixedScopeError::Closed)?;
         ensure_runtime_ok(&shared)?;
-        for_each_group_mut(&mut shared, |group| group.pipeline.stream_mut().clear());
+        for history in shared.histories.values_mut() {
+            history.stream.clear();
+        }
         Ok(())
     }
 
     pub fn capture(&self, duration: Duration) -> Result<(), MixedScopeError> {
-        let was_running = self.is_running()?;
-        {
+        let mask = {
             let mut shared = self.shared.lock().map_err(|_| MixedScopeError::Closed)?;
             ensure_runtime_ok(&shared)?;
-            if let Some(group) = shared.fast.as_mut() {
-                group.pipeline.reset_sequence();
-                group.lost_frames = 0;
-                group.pipeline.stream_mut().capture(duration)?;
+            shared.state = StreamState::Capturing;
+            for history in shared.histories.values_mut() {
+                history.stream.capture(duration)?;
             }
-            if let Some(group) = shared.normal.as_mut() {
-                group.pipeline.reset_sequence();
-                group.lost_frames = 0;
-                group.pipeline.stream_mut().capture(duration)?;
-            }
-        }
-        if !was_running {
-            self.session.plot_start(self.group_mask)?;
+            group_mask(&shared)
+        };
+        if mask != 0 {
+            self.session.plot_start(mask)?;
         }
         Ok(())
     }
 
     pub fn status(&self) -> Result<MixedScopeStatus, MixedScopeError> {
+        let config = self.config()?;
         let shared = self.shared.lock().map_err(|_| MixedScopeError::Closed)?;
         ensure_runtime_ok(&shared)?;
-        let state = combined_state(&shared);
-        let samples = groups(&shared)
-            .map(|group| group.pipeline.stream().len())
-            .sum();
-        let capacity_samples = groups(&shared)
-            .map(|group| group.pipeline.stream().capacity_samples())
-            .sum();
-        let lost_frames = groups(&shared).map(|group| group.lost_frames).sum();
+
+        let mut samples = 0usize;
+        let mut capacity_samples = 0usize;
+        for channel in &config.channels {
+            if let Some(history) = shared.histories.get(&channel.id) {
+                samples = samples.saturating_add(history.stream.len());
+                capacity_samples = capacity_samples.saturating_add(history.stream.capacity_samples());
+            }
+        }
+
         Ok(MixedScopeStatus {
-            state,
+            state: shared.state,
             samples,
             capacity_samples,
-            lost_frames,
+            lost_frames: group_lost_frames(&shared),
         })
     }
 
@@ -385,38 +460,32 @@ impl MixedScopeSession {
         window: Duration,
         end_offset: Duration,
     ) -> Result<MixedScopeSnapshot, MixedScopeError> {
+        let config = self.config()?;
         let shared = self.shared.lock().map_err(|_| MixedScopeError::Closed)?;
         ensure_runtime_ok(&shared)?;
 
-        let mut series = Vec::with_capacity(self.config.channels.len());
-        for channel in &self.config.channels {
-            let group = match channel.rate {
-                ScopeRate::Fast => shared.fast.as_ref(),
-                ScopeRate::Normal => shared.normal.as_ref(),
-            }
-            .ok_or(MixedScopeError::Closed)?;
-
-            let index = group
-                .ids
-                .iter()
-                .position(|id| *id == channel.id)
+        let mut series = Vec::with_capacity(config.channels.len());
+        for channel in &config.channels {
+            let history = shared
+                .histories
+                .get(&channel.id)
                 .ok_or(MixedScopeError::UnknownChannel(channel.id))?;
 
             let rate = f64::from(channel.sample_rate_hz);
             let wanted = (window.as_secs_f64() * rate).ceil() as usize;
             let offset = (end_offset.as_secs_f64() * rate).round() as usize;
-            let snapshot = group.pipeline.snapshot();
+            let snapshot = history.stream.snapshot();
 
             let available = snapshot.sample_count();
             let end = available.saturating_sub(offset.min(available));
             let start = end.saturating_sub(wanted.max(1));
-
             let mut values = Vec::with_capacity(end.saturating_sub(start));
             for sample_index in start..end {
                 if let Some(sample) = snapshot.sample(sample_index) {
-                    values.push(sample[index]);
+                    values.push(sample[0]);
                 }
             }
+
             series.push(MixedScopeSeries {
                 id: channel.id,
                 sample_rate_hz: channel.sample_rate_hz,
@@ -425,25 +494,23 @@ impl MixedScopeSession {
         }
 
         Ok(MixedScopeSnapshot {
-            state: combined_state(&shared),
-            lost_frames: groups(&shared).map(|group| group.lost_frames).sum(),
+            state: shared.state,
+            lost_frames: group_lost_frames(&shared),
             series,
         })
-    }
-
-    fn is_running(&self) -> Result<bool, MixedScopeError> {
-        let shared = self.shared.lock().map_err(|_| MixedScopeError::Closed)?;
-        ensure_runtime_ok(&shared)?;
-        Ok(group_states(&shared).any(|state| {
-            matches!(state, StreamState::Live | StreamState::Capturing)
-        }))
     }
 }
 
 impl Drop for MixedScopeSession {
     fn drop(&mut self) {
-        if self.is_running().unwrap_or(false) {
-            let _ = self.session.plot_stop(self.group_mask);
+        let mask = self
+            .shared
+            .lock()
+            .ok()
+            .map(|shared| group_mask(&shared))
+            .unwrap_or(0);
+        if mask != 0 {
+            let _ = self.session.plot_stop(mask);
         }
         let _ = self.command_tx.send(ScopeCommand::Shutdown);
         if let Some(worker) = self.worker.take() {
@@ -452,41 +519,212 @@ impl Drop for MixedScopeSession {
     }
 }
 
+fn build_config(
+    capabilities: &DevicePlotCapabilities,
+    schema: &HostSchema,
+    selections: &[ScopeSelection],
+    history: Duration,
+    config_id: u8,
+) -> Result<MixedScopeConfig, MixedScopeError> {
+    if selections.is_empty() {
+        return Err(MixedScopeError::EmptyChannels);
+    }
+
+    let fast_count = selections.iter().filter(|item| item.rate == ScopeRate::Fast).count();
+    let normal_count = selections.iter().filter(|item| item.rate == ScopeRate::Normal).count();
+    if fast_count > capabilities.fast_max_channels as usize {
+        return Err(MixedScopeError::TooManyFastChannels {
+            actual: fast_count,
+            max: capabilities.fast_max_channels as usize,
+        });
+    }
+    if normal_count > capabilities.normal_max_channels as usize {
+        return Err(MixedScopeError::TooManyNormalChannels {
+            actual: normal_count,
+            max: capabilities.normal_max_channels as usize,
+        });
+    }
+
+    let mut channels = Vec::with_capacity(selections.len());
+    for selection in selections {
+        let capability = capabilities
+            .channel(selection.id)
+            .ok_or(MixedScopeError::UnknownChannel(selection.id))?;
+        match selection.rate {
+            ScopeRate::Fast if !capability.supports_fast() => {
+                return Err(MixedScopeError::NotFastCapable(selection.id));
+            }
+            ScopeRate::Normal if !capability.supports_normal() => {
+                return Err(MixedScopeError::NotNormalCapable(selection.id));
+            }
+            _ => {}
+        }
+
+        if selection.rate == ScopeRate::Fast
+            && (!capability.fast_scale.is_finite() || capability.fast_scale <= 0.0)
+        {
+            return Err(MixedScopeError::InvalidFastScale(selection.id));
+        }
+
+        let metadata = schema.parameter_by_id(selection.id);
+        channels.push(MixedScopeChannel {
+            id: selection.id,
+            symbol: metadata
+                .map(|value| value.symbol.clone())
+                .unwrap_or_else(|| format!("0x{:04X}", selection.id)),
+            unit: metadata.and_then(|value| value.unit.clone()),
+            rate: selection.rate,
+            sample_rate_hz: match selection.rate {
+                ScopeRate::Fast => capabilities.fast_rate_hz,
+                ScopeRate::Normal => capabilities.normal_rate_hz,
+            },
+            scale: if selection.rate == ScopeRate::Fast {
+                capability.fast_scale
+            } else {
+                1.0
+            },
+        });
+    }
+
+    Ok(MixedScopeConfig {
+        config_id,
+        history,
+        channels,
+    })
+}
+
+fn group_layout(config: &MixedScopeConfig, rate: ScopeRate) -> Option<GroupLayout> {
+    let ids = ids_for_rate(config, rate);
+    if ids.is_empty() {
+        return None;
+    }
+    Some(GroupLayout {
+        config_id: config.config_id,
+        ids,
+        scales: scales_for_rate(config, rate),
+    })
+}
+
+fn group_runtime(layout: GroupLayout) -> GroupRuntime {
+    GroupRuntime {
+        active: layout,
+        pending: None,
+        sequence: SequenceTracker::default(),
+        lost_frames: 0,
+    }
+}
+
+fn ids_for_rate(config: &MixedScopeConfig, rate: ScopeRate) -> Vec<u16> {
+    config
+        .channels
+        .iter()
+        .filter(|channel| channel.rate == rate)
+        .map(|channel| channel.id)
+        .collect()
+}
+
+fn scales_for_rate(config: &MixedScopeConfig, rate: ScopeRate) -> Vec<f32> {
+    config
+        .channels
+        .iter()
+        .filter(|channel| channel.rate == rate)
+        .map(|channel| channel.scale)
+        .collect()
+}
+
+fn rate_group(rate: ScopeRate) -> u8 {
+    match rate {
+        ScopeRate::Fast => PLOT_GROUP_FAST,
+        ScopeRate::Normal => PLOT_GROUP_NORMAL,
+    }
+}
+
+fn rate_mask(rate: ScopeRate) -> u8 {
+    match rate {
+        ScopeRate::Fast => PLOT_FAST_MASK,
+        ScopeRate::Normal => PLOT_NORMAL_MASK,
+    }
+}
+
+fn group_ref(shared: &SharedState, rate: ScopeRate) -> Option<&GroupRuntime> {
+    match rate {
+        ScopeRate::Fast => shared.fast.as_ref(),
+        ScopeRate::Normal => shared.normal.as_ref(),
+    }
+}
+
+fn group_mut(shared: &mut SharedState, rate: ScopeRate) -> &mut Option<GroupRuntime> {
+    match rate {
+        ScopeRate::Fast => &mut shared.fast,
+        ScopeRate::Normal => &mut shared.normal,
+    }
+}
+
+fn group_mask(shared: &SharedState) -> u8 {
+    let mut mask = 0u8;
+    if shared.fast.is_some() {
+        mask |= PLOT_FAST_MASK;
+    }
+    if shared.normal.is_some() {
+        mask |= PLOT_NORMAL_MASK;
+    }
+    mask
+}
+
+fn group_lost_frames(shared: &SharedState) -> u64 {
+    shared.fast.as_ref().map(|group| group.lost_frames).unwrap_or(0)
+        + shared.normal.as_ref().map(|group| group.lost_frames).unwrap_or(0)
+}
+
+fn prepare_histories(
+    shared: &Arc<Mutex<SharedState>>,
+    config: &MixedScopeConfig,
+) -> Result<(), MixedScopeError> {
+    let mut state = shared.lock().map_err(|_| MixedScopeError::Closed)?;
+    let active_state = state.state;
+
+    let selected: HashMap<u16, ScopeRate> = config
+        .channels
+        .iter()
+        .map(|channel| (channel.id, channel.rate))
+        .collect();
+
+    state.histories.retain(|id, history| {
+        selected.get(id).is_some_and(|rate| *rate == history.rate)
+    });
+
+    for channel in &config.channels {
+        if state.histories.contains_key(&channel.id) {
+            continue;
+        }
+
+        let mut stream = StreamSession::new(StreamConfig {
+            sample_rate_hz: channel.sample_rate_hz,
+            channel_count: 1,
+            history: config.history,
+        })?;
+        match active_state {
+            StreamState::Live => stream.live(),
+            StreamState::Capturing => stream.live(),
+            StreamState::Paused => stream.pause(),
+            StreamState::Stopped => stream.stop(),
+        }
+
+        state.histories.insert(
+            channel.id,
+            ChannelHistory {
+                rate: channel.rate,
+                stream,
+            },
+        );
+    }
+    Ok(())
+}
+
 fn ensure_runtime_ok(shared: &SharedState) -> Result<(), MixedScopeError> {
     match &shared.runtime_error {
         Some(error) => Err(MixedScopeError::Runtime(error.clone())),
         None => Ok(()),
-    }
-}
-
-fn groups(shared: &SharedState) -> impl Iterator<Item = &GroupRuntime> {
-    shared.fast.iter().chain(shared.normal.iter())
-}
-
-
-fn group_states(shared: &SharedState) -> impl Iterator<Item = StreamState> + '_ {
-    groups(shared).map(|group| group.pipeline.stream().state())
-}
-
-fn for_each_group_mut(shared: &mut SharedState, mut call: impl FnMut(&mut GroupRuntime)) {
-    if let Some(group) = shared.fast.as_mut() {
-        call(group);
-    }
-    if let Some(group) = shared.normal.as_mut() {
-        call(group);
-    }
-}
-
-fn combined_state(shared: &SharedState) -> StreamState {
-    let states: Vec<StreamState> = group_states(shared).collect();
-    if states.iter().any(|state| *state == StreamState::Capturing) {
-        StreamState::Capturing
-    } else if states.iter().any(|state| *state == StreamState::Live) {
-        StreamState::Live
-    } else if states.iter().any(|state| *state == StreamState::Paused) {
-        StreamState::Paused
-    } else {
-        StreamState::Stopped
     }
 }
 
@@ -504,67 +742,92 @@ fn scope_worker(
             break;
         }
 
-        match events.recv_timeout(Duration::from_millis(20)) {
-            Ok(SessionEvent::FastData(frame)) => {
-                if !ingest_group(&session, &shared, ScopeRate::Fast, &frame) {
-                    break;
-                }
-            }
-            Ok(SessionEvent::NormalData(frame)) => {
-                if !ingest_group(&session, &shared, ScopeRate::Normal, &frame) {
-                    break;
-                }
-            }
-            Ok(_) => {}
-            Err(mpsc::RecvTimeoutError::Timeout) => {}
+        let result = match events.recv_timeout(Duration::from_millis(20)) {
+            Ok(SessionEvent::FastData(frame)) => ingest_fast(&shared, &frame),
+            Ok(SessionEvent::NormalData(frame)) => ingest_normal(&shared, &frame),
+            Ok(_) => continue,
+            Err(mpsc::RecvTimeoutError::Timeout) => continue,
             Err(mpsc::RecvTimeoutError::Disconnected) => break,
+        };
+
+        if let Err(error) = result {
+            if let Ok(mut state) = shared.lock() {
+                state.runtime_error = Some(error.to_string());
+            }
+            let mask = shared.lock().ok().map(|state| group_mask(&state)).unwrap_or(0);
+            if mask != 0 {
+                let _ = session.plot_stop(mask);
+            }
+            break;
         }
     }
 }
 
-fn ingest_group(
-    session: &DeviceSession,
+fn promote_if_pending(group: &mut GroupRuntime, config_id: u8) -> Result<(), MixedScopeError> {
+    if group.active.config_id == config_id {
+        return Ok(());
+    }
+
+    if group.pending.as_ref().is_some_and(|pending| pending.config_id == config_id) {
+        group.active = group.pending.take().expect("pending config checked");
+        group.sequence.reset();
+        return Ok(());
+    }
+
+    Err(MixedScopeError::UnknownConfig(config_id))
+}
+
+fn ingest_fast(
     shared: &Arc<Mutex<SharedState>>,
-    rate: ScopeRate,
     frame: &nmixx_core::wire::CanFdFrame,
-) -> bool {
-    let stop_mask = match rate {
-        ScopeRate::Fast => PLOT_FAST_MASK,
-        ScopeRate::Normal => PLOT_NORMAL_MASK,
-    };
+) -> Result<(), MixedScopeError> {
+    let config_id = frame.data().get(2).copied().ok_or(MixedScopeError::UnknownConfig(0))?;
+    let mut state = shared.lock().map_err(|_| MixedScopeError::Closed)?;
+    let group = state.fast.as_mut().ok_or(MixedScopeError::UnknownConfig(config_id))?;
+    promote_if_pending(group, config_id)?;
 
-    let (stop_plot, fatal) = {
-        let Ok(mut state) = shared.lock() else { return false; };
-        let group = match rate {
-            ScopeRate::Fast => state.fast.as_mut(),
-            ScopeRate::Normal => state.normal.as_mut(),
-        };
-        let Some(group) = group else { return true; };
+    let decoded = decode_fast_data(frame, group.active.ids.len())?;
+    let values = decoded
+        .dequantize(&group.active.scales)
+        .ok_or(MixedScopeError::Runtime("FAST scale count mismatch".to_owned()))?;
+    let sequence = group.sequence.observe(decoded.sequence);
+    group.lost_frames = group.sequence.lost_total();
+    let _ = sequence;
 
-        let result = match rate {
-            ScopeRate::Fast => group.pipeline.ingest_fast(frame),
-            ScopeRate::Normal => group.pipeline.ingest_normal(frame),
-        };
-        match result {
-            Ok(report) => {
-                group.lost_frames = report.lost_frames_total;
-                (
-                    group.pipeline.stream().state() == StreamState::Paused
-                        && report.samples_stored > 0,
-                    false,
-                )
-            }
-            Err(error) => {
-                let message = error.to_string();
-                group.pipeline.stream_mut().pause();
-                state.runtime_error = Some(message);
-                (true, true)
+    let channel_count = group.active.ids.len();
+    for sample in values.chunks_exact(channel_count) {
+        for (index, id) in group.active.ids.iter().enumerate() {
+            if let Some(history) = state.histories.get_mut(id) {
+                history.stream.push_sample(&[sample[index]])?;
             }
         }
-    };
-
-    if stop_plot {
-        let _ = session.plot_stop(stop_mask);
     }
-    !fatal
+    Ok(())
+}
+
+fn ingest_normal(
+    shared: &Arc<Mutex<SharedState>>,
+    frame: &nmixx_core::wire::CanFdFrame,
+) -> Result<(), MixedScopeError> {
+    let decoded = decode_normal_data(frame)?;
+    let mut state = shared.lock().map_err(|_| MixedScopeError::Closed)?;
+    let group = state
+        .normal
+        .as_mut()
+        .ok_or(MixedScopeError::UnknownConfig(decoded.config_id))?;
+    promote_if_pending(group, decoded.config_id)?;
+
+    if decoded.values.len() != group.active.ids.len() {
+        return Err(MixedScopeError::Runtime("NORMAL channel count mismatch".to_owned()));
+    }
+
+    group.sequence.observe(decoded.sequence);
+    group.lost_frames = group.sequence.lost_total();
+
+    for (index, id) in group.active.ids.iter().enumerate() {
+        if let Some(history) = state.histories.get_mut(id) {
+            history.stream.push_sample(&[decoded.values[index]])?;
+        }
+    }
+    Ok(())
 }
