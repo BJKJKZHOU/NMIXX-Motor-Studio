@@ -1,21 +1,28 @@
 import { invoke } from "@tauri-apps/api/core";
 import { listen, type UnlistenFn } from "@tauri-apps/api/event";
 import type { ParameterMetadata, ParameterRead, ParameterReadResult, ParameterValue } from "./types";
+import { initializeParameterPersistence, observeParameterResults, observeParameterValue } from "./persistence";
 
 export function listParameters(): Promise<ParameterMetadata[]> {
   return invoke<ParameterMetadata[]>("parameter_list");
 }
 
-export function readParameter(id: number): Promise<ParameterRead> {
-  return invoke<ParameterRead>("parameter_read", { id });
+export async function readParameter(id: number): Promise<ParameterRead> {
+  const result = await invoke<ParameterRead>("parameter_read", { id });
+  observeParameterValue(result.id, result.value);
+  return result;
 }
 
-export function readParameters(ids: number[]): Promise<ParameterReadResult[]> {
-  return invoke<ParameterReadResult[]>("parameter_read_many", { ids });
+export async function readParameters(ids: number[]): Promise<ParameterReadResult[]> {
+  const results = await invoke<ParameterReadResult[]>("parameter_read_many", { ids });
+  observeParameterResults(results);
+  return results;
 }
 
-export function readCachedParameters(ids: number[]): Promise<ParameterReadResult[]> {
-  return invoke<ParameterReadResult[]>("parameter_cached_many", { ids });
+export async function readCachedParameters(ids: number[]): Promise<ParameterReadResult[]> {
+  const results = await invoke<ParameterReadResult[]>("parameter_cached_many", { ids });
+  observeParameterResults(results);
+  return results;
 }
 
 export async function readCurrentParameters(ids: number[]): Promise<ParameterReadResult[]> {
@@ -36,6 +43,12 @@ export function onParametersRefreshed(handler: () => void): Promise<UnlistenFn> 
   return listen("parameters-refreshed", () => handler());
 }
 
-export function writeParameter(id: number, value: ParameterValue): Promise<void> {
-  return invoke<void>("parameter_write", { id, value });
+export async function writeParameter(id: number, value: ParameterValue): Promise<void> {
+  await invoke<void>("parameter_write", { id, value });
+  observeParameterValue(id, value);
+}
+
+export async function initializePersistenceBaseline(ids: number[]): Promise<void> {
+  const results = await invoke<ParameterReadResult[]>("parameter_cached_many", { ids });
+  initializeParameterPersistence(results);
 }
