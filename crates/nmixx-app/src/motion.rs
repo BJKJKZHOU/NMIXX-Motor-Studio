@@ -143,6 +143,10 @@ impl MotionService {
         }
 
         let state = read_u8(parameters, "PARAM_MOTOR_STATE")?;
+        if state != 0 && state != 1 {
+            return Err("motor must be DISABLED or ENABLED before Run".to_owned());
+        }
+
         let desired_mode = mode_wire_value(config.mode)?;
 
         if state == 0 {
@@ -206,8 +210,6 @@ impl MotionService {
 
         if state == 0 {
             start_action(parameters, session, "ACTION_MOTOR_ENABLE")?;
-        } else if state != 1 {
-            return Err("motor must be DISABLED or ENABLED before Run".to_owned());
         }
 
         start_action(parameters, session, "ACTION_MOTOR_RUN")
