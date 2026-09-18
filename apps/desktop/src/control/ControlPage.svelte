@@ -300,10 +300,10 @@
                 </div>
               {/if}
               <div class="gain-grid">
-                {#if metadata[ID_KP]}<div><span>Id Kp</span><strong class:ramModified={$modifiedParameterIds.has(metadata[ID_KP].id)} class="mono">{valueText(values[ID_KP]) || "—"}</strong></div>{/if}
-                {#if metadata[ID_KI]}<div><span>Id Ki</span><strong class:ramModified={$modifiedParameterIds.has(metadata[ID_KI].id)} class="mono">{valueText(values[ID_KI]) || "—"}</strong></div>{/if}
-                {#if metadata[IQ_KP]}<div><span>Iq Kp</span><strong class:ramModified={$modifiedParameterIds.has(metadata[IQ_KP].id)} class="mono">{valueText(values[IQ_KP]) || "—"}</strong></div>{/if}
-                {#if metadata[IQ_KI]}<div><span>Iq Ki</span><strong class:ramModified={$modifiedParameterIds.has(metadata[IQ_KI].id)} class="mono">{valueText(values[IQ_KI]) || "—"}</strong></div>{/if}
+                {#if metadata[ID_KP]}<div><span>Id Kp</span><input class:ramModified={$modifiedParameterIds.has(metadata[ID_KP].id)} class:dirty={dirty(ID_KP)} class="compact-input mono gain-input" value={drafts[ID_KP] ?? ""} disabled={locked(ID_KP)} oninput={(event) => drafts = { ...drafts, [ID_KP]: event.currentTarget.value }} onkeydown={(event) => keydown(event, ID_KP, [CURRENT_SOURCE, CURRENT_BW, ID_KP, ID_KI, IQ_KP, IQ_KI])} /></div>{/if}
+                {#if metadata[ID_KI]}<div><span>Id Ki</span><input class:ramModified={$modifiedParameterIds.has(metadata[ID_KI].id)} class:dirty={dirty(ID_KI)} class="compact-input mono gain-input" value={drafts[ID_KI] ?? ""} disabled={locked(ID_KI)} oninput={(event) => drafts = { ...drafts, [ID_KI]: event.currentTarget.value }} onkeydown={(event) => keydown(event, ID_KI, [CURRENT_SOURCE, CURRENT_BW, ID_KP, ID_KI, IQ_KP, IQ_KI])} /></div>{/if}
+                {#if metadata[IQ_KP]}<div><span>Iq Kp</span><input class:ramModified={$modifiedParameterIds.has(metadata[IQ_KP].id)} class:dirty={dirty(IQ_KP)} class="compact-input mono gain-input" value={drafts[IQ_KP] ?? ""} disabled={locked(IQ_KP)} oninput={(event) => drafts = { ...drafts, [IQ_KP]: event.currentTarget.value }} onkeydown={(event) => keydown(event, IQ_KP, [CURRENT_SOURCE, CURRENT_BW, ID_KP, ID_KI, IQ_KP, IQ_KI])} /></div>{/if}
+                {#if metadata[IQ_KI]}<div><span>Iq Ki</span><input class:ramModified={$modifiedParameterIds.has(metadata[IQ_KI].id)} class:dirty={dirty(IQ_KI)} class="compact-input mono gain-input" value={drafts[IQ_KI] ?? ""} disabled={locked(IQ_KI)} oninput={(event) => drafts = { ...drafts, [IQ_KI]: event.currentTarget.value }} onkeydown={(event) => keydown(event, IQ_KI, [CURRENT_SOURCE, CURRENT_BW, ID_KP, ID_KI, IQ_KP, IQ_KI])} /></div>{/if}
               </div>
             </div>
             <div class="arrow">→</div>
@@ -346,26 +346,32 @@
                 </div>
               {/if}
               <div class="gain-grid two">
-                {#if metadata[SPEED_KP]}<div><span>Kp</span><strong class:ramModified={$modifiedParameterIds.has(metadata[SPEED_KP].id)} class="mono">{valueText(values[SPEED_KP]) || "—"}</strong></div>{/if}
-                {#if metadata[SPEED_KI]}<div><span>Ki</span><strong class:ramModified={$modifiedParameterIds.has(metadata[SPEED_KI].id)} class="mono">{valueText(values[SPEED_KI]) || "—"}</strong></div>{/if}
+                {#if metadata[SPEED_KP]}<div><span>Kp</span><input class:ramModified={$modifiedParameterIds.has(metadata[SPEED_KP].id)} class:dirty={dirty(SPEED_KP)} class="compact-input mono gain-input" value={drafts[SPEED_KP] ?? ""} disabled={locked(SPEED_KP)} oninput={(event) => drafts = { ...drafts, [SPEED_KP]: event.currentTarget.value }} onkeydown={(event) => keydown(event, SPEED_KP, [SPEED_SOURCE, SPEED_BW, SPEED_KP, SPEED_KI])} /></div>{/if}
+                {#if metadata[SPEED_KI]}<div><span>Ki</span><input class:ramModified={$modifiedParameterIds.has(metadata[SPEED_KI].id)} class:dirty={dirty(SPEED_KI)} class="compact-input mono gain-input" value={drafts[SPEED_KI] ?? ""} disabled={locked(SPEED_KI)} oninput={(event) => drafts = { ...drafts, [SPEED_KI]: event.currentTarget.value }} onkeydown={(event) => keydown(event, SPEED_KI, [SPEED_SOURCE, SPEED_BW, SPEED_KP, SPEED_KI])} /></div>{/if}
               </div>
             </div>
             <div class="arrow">→</div>
             <div class="signal-chip">Iq Ref</div>
           </div>
 
-          <div class="feedback-block-row">
-            <div class="feedback-label">Speed Feedback</div>
-            <div class="control-block observer-block">
-              <div class="block-title">Mechanical ESO</div>
-              {#if metadata[ESO_BW]}
-                <div class="block-field">
-                  <span>{label(ESO_BW, "Observer Bandwidth")}</span>
-                  <span class="editor"><input class:ramModified={$modifiedParameterIds.has(metadata[ESO_BW].id)} class:dirty={dirty(ESO_BW)} class="compact-input mono" value={drafts[ESO_BW] ?? ""} disabled={locked(ESO_BW)} oninput={(event) => drafts = { ...drafts, [ESO_BW]: event.currentTarget.value }} onkeydown={(event) => keydown(event, ESO_BW)} /><span class="unit">{unit(ESO_BW)}</span></span>
-                </div>
-              {/if}
+          <div class="speed-feedback-path">
+            <div class="feedback-source-note">Feedback / Observer Path</div>
+            <div class="feedback-path-line">
+              <div class="signal-chip feedback-signal">Motor / current signals</div>
+              <div class="arrow">→</div>
+              <div class="control-block observer-block">
+                <div class="block-title">Mechanical ESO</div>
+                {#if metadata[ESO_BW]}
+                  <div class="block-field">
+                    <span>{label(ESO_BW, "Observer Bandwidth")}</span>
+                    <span class="editor"><input class:ramModified={$modifiedParameterIds.has(metadata[ESO_BW].id)} class:dirty={dirty(ESO_BW)} class="compact-input mono" value={drafts[ESO_BW] ?? ""} disabled={locked(ESO_BW)} oninput={(event) => drafts = { ...drafts, [ESO_BW]: event.currentTarget.value }} onkeydown={(event) => keydown(event, ESO_BW)} /><span class="unit">{unit(ESO_BW)}</span></span>
+                  </div>
+                {/if}
+              </div>
+              <div class="arrow">→</div>
+              <div class="signal-chip feedback-signal">Wm feedback</div>
+              <div class="feedback-return">↩ to speed error summing point</div>
             </div>
-            <div class="feedback-line">───────────────↩</div>
           </div>
         </section>
         {:else}
@@ -602,8 +608,12 @@
     font-weight: 500;
   }
 
-  .feedback-row,
-  .feedback-block-row {
+  .gain-input {
+    height: 25px;
+    font-size: 11px;
+  }
+
+  .feedback-row {
     display: flex;
     align-items: center;
     justify-content: center;
@@ -613,17 +623,38 @@
     font-size: 11px;
   }
 
-  .feedback-block-row {
-    justify-content: flex-start;
-    padding-left: 118px;
+  .speed-feedback-path {
+    margin-top: 18px;
+    padding-top: 14px;
+    border-top: 1px solid color-mix(in srgb, var(--vscode-panel-border) 70%, transparent);
   }
 
-  .feedback-label {
-    min-width: 92px;
+  .feedback-source-note {
+    margin-bottom: 9px;
+    color: var(--vscode-descriptionForeground);
+    font-size: 11px;
+    font-weight: 600;
+  }
+
+  .feedback-path-line {
+    display: grid;
+    grid-template-columns: minmax(120px, auto) 28px minmax(320px, 420px) 28px minmax(110px, auto) minmax(180px, 1fr);
+    align-items: center;
+    gap: 6px;
+  }
+
+  .feedback-signal {
+    min-width: 0;
   }
 
   .observer-block {
-    width: 380px;
+    width: auto;
+  }
+
+  .feedback-return {
+    color: var(--vscode-descriptionForeground);
+    font-size: 11px;
+    white-space: nowrap;
   }
 
   .feedback-line {
@@ -660,10 +691,22 @@
       width: auto;
     }
 
-    .feedback-row,
-    .feedback-block-row {
+    .feedback-row {
       padding-left: 0;
       flex-wrap: wrap;
+    }
+
+    .feedback-path-line {
+      grid-template-columns: 1fr;
+    }
+
+    .feedback-path-line .arrow {
+      transform: rotate(90deg);
+      text-align: center;
+    }
+
+    .feedback-return {
+      white-space: normal;
     }
   }
 </style>
