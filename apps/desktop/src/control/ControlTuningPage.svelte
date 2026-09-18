@@ -10,6 +10,7 @@
     writeParameter,
   } from "../parameters/api";
   import type { ParameterMetadata, ParameterValue } from "../parameters/types";
+  import { modifiedParameterIds } from "../parameters/persistence";
 
   type Props = {
     connection: ConnectionInfo | undefined;
@@ -315,6 +316,7 @@
                 <div class="field-label">{label(spec.source)}</div>
                 {#if metadata[spec.source]}
                   <select
+                    class:ramModified={$modifiedParameterIds.has(metadata[spec.source].id)}
                     class="compact-select"
                     disabled={locked(spec.source)}
                     value={sourceText(spec.source)}
@@ -337,6 +339,7 @@
                 <div class="field-label">{label(spec.bandwidth)}</div>
                 <div class="editor">
                   <input
+                    class:ramModified={!!metadata[spec.bandwidth] && $modifiedParameterIds.has(metadata[spec.bandwidth].id)}
                     class:dirty={dirty(spec.bandwidth)}
                     class="compact-input mono"
                     value={drafts[spec.bandwidth] ?? ""}
@@ -351,6 +354,7 @@
                   <div class="field-label">{label(gain)}</div>
                   <div class="editor">
                     <input
+                      class:ramModified={!!metadata[gain] && $modifiedParameterIds.has(metadata[gain].id)}
                       class:dirty={dirty(gain)}
                       class="compact-input mono"
                       value={drafts[gain] ?? ""}
@@ -371,6 +375,7 @@
               <div class="field-label">{label(POSITION_KP)}</div>
               <div class="editor">
                 <input
+                  class:ramModified={!!metadata[POSITION_KP] && $modifiedParameterIds.has(metadata[POSITION_KP].id)}
                   class:dirty={dirty(POSITION_KP)}
                   class="compact-input mono"
                   value={drafts[POSITION_KP] ?? ""}
@@ -389,6 +394,7 @@
               <div class="field-label">{label(ESO_BW)}</div>
               <div class="editor">
                 <input
+                  class:ramModified={!!metadata[ESO_BW] && $modifiedParameterIds.has(metadata[ESO_BW].id)}
                   class:dirty={dirty(ESO_BW)}
                   class="compact-input mono"
                   value={drafts[ESO_BW] ?? ""}
