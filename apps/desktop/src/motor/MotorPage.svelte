@@ -3,6 +3,7 @@
   import type { ConnectionInfo } from "../connection/types";
   import { listParameters, onParametersRefreshed, readCachedParameters, readCurrentParameters, readParameters, writeParameter } from "../parameters/api";
   import type { ParameterMetadata, ParameterValue } from "../parameters/types";
+  import { modifiedParameterIds } from "../parameters/persistence";
   import { listActions, onActionCompleted, startAction } from "../actions/api";
   import type { ActionCompletion, ActionHandle, ActionMetadata } from "../actions/types";
   import { checkIdentificationPreflight } from "../preflight/api";
@@ -246,6 +247,7 @@
       const results = await readCurrentParameters(readable.map((item) => item.id));
       if (token !== generation || connection !== activeConnection) return;
       applyValues(readable, results);
+      restoreIdentificationStates();
     } catch (error) {
       if (token === generation) onError(error);
     } finally {
@@ -259,6 +261,7 @@
       const readable = Object.values(metadata).filter((item) => item.access.toLowerCase().includes("r"));
       const results = await readCachedParameters(readable.map((item) => item.id));
       applyValues(readable, results);
+      restoreIdentificationStates();
     } catch (error) {
       onError(error);
     }
@@ -324,6 +327,40 @@
 
   function setIdentState(identKey: IdentKey, phase: IdentPhase, message = "") {
     identStates = { ...identStates, [identKey]: { phase, message } };
+  }
+
+  function closeEnough(a: number | null, b: number | null): boolean {
+    if (a === null || b === null) return false;
+    const scale = Math.max(1, Math.abs(a), Math.abs(b));
+    return Math.abs(a - b) <= 1e-6 * scale;
+  }
+
+  function resultApplied(identKey: IdentKey): boolean {
+    if (identKey === "rsLs") {
+      const rs = numericValue(values.PARAM_IDENT_RS_RESULT);
+      const ls = numericValue(values.PARAM_IDENT_LS_RESULT);
+      return closeEnough(numericValue(values.PARAM_MOTOR_RS), rs)
+        && closeEnough(numericValue(values.PARAM_MOTOR_LD), ls)
+        && closeEnough(numericValue(values.PARAM_MOTOR_LQ), ls);
+    }
+    if (identKey === "flux") {
+      return closeEnough(numericValue(values.PARAM_MOTOR_FLUX), numericValue(values.PARAM_IDENT_FLUX_RESULT));
+    }
+    return closeEnough(numericValue(values.PARAM_MOTOR_J), numericValue(values.PARAM_IDENT_J_RESULT))
+      && closeEnough(numericValue(values.PARAM_MOTOR_B), numericValue(values.PARAM_IDENT_B_RESULT));
+  }
+
+  function restoreIdentificationStates() {
+    const next = { ...identStates };
+    for (const identKey of Object.keys(IDENT_CONFIGS) as IdentKey[]) {
+      const current = next[identKey];
+      if (current.phase === "running" || current.phase === "applying" || current.phase === "failed") continue;
+      const valid = numericValue(values[IDENT_CONFIGS[identKey].validSymbol]) === 1;
+      next[identKey] = valid
+        ? { phase: resultApplied(identKey) ? "applied" : "ready", message: "" }
+        : { phase: "idle", message: "" };
+    }
+    identStates = next;
   }
 
   function actionAvailable(symbol: string): boolean {
@@ -453,6 +490,7 @@
                   {#if metadata[row.activeSymbol]}
                     <span class="inline-editor">
                       <input
+                        class:ramModified={$modifiedParameterIds.has(metadata[row.activeSymbol].id)}
                         class="compact-input mono"
                         value={drafts[row.activeSymbol] ?? ""}
                         disabled={!isWritable(row.activeSymbol) || writing.has(row.activeSymbol) || identifyBusy()}
@@ -513,6 +551,7 @@
                 {#if metadata[identificationCurrentSymbol]}
                   <span class="inline-editor">
                     <input
+                      class:ramModified={$modifiedParameterIds.has(metadata[identificationCurrentSymbol].id)}
                       class="compact-input mono"
                       value={drafts[identificationCurrentSymbol] ?? ""}
                       disabled={!isWritable(identificationCurrentSymbol) || writing.has(identificationCurrentSymbol) || identifyBusy()}
