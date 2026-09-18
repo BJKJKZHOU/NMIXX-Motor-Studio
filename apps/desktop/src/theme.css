@@ -382,12 +382,14 @@ vscode-button { --vscode-button-border: transparent; }
   padding: 14px 16px 16px;
 }
 .motion-mode-row {
-  display: flex;
-  align-items: end;
+  display: grid;
+  grid-template-columns: minmax(340px, 420px) minmax(460px, 1fr);
+  gap: 16px;
   margin-bottom: 14px;
 }
 .motion-mode-row label {
-  width: 260px;
+  width: 100%;
+  min-width: 0;
   display: grid;
   gap: 5px;
   color: #888;
@@ -492,6 +494,7 @@ vscode-button { --vscode-button-border: transparent; }
   font-size: 12px;
 }
 @media (max-width: 980px) {
+  .motion-mode-row,
   .motion-simple-body { grid-template-columns: 1fr; }
 }
 
