@@ -10,6 +10,7 @@
     writeParameter,
   } from "../parameters/api";
   import type { ParameterMetadata, ParameterValue } from "../parameters/types";
+  import { modifiedParameterIds } from "../parameters/persistence";
 
   type Props = {
     connection: ConnectionInfo | undefined;
@@ -277,6 +278,7 @@
                 <div class="block-field">
                   <span>{label(CURRENT_SOURCE, "Gain Source")}</span>
                   <select
+                    class:ramModified={$modifiedParameterIds.has(metadata[CURRENT_SOURCE].id)}
                     class="compact-select"
                     disabled={locked(CURRENT_SOURCE)}
                     value={sourceText(CURRENT_SOURCE)}
@@ -290,14 +292,14 @@
               {#if metadata[CURRENT_BW]}
                 <div class="block-field">
                   <span>{label(CURRENT_BW, "Bandwidth")}</span>
-                  <span class="editor"><input class:dirty={dirty(CURRENT_BW)} class="compact-input mono" value={drafts[CURRENT_BW] ?? ""} disabled={locked(CURRENT_BW)} oninput={(event) => drafts = { ...drafts, [CURRENT_BW]: event.currentTarget.value }} onkeydown={(event) => keydown(event, CURRENT_BW, [CURRENT_BW, ID_KP, ID_KI, IQ_KP, IQ_KI])} /><span class="unit">{unit(CURRENT_BW)}</span></span>
+                  <span class="editor"><input class:ramModified={$modifiedParameterIds.has(metadata[CURRENT_BW].id)} class:dirty={dirty(CURRENT_BW)} class="compact-input mono" value={drafts[CURRENT_BW] ?? ""} disabled={locked(CURRENT_BW)} oninput={(event) => drafts = { ...drafts, [CURRENT_BW]: event.currentTarget.value }} onkeydown={(event) => keydown(event, CURRENT_BW, [CURRENT_BW, ID_KP, ID_KI, IQ_KP, IQ_KI])} /><span class="unit">{unit(CURRENT_BW)}</span></span>
                 </div>
               {/if}
               <div class="gain-grid">
-                {#if metadata[ID_KP]}<div><span>Id Kp</span><strong class="mono">{valueText(values[ID_KP]) || "—"}</strong></div>{/if}
-                {#if metadata[ID_KI]}<div><span>Id Ki</span><strong class="mono">{valueText(values[ID_KI]) || "—"}</strong></div>{/if}
-                {#if metadata[IQ_KP]}<div><span>Iq Kp</span><strong class="mono">{valueText(values[IQ_KP]) || "—"}</strong></div>{/if}
-                {#if metadata[IQ_KI]}<div><span>Iq Ki</span><strong class="mono">{valueText(values[IQ_KI]) || "—"}</strong></div>{/if}
+                {#if metadata[ID_KP]}<div><span>Id Kp</span><strong class:ramModified={$modifiedParameterIds.has(metadata[ID_KP].id)} class="mono">{valueText(values[ID_KP]) || "—"}</strong></div>{/if}
+                {#if metadata[ID_KI]}<div><span>Id Ki</span><strong class:ramModified={$modifiedParameterIds.has(metadata[ID_KI].id)} class="mono">{valueText(values[ID_KI]) || "—"}</strong></div>{/if}
+                {#if metadata[IQ_KP]}<div><span>Iq Kp</span><strong class:ramModified={$modifiedParameterIds.has(metadata[IQ_KP].id)} class="mono">{valueText(values[IQ_KP]) || "—"}</strong></div>{/if}
+                {#if metadata[IQ_KI]}<div><span>Iq Ki</span><strong class:ramModified={$modifiedParameterIds.has(metadata[IQ_KI].id)} class="mono">{valueText(values[IQ_KI]) || "—"}</strong></div>{/if}
               </div>
             </div>
             <div class="arrow">→</div>
@@ -327,7 +329,7 @@
               {#if metadata[SPEED_SOURCE]}
                 <div class="block-field">
                   <span>{label(SPEED_SOURCE, "Gain Source")}</span>
-                  <select class="compact-select" disabled={locked(SPEED_SOURCE)} value={sourceText(SPEED_SOURCE)} onchange={(event) => void setSource(SPEED_SOURCE, event.currentTarget.value as "Bandwidth" | "Manual", [SPEED_SOURCE, SPEED_BW, SPEED_KP, SPEED_KI])}>
+                  <select class:ramModified={$modifiedParameterIds.has(metadata[SPEED_SOURCE].id)} class="compact-select" disabled={locked(SPEED_SOURCE)} value={sourceText(SPEED_SOURCE)} onchange={(event) => void setSource(SPEED_SOURCE, event.currentTarget.value as "Bandwidth" | "Manual", [SPEED_SOURCE, SPEED_BW, SPEED_KP, SPEED_KI])}>
                     <option value="Bandwidth">Bandwidth</option>
                     <option value="Manual">Manual</option>
                   </select>
@@ -336,12 +338,12 @@
               {#if metadata[SPEED_BW]}
                 <div class="block-field">
                   <span>{label(SPEED_BW, "Bandwidth")}</span>
-                  <span class="editor"><input class:dirty={dirty(SPEED_BW)} class="compact-input mono" value={drafts[SPEED_BW] ?? ""} disabled={locked(SPEED_BW)} oninput={(event) => drafts = { ...drafts, [SPEED_BW]: event.currentTarget.value }} onkeydown={(event) => keydown(event, SPEED_BW, [SPEED_BW, SPEED_KP, SPEED_KI])} /><span class="unit">{unit(SPEED_BW)}</span></span>
+                  <span class="editor"><input class:ramModified={$modifiedParameterIds.has(metadata[SPEED_BW].id)} class:dirty={dirty(SPEED_BW)} class="compact-input mono" value={drafts[SPEED_BW] ?? ""} disabled={locked(SPEED_BW)} oninput={(event) => drafts = { ...drafts, [SPEED_BW]: event.currentTarget.value }} onkeydown={(event) => keydown(event, SPEED_BW, [SPEED_BW, SPEED_KP, SPEED_KI])} /><span class="unit">{unit(SPEED_BW)}</span></span>
                 </div>
               {/if}
               <div class="gain-grid two">
-                {#if metadata[SPEED_KP]}<div><span>Kp</span><strong class="mono">{valueText(values[SPEED_KP]) || "—"}</strong></div>{/if}
-                {#if metadata[SPEED_KI]}<div><span>Ki</span><strong class="mono">{valueText(values[SPEED_KI]) || "—"}</strong></div>{/if}
+                {#if metadata[SPEED_KP]}<div><span>Kp</span><strong class:ramModified={$modifiedParameterIds.has(metadata[SPEED_KP].id)} class="mono">{valueText(values[SPEED_KP]) || "—"}</strong></div>{/if}
+                {#if metadata[SPEED_KI]}<div><span>Ki</span><strong class:ramModified={$modifiedParameterIds.has(metadata[SPEED_KI].id)} class="mono">{valueText(values[SPEED_KI]) || "—"}</strong></div>{/if}
               </div>
             </div>
             <div class="arrow">→</div>
@@ -355,7 +357,7 @@
               {#if metadata[ESO_BW]}
                 <div class="block-field">
                   <span>{label(ESO_BW, "Observer Bandwidth")}</span>
-                  <span class="editor"><input class:dirty={dirty(ESO_BW)} class="compact-input mono" value={drafts[ESO_BW] ?? ""} disabled={locked(ESO_BW)} oninput={(event) => drafts = { ...drafts, [ESO_BW]: event.currentTarget.value }} onkeydown={(event) => keydown(event, ESO_BW)} /><span class="unit">{unit(ESO_BW)}</span></span>
+                  <span class="editor"><input class:ramModified={$modifiedParameterIds.has(metadata[ESO_BW].id)} class:dirty={dirty(ESO_BW)} class="compact-input mono" value={drafts[ESO_BW] ?? ""} disabled={locked(ESO_BW)} oninput={(event) => drafts = { ...drafts, [ESO_BW]: event.currentTarget.value }} onkeydown={(event) => keydown(event, ESO_BW)} /><span class="unit">{unit(ESO_BW)}</span></span>
                 </div>
               {/if}
             </div>
@@ -384,7 +386,7 @@
               {#if metadata[POSITION_KP]}
                 <div class="block-field">
                   <span>{label(POSITION_KP, "Kp")}</span>
-                  <span class="editor"><input class:dirty={dirty(POSITION_KP)} class="compact-input mono" value={drafts[POSITION_KP] ?? ""} disabled={locked(POSITION_KP)} oninput={(event) => drafts = { ...drafts, [POSITION_KP]: event.currentTarget.value }} onkeydown={(event) => keydown(event, POSITION_KP)} /><span class="unit">{unit(POSITION_KP)}</span></span>
+                  <span class="editor"><input class:ramModified={$modifiedParameterIds.has(metadata[POSITION_KP].id)} class:dirty={dirty(POSITION_KP)} class="compact-input mono" value={drafts[POSITION_KP] ?? ""} disabled={locked(POSITION_KP)} oninput={(event) => drafts = { ...drafts, [POSITION_KP]: event.currentTarget.value }} onkeydown={(event) => keydown(event, POSITION_KP)} /><span class="unit">{unit(POSITION_KP)}</span></span>
                 </div>
               {/if}
             </div>
