@@ -61,7 +61,8 @@ fn run() -> Result<(), Box<dyn Error>> {
     let app = ApplicationSession::open_usb(&args.port, args.baud, schema)?;
 
     if args.list || args.channels.is_empty() {
-        print_capabilities(app.plot_capabilities(), app.schema());
+        let capabilities = app.plot_capabilities()?;
+        print_capabilities(&capabilities, app.schema());
         if args.channels.is_empty() {
             println!();
             println!("select one or more FAST-capable parameters to start Scope");
@@ -82,7 +83,7 @@ fn run() -> Result<(), Box<dyn Error>> {
         "FAST: {} channel(s) @ {} Hz, block={}, {:.3} s RAM history",
         config.channels.len(),
         config.sample_rate_hz,
-        app.plot_capabilities().fast_block_samples,
+        app.plot_capabilities()?.fast_block_samples,
         config.history.as_secs_f64()
     );
     for (index, channel) in config.channels.iter().enumerate() {
