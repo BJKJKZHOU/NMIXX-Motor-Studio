@@ -22,7 +22,7 @@ export function stopMotor(): Promise<ActionHandle> {
   return invoke<ActionHandle>("motor_stop");
 }
 
-export function parameterSaveAvailable(): Promise<boolean> {
+export function canSaveParameters(): Promise<boolean> {
   return invoke<boolean>("config_save_available");
 }
 
