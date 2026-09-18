@@ -22,6 +22,10 @@ export function stopMotor(): Promise<ActionHandle> {
   return startAction("ACTION_MOTOR_STOP");
 }
 
+export function saveParameters(): Promise<ActionHandle> {
+  return startAction("ACTION_PARAMETER_SAVE");
+}
+
 export function onActionCompleted(handler: (completion: ActionCompletion) => void): Promise<UnlistenFn> {
   return listen<ActionCompletion>("action-completed", (event) => handler(event.payload));
 }
