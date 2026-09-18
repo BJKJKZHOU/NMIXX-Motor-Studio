@@ -6,8 +6,9 @@ use std::time::Duration;
 
 use clap::{Parser, Subcommand, ValueEnum};
 use nmixx_app::{
-    ActionMetadata, AxdrStatus, DEFAULT_USB_BAUD, DeviceSession, HostSchema, ParameterMetadata,
-    ParameterType, ParameterValue, PositionValue, SchemaNumber, SchemaStore, SessionEvent,
+    ActionMetadata, ApplicationSession, AxdrStatus, DEFAULT_USB_BAUD, DeviceSession, HostSchema,
+    ParameterMetadata, ParameterType, ParameterValue, PositionValue, SchemaNumber, SchemaStore,
+    SessionEvent,
 };
 
 #[derive(Debug, Parser)]
@@ -185,7 +186,7 @@ fn run() -> Result<(), Box<dyn Error>> {
         Command::Device {
             command: DeviceCommand::List,
         } => {
-            for port in DeviceSession::available_usb_ports()? {
+            for port in ApplicationSession::available_usb_ports()? {
                 println!("{port}");
             }
         }
@@ -196,25 +197,26 @@ fn run() -> Result<(), Box<dyn Error>> {
                 print_parameter_info(metadata);
             }
             ParamCommand::Get { key, ty } => {
-                let session = open_session(port.as_deref(), baud)?;
                 let parameter = resolve_parameter(schema.as_ref(), &key, ty)?;
-                let value = session.parameter_read(parameter.id, parameter.ty)?;
+                let value = if let Some(schema) = schema.as_ref() {
+                    let app = open_application(port.as_deref(), baud, schema.clone())?;
+                    app.parameter_read(parameter.id)?
+                } else {
+                    let session = open_raw_session(port.as_deref(), baud)?;
+                    session.parameter_read(parameter.id, parameter.ty)?
+                };
                 print_parameter_value(parameter.metadata, parameter.id, value);
             }
             ParamCommand::Set { key, value, ty } => {
-                let session = open_session(port.as_deref(), baud)?;
                 let parameter = resolve_parameter(schema.as_ref(), &key, ty)?;
-                if let Some(metadata) = parameter.metadata {
-                    if metadata.access != "rw" {
-                        return Err(format!(
-                            "parameter {} (0x{:04X}) is not writable (access={})",
-                            metadata.symbol, metadata.id, metadata.access
-                        )
-                        .into());
-                    }
-                }
                 let value = parse_parameter_value(parameter.ty, &value)?;
-                session.parameter_write(parameter.id, value)?;
+                if let Some(schema) = schema.as_ref() {
+                    let app = open_application(port.as_deref(), baud, schema.clone())?;
+                    app.parameter_write(parameter.id, value)?;
+                } else {
+                    let session = open_raw_session(port.as_deref(), baud)?;
+                    session.parameter_write(parameter.id, value)?;
+                }
                 println!("OK");
             }
         },
@@ -230,9 +232,19 @@ fn run() -> Result<(), Box<dyn Error>> {
                 timeout,
             } => {
                 let (action_id, action_label) = resolve_action(schema.as_ref(), &key)?;
-                let session = open_session(port.as_deref(), baud)?;
-                let events = if no_wait { None } else { Some(session.subscribe()?) };
-                let handle = session.action_start(action_id)?;
+                let (handle, events) = if let Some(schema) = schema.as_ref() {
+                    let app = open_application(port.as_deref(), baud, schema.clone())?;
+                    let events = if no_wait { None } else { Some(app.subscribe()?) };
+                    let action_key = schema
+                        .action_by_id(action_id)
+                        .map(|action| action.symbol.as_str())
+                        .ok_or_else(|| format!("action ID 0x{action_id:04X} is not present in the loaded schema"))?;
+                    (app.action_start(action_key)?, events)
+                } else {
+                    let session = open_raw_session(port.as_deref(), baud)?;
+                    let events = if no_wait { None } else { Some(session.subscribe()?) };
+                    (session.action_start(action_id)?, events)
+                };
                 println!(
                     "accepted txn={} action={} (0x{action_id:04X})",
                     handle.txn.get(),
@@ -270,8 +282,17 @@ fn require_schema(schema: Option<&HostSchema>) -> Result<&HostSchema, Box<dyn Er
     schema.ok_or_else(|| "--schema is required for this command".into())
 }
 
-fn open_session(port: Option<&str>, baud: u32) -> Result<DeviceSession, Box<dyn Error>> {
+fn open_application(
+    port: Option<&str>,
+    baud: u32,
+    schema: HostSchema,
+) -> Result<ApplicationSession, Box<dyn Error>> {
     let port = port.ok_or("--port is required for this command")?;
+    Ok(ApplicationSession::open_usb(port, baud, schema)?)
+}
+
+fn open_raw_session(port: Option<&str>, baud: u32) -> Result<DeviceSession, Box<dyn Error>> {
+    let port = port.ok_or("--port is required for this raw command")?;
     Ok(DeviceSession::open_usb(port, baud)?)
 }
 
