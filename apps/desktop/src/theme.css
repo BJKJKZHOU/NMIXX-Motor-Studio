@@ -99,6 +99,99 @@ vscode-button { --vscode-button-border: transparent; }
 .channel-rate { width: 60px; min-width: 60px; height: 22px; padding: 0 4px; border: 1px solid #3a3a3a; background: #252526; color: #c8c8c8; font-size: 11px; }
 .channel-mode { color: #9ba8bb; }
 .channel-mode.normal-only { color: #8b8b8b; }
+.channel-row.active-channel { background: #272727; }
+.channel-select {
+  min-width: 0;
+  padding: 0;
+  border: 0;
+  outline: none;
+  color: #d0d0d0;
+  background: transparent;
+  text-align: left;
+  font-family: "SFMono-Regular", Consolas, "Liberation Mono", monospace;
+  font-size: 12px;
+  cursor: pointer;
+}
+.channel-select:hover { color: #fff; }
+.scope-control-grid {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 7px;
+  padding: 3px 9px 7px;
+}
+.scope-control-grid label {
+  min-width: 0;
+  display: grid;
+  gap: 4px;
+  color: #858585;
+  font-size: 10.5px;
+}
+.scope-control-grid select,
+.scope-control-grid input {
+  width: 100%;
+  min-width: 0;
+  height: 26px;
+  padding: 2px 6px;
+  border: 1px solid var(--vscode-input-border);
+  border-radius: 2px;
+  color: var(--vscode-input-foreground);
+  background: var(--vscode-input-background);
+  font-size: 11px;
+}
+.scope-control-grid strong {
+  height: 26px;
+  display: flex;
+  align-items: center;
+  color: #c7c7c7;
+  font-family: "SFMono-Regular", Consolas, "Liberation Mono", monospace;
+  font-size: 11px;
+  font-weight: 400;
+}
+.scope-position-slider {
+  width: calc(100% - 18px);
+  margin: 0 9px 9px;
+}
+.scope-active-channel {
+  display: flex;
+  align-items: center;
+  gap: 7px;
+  padding: 3px 9px 2px;
+  color: #9a9a9a;
+  font-size: 11px;
+}
+.scope-active-channel strong { color: #d0d0d0; font-weight: 500; }
+.scope-unit-input {
+  min-width: 0;
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) auto;
+}
+.scope-unit-input input { border-radius: 2px 0 0 2px; }
+.scope-unit-input em {
+  min-width: 42px;
+  height: 26px;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  padding: 0 5px;
+  border: 1px solid var(--vscode-input-border);
+  border-left: 0;
+  border-radius: 0 2px 2px 0;
+  color: #747474;
+  background: #25282d;
+  font-style: normal;
+  font-size: 9.5px;
+}
+.scope-tool-active { outline: 1px solid #74859e; }
+.trace-key-button {
+  padding: 0;
+  border: 0;
+  color: inherit;
+  background: transparent;
+  font: inherit;
+  cursor: pointer;
+}
+.trace-key-button:hover { color: #d6d6d6; }
+.scope-plot-interactive { cursor: crosshair; }
 .empty-hint { padding: 5px 10px 9px; color: #757575; font-size: 11px; line-height: 1.45; }
 .property-grid { display: grid; grid-template-columns: 1fr auto; gap: 8px 12px; padding: 2px 11px 8px; color: #858585; font-size: 12px; }
 .property-grid strong { color: #c7c7c7; font-family: "SFMono-Regular", Consolas, "Liberation Mono", monospace; font-size: 11px; font-weight: 400; }
