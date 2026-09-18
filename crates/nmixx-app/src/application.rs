@@ -5,11 +5,12 @@ use std::time::Duration;
 use thiserror::Error;
 
 use crate::{
-    ActionHandle, DevicePlotCapabilities, DeviceSession, HostSchema, MixedScopeConfig,
-    MixedScopeError, MixedScopeSession, MixedScopeSnapshot, MixedScopeStatus, MotionCapabilities,
-    MotionConfig, MotionPreview, MotionService, ParameterMetadata, ParameterService,
-    ParameterServiceError, ParameterValue, PlotCapabilitiesError, ScopeRate, ScopeSelection,
-    SessionError, SessionEvent,
+    ActionHandle, ConfigService, ConfigServiceError, DevicePlotCapabilities, DeviceSession,
+    HostSchema, IdentificationKind, MixedScopeConfig, MixedScopeError, MixedScopeSession,
+    MixedScopeSnapshot, MixedScopeStatus, MotionCapabilities, MotionConfig, MotionPreview,
+    MotionService, MotorActionError, MotorActionService, ParameterMetadata, ParameterService,
+    ParameterServiceError, ParameterValue, PlotCapabilitiesError, PreflightError, PreflightIssue,
+    PreflightService, ScopeRate, ScopeSelection, SessionError, SessionEvent,
 };
 
 #[derive(Debug, Error)]
@@ -22,6 +23,12 @@ pub enum ApplicationError {
     Parameter(#[from] ParameterServiceError),
     #[error(transparent)]
     Scope(#[from] MixedScopeError),
+    #[error(transparent)]
+    MotorAction(#[from] MotorActionError),
+    #[error(transparent)]
+    Config(#[from] ConfigServiceError),
+    #[error(transparent)]
+    Preflight(#[from] PreflightError),
     #[error("application runtime state is poisoned")]
     Poisoned,
     #[error("unknown Action '{0}' in loaded Host schema")]
@@ -134,6 +141,16 @@ impl ApplicationSession {
         Ok(self.inner.parameters.read_many(ids)?)
     }
 
+    pub fn parameter_cached(&self, id: u16) -> Result<Option<ParameterValue>, ApplicationError> {
+        Ok(self.inner.parameters.cached(id)?)
+    }
+
+    pub fn parameter_refresh_all(
+        &self,
+    ) -> Result<Vec<(u16, Result<ParameterValue, ParameterServiceError>)>, ApplicationError> {
+        Ok(self.inner.parameters.refresh_all()?)
+    }
+
     pub fn parameter_write(
         &self,
         id: u16,
@@ -153,6 +170,42 @@ impl ApplicationSession {
 
     pub fn subscribe(&self) -> Result<mpsc::Receiver<SessionEvent>, ApplicationError> {
         Ok(self.inner.session.subscribe()?)
+    }
+
+    pub fn preflight_phase_search(&self) -> Result<Vec<PreflightIssue>, ApplicationError> {
+        Ok(PreflightService::new(self.inner.parameters.clone()).check_phase_search()?)
+    }
+
+    pub fn preflight_identification(
+        &self,
+        kind: IdentificationKind,
+    ) -> Result<Vec<PreflightIssue>, ApplicationError> {
+        Ok(PreflightService::new(self.inner.parameters.clone()).check_identification(kind)?)
+    }
+
+    pub fn motor_enable(&self) -> Result<ActionHandle, ApplicationError> {
+        Ok(MotorActionService::new(self.inner.session.clone(), self.inner.schema.clone()).enable()?)
+    }
+
+    pub fn motor_stop(&self) -> Result<ActionHandle, ApplicationError> {
+        Ok(MotorActionService::new(self.inner.session.clone(), self.inner.schema.clone()).stop()?)
+    }
+
+    pub fn motor_disable(&self) -> Result<ActionHandle, ApplicationError> {
+        Ok(MotorActionService::new(self.inner.session.clone(), self.inner.schema.clone()).disable()?)
+    }
+
+    pub fn phase_search_start(&self) -> Result<ActionHandle, ApplicationError> {
+        Ok(MotorActionService::new(self.inner.session.clone(), self.inner.schema.clone())
+            .phase_search_start()?)
+    }
+
+    pub fn config_save_available(&self) -> bool {
+        ConfigService::new(self.inner.session.clone(), self.inner.schema.clone()).save_available()
+    }
+
+    pub fn config_save(&self) -> Result<ActionHandle, ApplicationError> {
+        Ok(ConfigService::new(self.inner.session.clone(), self.inner.schema.clone()).save()?)
     }
 
     pub fn motion_get(&self) -> MotionConfig {
