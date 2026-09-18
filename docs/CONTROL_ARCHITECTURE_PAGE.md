@@ -241,13 +241,19 @@ Control Architecture
 
 The shell owns the child navigation and preserves the selected loop during the application session. `ControlPage.svelte` renders only the selected loop while continuing to use the same shared Parameter bindings and write path.
 
-The current child diagrams are still the first structural version. Next implementation work should:
+The current child diagrams are still an early structural version, but the second-stage interaction model is now in place:
 
-- keep Parameter editing inside the relevant diagram blocks;
-- make actual Kp/Ki editable where firmware exposes them as writable;
+- Bandwidth and actual Kp/Ki use editable Parameter controls where firmware exposes them as writable;
+- Architecture and Control Tuning therefore provide two views over the same controller Parameters;
+- direct gain edits retain the same Enter/Esc/RAM-modified semantics as other Parameter-backed pages;
+- the Speed Loop presents Mechanical ESO as part of a feedback/observer path leading back to the speed error summing point rather than as an unrelated parameter card;
+- observer input details remain intentionally generic until the firmware/Application contract exposes their exact signal semantics.
+
+Next implementation work should:
+
 - keep the controller-selection location reserved for firmware-exposed controller choices;
-- clarify observer/feedback placement, especially Mechanical ESO on the Speed Loop page;
 - add filters, feedforward, feedback selection and controller-specific blocks only when their firmware/Application contracts exist;
+- replace generic feedback/observer labels with exact signal names only when those signals are authoritative;
 - show inter-loop relationships through clear input/output signals such as `Wm Ref` and `Iq Ref`, without forcing all three loops into one giant combined diagram.
 
 ## Non-goals
