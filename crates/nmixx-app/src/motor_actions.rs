@@ -1,10 +1,9 @@
-use std::time::Duration;
-
 use thiserror::Error;
 
 use crate::{
     ActionHandle, DeviceSession, HostSchema, IdentificationKind, ParameterService,
     ParameterServiceError, ParameterValue, PreflightError, PreflightService, SchemaNumber,
+    SessionError,
 };
 
 const MOTOR_MODE: &str = "PARAM_MOTOR_MODE";
@@ -32,10 +31,6 @@ pub enum MotorActionError {
     MissingEnumValue { parameter: String, symbol: String },
     #[error("parameter '{parameter}' enum value '{symbol}' is not a u8 value")]
     InvalidEnumValue { parameter: String, symbol: String },
-    #[error("action '{action}' completed with status {status:?}")]
-    ActionFailed { action: String, status: AxdrStatus },
-    #[error("timed out waiting for action '{0}' to complete")]
-    ActionCompletionTimeout(String),
     #[error("phase-search preflight failed: {0}")]
     PreflightFailed(String),
     #[error("identification preflight failed: {0}")]
