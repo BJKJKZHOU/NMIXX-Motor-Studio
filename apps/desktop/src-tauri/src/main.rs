@@ -530,7 +530,8 @@ fn scope_snapshot(
 
             for index in (0..sample_count).step_by(stride) {
                 let t = (index as f64 - sample_count.saturating_sub(1) as f64)
-                    / f64::from(series.sample_rate_hz);
+                    / f64::from(series.sample_rate_hz)
+                    - end_offset;
                 times.push(t);
                 values.push(series.values[index]);
             }
