@@ -2,7 +2,18 @@
 
 ## Purpose
 
-Control Architecture is the control-system construction and structure-configuration page.
+Control Architecture is the control-system construction and structure-configuration domain.
+
+It is a parent navigation item with three loop-specific child pages:
+
+```text
+Control Architecture
+├─ Current Loop
+├─ Speed Loop
+└─ Position Loop
+```
+
+The parent groups the control-structure workflow. Each child page owns the complete architecture/configuration view for one loop. The product does not place all three loop diagrams into one long Control Architecture page.
 
 It answers:
 
@@ -39,13 +50,43 @@ Control Tuning
 
 A Parameter may appear on both pages when both workflows need it. For example, speed-loop Kp may be editable inside the PI block on Control Architecture and also appear in the compact Speed Loop section on Control Tuning. Both views refer to the same firmware Parameter.
 
+## Navigation and child pages
+
+The three loop pages are peers under the Control Architecture parent:
+
+```text
+Control Architecture
+│
+├── Current Loop
+│     controller selection
+│     current-loop diagram
+│     current feedback / decoupling / filters / feedforward
+│     controller parameters
+│
+├── Speed Loop
+│     controller selection
+│     speed-loop diagram
+│     speed feedback / observer / filters / feedforward
+│     controller parameters
+│
+└── Position Loop
+      controller selection
+      position-loop diagram
+      position feedback / filters / feedforward
+      controller parameters
+```
+
+Selecting the parent may reopen the last selected child page. On the first visit, Current Loop is the default child unless a later product decision specifies otherwise. A separate empty overview page is not required.
+
+This hierarchy is a navigation distinction, not a data-ownership distinction. All child pages use the same shared Application/Parameter services.
+
 ## Layout principle
 
-The page is diagram-oriented.
+Each child page is diagram-oriented.
 
 Parameters belong near the control block or signal path they affect instead of being collected into a generic side table.
 
-Conceptual speed-loop example:
+Conceptual Speed Loop child page:
 
 ```text
 Speed Ref
@@ -189,15 +230,26 @@ Parameters page ---------+
 
 ## Initial implementation
 
-The current page already represents Current, Speed and Position loops and exposes the available tuning Parameters inside their corresponding blocks.
+The current GUI still renders Current, Speed and Position as sections inside one `ControlPage.svelte`. That is an implementation stage, not the intended final navigation model.
 
-The current implementation should be treated as an early structural layout:
+The intended next structure is:
 
-- keep Parameter editing inside the relevant blocks;
-- keep the controller-selection location reserved for future firmware-exposed choices;
-- do not move common gains out merely because they also appear on Control Tuning;
+```text
+Control Architecture
+├─ Current Loop page
+├─ Speed Loop page
+└─ Position Loop page
+```
+
+Each child page keeps Parameter editing inside the relevant diagram blocks and reserves the controller-selection location for future firmware-exposed choices.
+
+Implementation guidance:
+
+- split the existing three loop sections into loop-specific child pages without creating new Parameter storage;
+- keep common gains editable in Architecture even when they also appear on Control Tuning;
 - add filters, feedforward, feedback selection and controller-specific blocks only when their firmware/Application contracts exist;
-- gradually make the diagram express the actual cascaded relationship between Position -> Speed -> Current rather than creating unrelated parameter cards.
+- show the inter-loop relationship through clear input/output signals such as `Wm Ref` and `Iq Ref`; do not force all three loops into one giant combined diagram;
+- preserve the selected child when practical so returning to Control Architecture reopens the engineer's previous loop.
 
 ## Non-goals
 
