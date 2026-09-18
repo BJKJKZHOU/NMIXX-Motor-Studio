@@ -718,10 +718,13 @@
 <section class="page-toolbar">
   <div class="page-title">ANALYSIS / SCOPE</div>
   <div class="toolbar-actions">
+    <!-- svelte-ignore a11y_click_events_have_key_events a11y_no_static_element_interactions -->
     <vscode-button disabled={!connection || selectedIds.size === 0 || commandBusy} onclick={toggleRunStop}>
       <i class={`codicon ${isRunning ? "codicon-debug-stop" : "codicon-play"}`}></i>&nbsp;{isRunning ? "Stop" : "Run"}
     </vscode-button>
+    <!-- svelte-ignore a11y_click_events_have_key_events a11y_no_static_element_interactions -->
     <vscode-button secondary disabled={!scopeConfig || commandBusy} onclick={autoSet}>Auto Set</vscode-button>
+    <!-- svelte-ignore a11y_click_events_have_key_events a11y_no_static_element_interactions -->
     <vscode-button secondary class:scope-tool-active={cursorEnabled} disabled={!scopeConfig} onclick={toggleCursor}>Cursor</vscode-button>
   </div>
 </section>
@@ -773,10 +776,10 @@
             {/each}
           </select>
         </label>
-        <label>
+        <div class="scope-readout">
           <span>Position</span>
           <strong>{horizontalOffset === 0 ? "Latest" : `-${formatTime(horizontalOffset)}`}</strong>
-        </label>
+        </div>
       </div>
       <input
         class="scope-position-slider"
@@ -876,6 +879,7 @@
       {/if}
       <div class="plot-meta">{snapshot?.sampleCount ?? 0} samples · loss {snapshot?.lostFrames ?? 0}</div>
     </div>
+    <!-- svelte-ignore a11y_click_events_have_key_events a11y_no_static_element_interactions -->
     <div bind:this={plotHost} class="plot-host scope-plot-interactive" onclick={setCursorFromPlot}></div>
   </section>
 </div>
