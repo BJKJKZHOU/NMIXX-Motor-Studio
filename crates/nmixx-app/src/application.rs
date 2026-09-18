@@ -187,11 +187,12 @@ impl ApplicationSession {
         history: Duration,
         config_id: u8,
     ) -> Result<MixedScopeConfig, ApplicationError> {
-        let old_scope = {
-            let mut slot = self.inner.scope.lock().map_err(|_| ApplicationError::Poisoned)?;
-            slot.take()
-        };
-        drop(old_scope);
+        {
+            let slot = self.inner.scope.lock().map_err(|_| ApplicationError::Poisoned)?;
+            if let Some(scope) = slot.as_ref() {
+                return Ok(scope.reconfigure(selections)?);
+            }
+        }
 
         let plot_capabilities = self.plot_capabilities()?;
         let scope = MixedScopeSession::from_capabilities(
@@ -202,7 +203,7 @@ impl ApplicationSession {
             history,
             config_id,
         )?;
-        let config = scope.config().clone();
+        let config = scope.config()?;
         let mut slot = self.inner.scope.lock().map_err(|_| ApplicationError::Poisoned)?;
         *slot = Some(scope);
         Ok(config)
@@ -249,7 +250,7 @@ impl ApplicationSession {
     }
 
     pub fn scope_config(&self) -> Result<MixedScopeConfig, ApplicationError> {
-        self.with_scope(|scope| Ok(scope.config().clone()))
+        self.with_scope(|scope| scope.config())
     }
 
     fn with_scope<T>(
