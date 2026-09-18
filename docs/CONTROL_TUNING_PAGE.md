@@ -2,11 +2,13 @@
 
 ## Purpose
 
-Control Tuning is a servo closed-loop tuning page. It is not the same workflow as the generic Plot/Scope page.
+Control Tuning is a servo closed-loop tuning page. It is not the same workflow as the generic Plot/Scope page, and it is not the control-structure construction page.
+
+Control Architecture owns controller/observer selection and structural control-path configuration such as filters, feedback selection, feedforward and other algorithm-specific blocks. Control Tuning assumes that structure already exists and concentrates the parameters engineers adjust repeatedly while observing dynamic response.
 
 The page binds three things into one repeatable experiment:
 
-1. controller / observer tuning parameters;
+1. the common / primary controller and observer tuning parameters;
 2. one motion command;
 3. one finite waveform capture synchronized to that motion.
 
@@ -77,13 +79,19 @@ Device: AxDr_L · Connected       Motor: ENABLED   [ Disable ] [ Stop ]
 +-----------------------------------------+---------------------+
 ```
 
-The left side is the experiment waveform area. The lower-left area defines the motion for the next experiment. The right side contains tuning parameters and the actual controller gains used by firmware. Current and speed loops expose both Bandwidth and Manual gain ownership; the active source is visible and editable.
+The left side is the experiment waveform area. The lower-left area defines the motion for the next experiment. The right side contains the compact primary tuning set and the actual controller gains used by firmware. Current and speed loops expose both Bandwidth and Manual gain ownership; the active source is visible and editable.
+
+The page deliberately does not reproduce the complete control diagram. Structural configuration such as controller type, filter mode/frequency, feedback source, feedforward and algorithm-specific block options belongs to Control Architecture even when those values ultimately affect the same loop.
 
 The page does not duplicate Connect/Disconnect controls or motor Enable/Disable/Stop controls inside its own content area.
 
 ## Tuning parameter semantics
 
 Bandwidth is a design entry; Kp/Ki are the actual controller parameters. Current and speed loops also expose a tuning source that defines who owns the actual gains when motor-model parameters change.
+
+These Parameters may also appear inside their corresponding blocks on Control Architecture. That is intentional: the pages are two views over the same shared Parameter state, not two copies. A write from either page must immediately be reflected by the other view, including the shared RAM-modified / not-yet-saved presentation.
+
+Control Tuning should remain selective. A Parameter belongs here when engineers are expected to change it repeatedly while running response experiments. Structural parameters that are changed occasionally belong only to Control Architecture.
 
 ### Current Loop
 
@@ -322,6 +330,29 @@ Control Tuning:
 - intended specifically for closed-loop tuning.
 
 Start/Stop-style controls inside Analysis should follow the shared stateful-action rule when they operate on one mutually exclusive acquisition task.
+
+## Boundary with Control Architecture
+
+Typical Parameters shared by both pages:
+
+- current-loop Bandwidth and Id/Iq Kp/Ki;
+- speed-loop Bandwidth and Kp/Ki;
+- position-loop Kp;
+- mechanical ESO Bandwidth;
+- current/speed tuning source when it is useful during tuning.
+
+Typical Control-Architecture-only configuration:
+
+- controller type;
+- feedback source;
+- observer selection;
+- output/input filter enable, mode and frequency;
+- notch-filter configuration;
+- feedforward enable/type/gain;
+- anti-windup mode;
+- algorithm-specific structural options.
+
+Do not expand Control Tuning into a second control-architecture editor merely because a new host-visible Parameter exists.
 
 ## Firmware contract required by this page
 
