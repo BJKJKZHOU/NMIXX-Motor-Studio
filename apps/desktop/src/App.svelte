@@ -9,12 +9,13 @@
   import MotorPage from "./motor/MotorPage.svelte";
   import EncoderPage from "./encoder/EncoderPage.svelte";
   import LimitsPage from "./limits/LimitsPage.svelte";
+  import ControlTuningPage from "./control/ControlTuningPage.svelte";
   import { canSaveParameters, disableMotor, enableMotor, onActionCompleted, saveParameters, stopMotor } from "./actions/api";
   import type { ActionCompletion, ActionHandle } from "./actions/types";
   import { listParameters, readParameters, refreshAllParameters as refreshParameterCache } from "./parameters/api";
   import type { ParameterMetadata, ParameterValue } from "./parameters/types";
 
-  type Page = "connection" | "motor" | "encoder" | "limits" | "control" | "analysis" | "parameters" | "events" | "automation";
+  type Page = "connection" | "motor" | "encoder" | "limits" | "control" | "tuning" | "analysis" | "parameters" | "events" | "automation";
 
   const GLOBAL_SYMBOLS = ["PARAM_MOTOR_STATE", "PARAM_RUN_IQ", "PARAM_RUN_WM", "PARAM_RUN_POSITION"] as const;
   const MOTOR_DISABLED = 0;
@@ -47,6 +48,7 @@
     { id: "encoder", title: "Encoder", icon: "codicon-record" },
     { id: "limits", title: "Limits / Safety", icon: "codicon-shield" },
     { id: "control", title: "Control", icon: "codicon-settings-gear" },
+    { id: "tuning", title: "Control Tuning", icon: "codicon-tune" },
     { id: "analysis", title: "Analysis", icon: "codicon-graph-line" },
   ];
 
@@ -326,6 +328,10 @@
         {:else if activePage === "limits"}
           <div class="domain-page-container">
             <LimitsPage {connection} onError={setError} />
+          </div>
+        {:else if activePage === "tuning"}
+          <div class="domain-page-container">
+            <ControlTuningPage {connection} {motorState} onError={setError} />
           </div>
         {:else if activePage === "parameters"}
           <div class="domain-page-container">

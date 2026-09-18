@@ -54,16 +54,17 @@ Device: AxDr_L · Connected       Motor: ENABLED   [ Disable ] [ Stop ]
 | Control Tuning                                                |
 +-----------------------------------------+---------------------+
 |                                         | Current Loop        |
+|                                         | Source [Bandwidth v]|
 |                                         | Bandwidth [1000] Hz |
-|                                         | Id Kp      0.0178   |
-|              Experiment                 | Id Ki      532.3    |
-|              Waveform                   | Iq Kp      ...      |
-|                                         | Iq Ki      ...      |
+|                                         | Id Kp [0.0178]      |
+|              Experiment                 | Id Ki [532.3]       |
+|              Waveform                   | Iq Kp [...]         |
+|                                         | Iq Ki [...]         |
 |                                         |                     |
 |                                         | Speed Loop          |
+|                                         | Source [Bandwidth v]|
 |                                         | Bandwidth [50] Hz   |
-|                                         | Kp         ...      |
-|                                         | Ki         ...      |
+|                                         | Kp [...]   Ki [...] |
 |                                         |                     |
 |                                         | Position Loop       |
 |                                         | Kp         [5.0]    |
@@ -76,41 +77,43 @@ Device: AxDr_L · Connected       Motor: ENABLED   [ Disable ] [ Stop ]
 +-----------------------------------------+---------------------+
 ```
 
-The left side is the experiment waveform area. The lower-left area defines the motion for the next experiment. The right side contains tuning parameters and the active gains derived by firmware.
+The left side is the experiment waveform area. The lower-left area defines the motion for the next experiment. The right side contains tuning parameters and the actual controller gains used by firmware. Current and speed loops expose both Bandwidth and Manual gain ownership; the active source is visible and editable.
 
 The page does not duplicate Connect/Disconnect controls or motor Enable/Disable/Stop controls inside its own content area.
 
 ## Tuning parameter semantics
 
-The primary writable values are physical / design parameters instead of directly exposing every coupled gain.
+Bandwidth is a design entry; Kp/Ki are the actual controller parameters. Current and speed loops also expose a tuning source that defines who owns the actual gains when motor-model parameters change.
 
 ### Current Loop
 
 Writable:
 
-- current-loop bandwidth, Hz.
+- current-loop bandwidth, Hz;
+- tuning source: `Bandwidth` / `Manual`;
+- Id Kp / Ki;
+- Iq Kp / Ki.
 
-Read-only active values:
+Semantics:
 
-- Id Kp;
-- Id Ki;
-- Iq Kp;
-- Iq Ki.
+- writing Bandwidth switches the source to `Bandwidth` and firmware recalculates Id/Iq gains from active `Rs/Ld/Lq`;
+- writing any Id/Iq Kp/Ki switches the source to `Manual`;
+- when the source is `Bandwidth`, later motor-parameter changes may refresh the gains;
+- when the source is `Manual`, later motor-parameter changes must preserve the user-written gains;
+- explicitly selecting `Bandwidth` recalculates gains from the current bandwidth and motor model, even when the bandwidth numeric value itself did not change.
 
-Firmware continues to derive the current-loop gains from active `Rs`, `Ld`, `Lq` and the requested bandwidth.
+The page keeps Bandwidth and all four actual gains visible at the same time. Direct gain tuning is not hidden behind a separate Advanced dialog.
 
 ### Speed Loop
 
 Writable:
 
-- speed-loop bandwidth, Hz.
-
-Read-only active values:
-
+- speed-loop bandwidth, Hz;
+- tuning source: `Bandwidth` / `Manual`;
 - Kp;
 - Ki.
 
-Firmware continues to derive the speed-loop gains from active `J`, `B`, `Flux`, pole pairs and the requested bandwidth.
+The same ownership rule applies: Bandwidth writes select automatic model-based design; direct Kp/Ki writes select Manual ownership.
 
 ### Position Loop
 
@@ -155,19 +158,33 @@ Parameter editing must not cause implicit Enable, Disable, Run or Stop actions.
 
 ## Run behavior
 
-The page keeps edited values as pending/dirty values. When the user presses `Run`, the Application API performs one complete experiment using a consistent parameter set, but assumes the user has already explicitly put the motor in `ENABLED` state:
+Parameter editing follows the shared application rule:
 
 ```text
+typing -> GUI draft only
+Enter  -> write Device RAM and read back the effective value
+Esc    -> discard draft
+blur   -> no commit
+```
+
+`Run` never commits pending tuning drafts. If any tuning field still differs from the last effective Device RAM value, the page refuses to start the experiment and asks the user to commit or discard the edit first.
+
+When the user presses `Run`, the Application API performs one complete experiment using the already-effective parameter set and assumes the user has explicitly put the motor in `ENABLED` state:
+
+```text
+verify no uncommitted tuning draft
+        |
+        +-- no --> show "Commit or discard edited values first" and stop
+        |
+       yes
+        v
 verify motor state == ENABLED
         |
         +-- no --> show "Enable motor first" and stop
         |
        yes
         v
-write dirty tuning parameters
-        |
-        v
-read back active parameters / gains
+read back effective tuning values
         |
         v
 configure motion command
@@ -317,11 +334,13 @@ The firmware should expose these writable design parameters through the Paramete
 
 These tuning parameters must be writable in `DISABLED` and `ENABLED`, and rejected in `RUN`.
 
-It should also expose these read-only active controller values:
+It should also expose these writable actual controller parameters:
 
 - Id Kp / Ki;
 - Iq Kp / Ki;
 - Speed Kp / Ki.
+
+Current and Speed tuning source parameters must also be exposed so GUI, CLI and automation can observe or explicitly select `Bandwidth` / `Manual`.
 
 Observer diagnostic states and old encoder-difference speed can be added as read-only Plot channels when the tuning workflow needs them.
 
