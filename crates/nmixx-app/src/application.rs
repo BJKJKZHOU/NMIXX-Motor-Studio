@@ -10,7 +10,7 @@ use crate::{
     MixedScopeSnapshot, MixedScopeStatus, MotionCapabilities, MotionConfig, MotionPreview,
     MotionService, MotorActionError, MotorActionService, ParameterMetadata, ParameterService,
     ParameterServiceError, ParameterValue, PlotCapabilitiesError, PreflightError, PreflightIssue,
-    PreflightService, ScopeRate, ScopeSelection, SessionError, SessionEvent,
+    PreflightService, ScopeSelection, SessionError, SessionEvent,
 };
 
 #[derive(Debug, Error)]
