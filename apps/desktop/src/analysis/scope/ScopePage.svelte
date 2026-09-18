@@ -31,6 +31,8 @@
   let visibleChannels: PlotChannel[] = [];
   let snapshot: ScopeSnapshot | undefined;
   let latestValues: string[] = [];
+  let fastSelected = 0;
+  let normalSelected = 0;
   let activeConnection: ConnectionInfo | undefined;
   const scopeWindowSeconds = 0.5;
   const traceColors = ["#7aa2c8", "#c8b77a", "#9b8ac8", "#7fa68a", "#c28b73", "#aa829a", "#79a6ad", "#91a77b"];
@@ -214,7 +216,6 @@
     try {
       await clearScope();
       snapshotRevision += 1;
-      carriedPlotData = undefined;
       if (snapshot) snapshot = { ...snapshot, sampleCount: 0, series: snapshot.series.map((series) => ({ ...series, times: [], values: [] })) };
       plot?.setData([[], ...plotChannels.map(() => [])] as uPlot.AlignedData);
       await refreshSnapshot();
