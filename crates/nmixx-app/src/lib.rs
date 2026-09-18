@@ -8,6 +8,7 @@ mod application;
 mod connection;
 mod parameter_service;
 mod motion;
+mod mixed_scope;
 mod motion_capabilities;
 mod plot_capabilities;
 mod schema;
@@ -25,6 +26,10 @@ pub use motion::{
     TrajectoryType,
 };
 pub use motion_capabilities::MotionCapabilities;
+pub use mixed_scope::{
+    MixedScopeChannel, MixedScopeConfig, MixedScopeError, MixedScopeSeries, MixedScopeSession,
+    MixedScopeSnapshot, MixedScopeStatus, ScopeRate, ScopeSelection,
+};
 pub use plot_capabilities::{
     DevicePlotCapabilities, DevicePlotChannel, PlotCapabilitiesError, PlotChannelInfo,
 };
