@@ -2,8 +2,10 @@
   import { onMount } from "svelte";
   import { initializeMotion, motionPreview, motionState, updateMotion } from "./store";
   import MotionTrajectoryPlot from "./MotionTrajectoryPlot.svelte";
+  import type { MotionCapabilities } from "../connection/types";
   import type { MotionMode, MotionState, SCurveMode, TrajectoryType } from "./types";
 
+  export let capabilities: MotionCapabilities | undefined;
   export let onError: (error: unknown) => void = () => undefined;
 
   const modeLabels: Record<MotionMode, string> = {
@@ -34,6 +36,22 @@
 
   function hasTrajectory(): boolean {
     return $motionState.mode === "position" || $motionState.mode === "speed" || $motionState.mode === "sensorless-speed";
+  }
+
+  function modeSupported(mode: MotionMode): boolean {
+    if (!capabilities) return true;
+    if (mode === "position") return capabilities.position;
+    if (mode === "speed") return capabilities.speed;
+    if (mode === "sensorless-speed") return capabilities.sensorlessSpeed;
+    if (mode === "torque") return capabilities.torque;
+    return capabilities.mit;
+  }
+
+  function trajectorySupported(trajectory: TrajectoryType): boolean {
+    if (!capabilities) return true;
+    if (trajectory === "trapezoidal") return capabilities.trajectoryTrapezoidal;
+    if (trajectory === "s-curve") return capabilities.trajectorySCurve;
+    return capabilities.trajectoryFiltered;
   }
 
   function trajectoryNote(): string {
@@ -146,7 +164,7 @@
               <span>Profile</span>
               <select value={$motionState.trajectory} onchange={(event) => update("trajectory", (event.currentTarget as HTMLSelectElement).value as TrajectoryType)}>
                 {#each Object.entries(trajectoryLabels) as [value, label]}
-                  <option value={value}>{label}</option>
+                  <option value={value} disabled={!trajectorySupported(value as TrajectoryType)}>{label}</option>
                 {/each}
               </select>
             </label>
