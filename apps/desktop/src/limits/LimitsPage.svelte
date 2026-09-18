@@ -15,8 +15,8 @@
   const SPEED_HARDWARE_SYMBOL = "PARAM_LIMIT_WM_HARDWARE";
 
   const OPERATING_LIMITS = [
-    { label: "Current limit", userSymbol: CURRENT_USER_SYMBOL, hardwareSymbol: CURRENT_HARDWARE_SYMBOL },
-    { label: "Maximum speed", userSymbol: SPEED_USER_SYMBOL, hardwareSymbol: SPEED_HARDWARE_SYMBOL },
+    { userSymbol: CURRENT_USER_SYMBOL, hardwareSymbol: CURRENT_HARDWARE_SYMBOL },
+    { userSymbol: SPEED_USER_SYMBOL, hardwareSymbol: SPEED_HARDWARE_SYMBOL },
   ];
 
   const ALL_SYMBOLS = [
@@ -79,6 +79,10 @@
 
   function unitFor(symbol: string): string {
     return metadata[symbol]?.unit ?? "";
+  }
+
+  function parameterLabel(symbol: string, fallback?: string): string {
+    return metadata[symbol]?.name ?? fallback ?? symbol;
   }
 
   function isWritable(symbol: string): boolean {
@@ -236,7 +240,7 @@
             {#each OPERATING_LIMITS as row}
               {@const source = activeSource(row.userSymbol, row.hardwareSymbol)}
               <div class="operating-row" role="row">
-                <div class="parameter-name" role="cell">{row.label}</div>
+                <div class="parameter-name" role="cell">{parameterLabel(row.userSymbol)}</div>
                 <div class:configured-cell={isConfigured(row.userSymbol)} class:active-limit-cell={source === "user"} class="limit-cell" role="cell">
                   {#if metadata[row.userSymbol]}
                     <span class="inline-editor">
