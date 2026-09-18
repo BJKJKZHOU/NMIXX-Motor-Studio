@@ -44,6 +44,18 @@ impl ConfigService {
         }
     }
 
+    pub(crate) fn from_shared(
+        session: DeviceSession,
+        schema: HostSchema,
+        parameters: ParameterService,
+    ) -> Self {
+        Self {
+            session,
+            schema,
+            parameters,
+        }
+    }
+
     pub fn save_available(&self) -> bool {
         self.schema.action_by_key(PARAMETER_SAVE).is_some()
     }
