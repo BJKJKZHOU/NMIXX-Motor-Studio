@@ -140,6 +140,7 @@ enum PreflightCommand {
         #[arg(value_enum)]
         kind: CliIdentificationKind,
     },
+    PhaseSearch,
 }
 
 #[derive(Debug, Subcommand)]
@@ -344,16 +345,11 @@ fn run() -> Result<(), Box<dyn Error>> {
             match command {
                 PreflightCommand::Identification { kind } => {
                     let issues = service.check_identification(kind.into())?;
-                    if issues.is_empty() {
-                        println!("ready");
-                    } else {
-                        for issue in issues {
-                            match issue.parameter_id {
-                                Some(id) => println!("0x{id:04X}: {}", issue.reason),
-                                None => println!("{}", issue.reason),
-                            }
-                        }
-                    }
+                    print_preflight_issues(&issues);
+                }
+                PreflightCommand::PhaseSearch => {
+                    let issues = service.check_phase_search()?;
+                    print_preflight_issues(&issues);
                 }
             }
         }
@@ -403,6 +399,20 @@ fn run() -> Result<(), Box<dyn Error>> {
         },
     }
     Ok(())
+}
+
+fn print_preflight_issues(issues: &[nmixx_app::PreflightIssue]) {
+    if issues.is_empty() {
+        println!("ready");
+        return;
+    }
+
+    for issue in issues {
+        match issue.parameter_id {
+            Some(id) => println!("0x{id:04X}: {}", issue.reason),
+            None => println!("{}", issue.reason),
+        }
+    }
 }
 
 fn wait_for_action_completion(
