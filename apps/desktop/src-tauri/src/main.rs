@@ -2,15 +2,20 @@ use std::sync::Mutex;
 use std::time::Duration;
 
 use nmixx_app::{
-    ActionHandle, ActionMetadata, AxdrStatus, DEFAULT_USB_BAUD, DevicePlotCapabilities,
-    DeviceSession, HostSchema, MotorActionService, ParameterMetadata, ParameterService,
+    ActionHandle, ActionMetadata, AxdrStatus, ConfigService, DEFAULT_USB_BAUD,
+    DevicePlotCapabilities, DeviceSession, HostSchema, MotorActionService, ParameterMetadata,
+    ParameterService,
     ParameterValue, PositionValue, RangeMetadata, SchemaNumber, ScopeSession, SessionEvent,
     StreamState,
 };
 use serde::{Deserialize, Serialize};
 use tauri::{Emitter, State};
 
+const MOTOR_ENABLE_SEMANTIC_ACTION: &str = "ACTION_MOTOR_ENABLE";
+const MOTOR_STOP_SEMANTIC_ACTION: &str = "ACTION_MOTOR_STOP";
+const MOTOR_DISABLE_SEMANTIC_ACTION: &str = "ACTION_MOTOR_DISABLE";
 const PHASE_SEARCH_SEMANTIC_ACTION: &str = "ACTION_PHASE_SEARCH_START";
+const CONFIG_SAVE_SEMANTIC_ACTION: &str = "ACTION_PARAMETER_SAVE";
 
 #[derive(Default)]
 struct DesktopState {
@@ -526,6 +531,96 @@ fn action_start(
 }
 
 #[tauri::command]
+fn motor_enable(
+    app: tauri::AppHandle,
+    state: State<'_, Mutex<DesktopState>>,
+) -> Result<ActionHandleDto, String> {
+    start_motor_semantic_action(app, state, MOTOR_ENABLE_SEMANTIC_ACTION, |service| service.enable())
+}
+
+#[tauri::command]
+fn motor_stop(
+    app: tauri::AppHandle,
+    state: State<'_, Mutex<DesktopState>>,
+) -> Result<ActionHandleDto, String> {
+    start_motor_semantic_action(app, state, MOTOR_STOP_SEMANTIC_ACTION, |service| service.stop())
+}
+
+#[tauri::command]
+fn motor_disable(
+    app: tauri::AppHandle,
+    state: State<'_, Mutex<DesktopState>>,
+) -> Result<ActionHandleDto, String> {
+    start_motor_semantic_action(app, state, MOTOR_DISABLE_SEMANTIC_ACTION, |service| service.disable())
+}
+
+fn start_motor_semantic_action<F>(
+    app: tauri::AppHandle,
+    state: State<'_, Mutex<DesktopState>>,
+    symbol: &str,
+    start: F,
+) -> Result<ActionHandleDto, String>
+where
+    F: FnOnce(&MotorActionService) -> Result<ActionHandle, nmixx_app::MotorActionError>,
+{
+    let (session, schema) = {
+        let guard = state.lock().map_err(|_| "desktop state is poisoned".to_owned())?;
+        (
+            guard.session.clone().ok_or("device is not connected")?,
+            guard.schema.clone().ok_or("HostSchema is not loaded")?,
+        )
+    };
+
+    let events = session.subscribe().map_err(|error| error.to_string())?;
+    let service = MotorActionService::new(session, schema);
+    let handle = start(&service).map_err(|error| error.to_string())?;
+    let symbol = symbol.to_owned();
+    let result = ActionHandleDto {
+        txn: handle.txn.get(),
+        action_id: handle.action_id,
+        symbol: symbol.clone(),
+    };
+    spawn_action_completion(app, events, handle, symbol);
+    Ok(result)
+}
+
+#[tauri::command]
+fn config_save_available(
+    state: State<'_, Mutex<DesktopState>>,
+) -> Result<bool, String> {
+    let guard = state.lock().map_err(|_| "desktop state is poisoned".to_owned())?;
+    let session = guard.session.clone().ok_or("device is not connected")?;
+    let schema = guard.schema.clone().ok_or("HostSchema is not loaded")?;
+    Ok(ConfigService::new(session, schema).save_available())
+}
+
+#[tauri::command]
+fn config_save(
+    app: tauri::AppHandle,
+    state: State<'_, Mutex<DesktopState>>,
+) -> Result<ActionHandleDto, String> {
+    let (session, schema) = {
+        let guard = state.lock().map_err(|_| "desktop state is poisoned".to_owned())?;
+        (
+            guard.session.clone().ok_or("device is not connected")?,
+            guard.schema.clone().ok_or("HostSchema is not loaded")?,
+        )
+    };
+
+    let events = session.subscribe().map_err(|error| error.to_string())?;
+    let service = ConfigService::new(session, schema);
+    let handle = service.save().map_err(|error| error.to_string())?;
+    let symbol = CONFIG_SAVE_SEMANTIC_ACTION.to_owned();
+    let result = ActionHandleDto {
+        txn: handle.txn.get(),
+        action_id: handle.action_id,
+        symbol: symbol.clone(),
+    };
+    spawn_action_completion(app, events, handle, symbol);
+    Ok(result)
+}
+
+#[tauri::command]
 fn phase_search_start(
     app: tauri::AppHandle,
     state: State<'_, Mutex<DesktopState>>,
@@ -694,6 +789,11 @@ fn main() {
             parameter_write,
             action_list,
             action_start,
+            motor_enable,
+            motor_stop,
+            motor_disable,
+            config_save_available,
+            config_save,
             phase_search_start,
             scope_configure,
             scope_live,
