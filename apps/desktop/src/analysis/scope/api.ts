@@ -1,8 +1,8 @@
 import { invoke } from "@tauri-apps/api/core";
-import type { ScopeConfig, ScopeSnapshot } from "./types";
+import type { ScopeConfig, ScopeSelection, ScopeSnapshot } from "./types";
 
-export function configureScope(parameterIds: number[], historySeconds = 10): Promise<ScopeConfig> {
-  return invoke<ScopeConfig>("scope_configure", { parameterIds, historySeconds });
+export function configureScope(selections: ScopeSelection[], historySeconds = 10): Promise<ScopeConfig> {
+  return invoke<ScopeConfig>("scope_configure", { selections, historySeconds });
 }
 
 export function startScope(): Promise<void> {
