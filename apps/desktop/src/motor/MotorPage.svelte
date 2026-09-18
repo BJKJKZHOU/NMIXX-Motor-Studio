@@ -4,9 +4,9 @@
   import { listParameters, onParametersRefreshed, readCachedParameters, readCurrentParameters, readParameters, writeParameter } from "../parameters/api";
   import type { ParameterMetadata, ParameterValue } from "../parameters/types";
   import { modifiedParameterIds } from "../parameters/persistence";
-  import { listActions, onActionCompleted, startAction } from "../actions/api";
+  import { listActions, onActionCompleted, startAction, startIdentification as startIdentificationAction } from "../actions/api";
   import type { ActionCompletion, ActionHandle, ActionMetadata } from "../actions/types";
-  import { checkIdentificationPreflight } from "../preflight/api";
+
 
   type Props = {
     connection: ConnectionInfo | undefined;
@@ -376,21 +376,24 @@
     if (!actionAvailable(config.startAction) || identifyBusy()) return;
 
     try {
-      const issues = await checkIdentificationPreflight(identKey);
-      if (issues.length > 0) {
-        setIdentState(identKey, "failed", issues[0].reason);
-        return;
-      }
-
       for (const otherKey of Object.keys(IDENT_CONFIGS) as IdentKey[]) {
         if (otherKey !== identKey && identStates[otherKey].phase === "ready") setIdentState(otherKey, "idle");
       }
 
+      let result = await startIdentificationAction(identKey, false);
+      if (result.status === "requires_enable") {
+        const confirmed = window.confirm(
+          `${actionLabel(config.startAction)} identification requires enabling the motor.\n\nEnable motor and continue?`,
+        );
+        if (!confirmed) return;
+        result = await startIdentificationAction(identKey, true);
+      }
+
+      if (result.status !== "started") return;
       setIdentState(identKey, "running");
-      const handle = await startAction(config.startAction);
       pendingHandles = {
         ...pendingHandles,
-        [handleKey(handle)]: { identKey, kind: "identify" },
+        [handleKey(result.handle)]: { identKey, kind: "identify" },
       };
     } catch (error) {
       setIdentState(identKey, "failed", error instanceof Error ? error.message : String(error));
