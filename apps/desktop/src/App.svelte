@@ -9,6 +9,7 @@
   import MotorPage from "./motor/MotorPage.svelte";
   import EncoderPage from "./encoder/EncoderPage.svelte";
   import LimitsPage from "./limits/LimitsPage.svelte";
+  import ControlPage from "./control/ControlPage.svelte";
   import ControlTuningPage from "./control/ControlTuningPage.svelte";
   import { canSaveParameters, disableMotor, enableMotor, onActionCompleted, saveParameters, stopMotor } from "./actions/api";
   import type { ActionCompletion, ActionHandle } from "./actions/types";
@@ -328,6 +329,10 @@
         {:else if activePage === "limits"}
           <div class="domain-page-container">
             <LimitsPage {connection} onError={setError} />
+          </div>
+        {:else if activePage === "control"}
+          <div class="domain-page-container">
+            <ControlPage {connection} {motorState} onError={setError} />
           </div>
         {:else if activePage === "tuning"}
           <div class="domain-page-container">
