@@ -56,9 +56,27 @@ impl ApplicationSession {
         Self::from_session(session, schema)
     }
 
+    pub fn open_usb_with_motion(
+        path: impl AsRef<Path>,
+        baud_rate: u32,
+        schema: HostSchema,
+        motion: MotionService,
+    ) -> Result<Self, ApplicationError> {
+        let session = DeviceSession::open_usb(path, baud_rate)?;
+        Self::from_session_with_motion(session, schema, motion)
+    }
+
     pub fn from_session(
         session: DeviceSession,
         schema: HostSchema,
+    ) -> Result<Self, ApplicationError> {
+        Self::from_session_with_motion(session, schema, MotionService::default())
+    }
+
+    pub fn from_session_with_motion(
+        session: DeviceSession,
+        schema: HostSchema,
+        motion: MotionService,
     ) -> Result<Self, ApplicationError> {
         let plot_capabilities = DevicePlotCapabilities::discover(&session)?;
         let parameters = ParameterService::new(session.clone(), schema.clone());
@@ -71,7 +89,7 @@ impl ApplicationSession {
                 parameters,
                 plot_capabilities,
                 motion_capabilities,
-                motion: MotionService::default(),
+                motion,
                 scope: Mutex::new(None),
             }),
         })
