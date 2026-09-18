@@ -148,13 +148,13 @@ fn scope_live_snapshot_pause_and_clear_follow_fast_samples() {
             channels: vec![
                 ScopeChannel {
                     id: 0x0001,
-                    symbol: "Ia".into(),
+                    label: "Ia".into(),
                     unit: Some("A".into()),
                     scale: 0.1,
                 },
                 ScopeChannel {
                     id: 0x0011,
-                    symbol: "Iq".into(),
+                    label: "Iq".into(),
                     unit: Some("A".into()),
                     scale: 0.5,
                 },
@@ -242,7 +242,7 @@ fn scope_surfaces_fast_ingest_failure_and_stops_plot() {
             history: Duration::from_millis(100),
             channels: vec![ScopeChannel {
                 id: 0x0001,
-                symbol: "Iq".into(),
+                label: "Iq".into(),
                 unit: Some("A".into()),
                 scale: 0.001,
             }],
