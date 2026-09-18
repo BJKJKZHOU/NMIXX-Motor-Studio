@@ -99,10 +99,6 @@
   }
 </script>
 
-<section class="page-toolbar">
-  <div class="page-title">MOTION</div>
-</section>
-
 <div class="motion-simple-page">
   <div class="motion-mode-row">
     <label>
