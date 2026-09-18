@@ -232,9 +232,11 @@ The page-local `Run` action is contextual: it means "run this configured tuning 
 
 The persistent global `Stop` control must remain available while a tuning experiment is in `RUN`.
 
-A user Stop terminates the active motion/task through the Application layer and returns the motor to the appropriate non-running state, normally `ENABLED`, while preserving a coherent experiment result/error state for the page.
+Control Tuning also exposes a local `Stop` next to its page-local `Run` because that placement is convenient during repeated experiments. Both controls terminate the same active motion/task through the Application layer and return the motor to the appropriate non-running state, normally `ENABLED`.
 
-The page must not implement a second independent motor-stop path. It observes the same Application task/motor state used by the global control.
+The page-local Stop must not implement an independent device-side stop path. It is a second UI entry to the same Application stop operation.
+
+A Stop should preserve a coherent experiment result/error state and retain the waveform collected up to the stop.
 
 ## Experiment capture
 
@@ -289,7 +291,22 @@ Recommended defaults:
 
 ## Motion Command
 
-The lower-left form depends on the selected mode.
+The lower-left Motion Command area uses a compact two-column engineering form rather than a tall settings stack. Position mode should present command-mode options and the common motion values in one bounded area, for example:
+
+```text
+Mode [ Position v ]       ( ) Absolute   (*) Incremental   [x] Repeat
+
+Position   [ ... ] turn   Max Speed [ ... ] rad/s
+Accel      [ ... ] rad/s² Decel     [ ... ] rad/s²
+
+[ ] Copy Accel to Decel                         [ Run ] [ Stop ]
+```
+
+The local `Stop` is intentionally present beside `Run` for direct operator access. It is not a second stop mechanism: both the local Control Tuning Stop and the persistent global Stop invoke the same Application-level motor/task stop semantics.
+
+When stopped early, the experiment capture should be finalized coherently and the acquired waveform retained for inspection.
+
+The form depends on the selected mode.
 
 Position:
 
