@@ -31,6 +31,13 @@
   --vscode-list-hoverBackground: #24282f;
   --vscode-list-activeSelectionBackground: #30394a;
   --vscode-list-activeSelectionForeground: #eeeeee;
+  --vscode-descriptionForeground: #9b9b9b;
+  --vscode-panel-border: #303030;
+  --nmixx-status-runningForeground: #c8b77a;
+  --nmixx-status-successForeground: #7b9b84;
+  --nmixx-status-errorForeground: #d7a6a6;
+  --nmixx-action-successBackground: #44664d;
+  --nmixx-action-successHoverBackground: #52795d;
 }
 
 * { box-sizing: border-box; }
@@ -543,3 +550,13 @@ vscode-button { --vscode-button-border: transparent; }
 }
 .tuning-motion-actions button:first-child { background: #40506a; }
 .tuning-motion-actions button:disabled { opacity: .45; }
+
+
+/* Parameter refresh is a workbench-level action. Domain pages must not expose a second Refresh entry. */
+.domain-page-container .page-toolbar .tool-button[title^="Refresh "],
+.parameter-toolbar .tool-button[title="Refresh all parameters"] { display: none; }
+
+/* RAM value differs from the last successfully persisted configuration. */
+.ramModified {
+  background: color-mix(in srgb, var(--vscode-focusBorder) 14%, var(--vscode-input-background)) !important;
+}
