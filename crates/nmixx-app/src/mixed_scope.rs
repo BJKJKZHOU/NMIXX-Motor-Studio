@@ -377,6 +377,14 @@ impl MixedScopeSession {
     }
 
     pub fn snapshot_tail(&self, window: Duration) -> Result<MixedScopeSnapshot, MixedScopeError> {
+        self.snapshot_window(window, Duration::ZERO)
+    }
+
+    pub fn snapshot_window(
+        &self,
+        window: Duration,
+        end_offset: Duration,
+    ) -> Result<MixedScopeSnapshot, MixedScopeError> {
         let shared = self.shared.lock().map_err(|_| MixedScopeError::Closed)?;
         ensure_runtime_ok(&shared)?;
 
@@ -393,10 +401,18 @@ impl MixedScopeSession {
                 .iter()
                 .position(|id| *id == channel.id)
                 .ok_or(MixedScopeError::UnknownChannel(channel.id))?;
-            let wanted = (window.as_secs_f64() * f64::from(channel.sample_rate_hz)).ceil() as usize;
-            let snapshot = group.pipeline.snapshot_tail(wanted.max(1));
-            let mut values = Vec::with_capacity(snapshot.sample_count());
-            for sample_index in 0..snapshot.sample_count() {
+
+            let rate = f64::from(channel.sample_rate_hz);
+            let wanted = (window.as_secs_f64() * rate).ceil() as usize;
+            let offset = (end_offset.as_secs_f64() * rate).round() as usize;
+            let snapshot = group.pipeline.snapshot();
+
+            let available = snapshot.sample_count();
+            let end = available.saturating_sub(offset.min(available));
+            let start = end.saturating_sub(wanted.max(1));
+
+            let mut values = Vec::with_capacity(end.saturating_sub(start));
+            for sample_index in start..end {
                 if let Some(sample) = snapshot.sample(sample_index) {
                     values.push(sample[index]);
                 }
