@@ -3,6 +3,7 @@
   import type { ConnectionInfo } from "../connection/types";
   import { listParameters, onParametersRefreshed, readCachedParameters, readCurrentParameters, readParameters, writeParameter } from "../parameters/api";
   import type { ParameterMetadata, ParameterValue } from "../parameters/types";
+  import { modifiedParameterIds } from "../parameters/persistence";
   import { listActions, onActionCompleted } from "../actions/api";
   import type { ActionCompletion, ActionHandle, ActionMetadata } from "../actions/types";
   import { startPhaseSearch as startPhaseSearchAction } from "./api";
@@ -348,6 +349,7 @@
                 <div>
                   {#if metadata[ENCODER_PROTOCOL_SYMBOL]}
                     <select
+                      class:ramModified={$modifiedParameterIds.has(metadata[ENCODER_PROTOCOL_SYMBOL].id)}
                       class="compact-select"
                       disabled={!isWritable(ENCODER_PROTOCOL_SYMBOL) || writing.has(ENCODER_PROTOCOL_SYMBOL) || phaseState === "running"}
                       value={String(numericValue(ENCODER_PROTOCOL_SYMBOL) ?? "")}
@@ -367,6 +369,7 @@
                   <div>
                     {#if metadata[ENCODER_SPI_TYPE_SYMBOL]}
                       <select
+                        class:ramModified={$modifiedParameterIds.has(metadata[ENCODER_SPI_TYPE_SYMBOL].id)}
                         class="compact-select"
                         disabled={!isWritable(ENCODER_SPI_TYPE_SYMBOL) || writing.has(ENCODER_SPI_TYPE_SYMBOL) || phaseState === "running"}
                         value={String(numericValue(ENCODER_SPI_TYPE_SYMBOL) ?? "")}
@@ -397,6 +400,7 @@
                   {#if metadata[PHASE_CURRENT_SYMBOL]}
                     <span class="inline-editor">
                       <input
+                        class:ramModified={$modifiedParameterIds.has(metadata[PHASE_CURRENT_SYMBOL].id)}
                         class="compact-input mono"
                         value={drafts[PHASE_CURRENT_SYMBOL] ?? ""}
                         disabled={!isWritable(PHASE_CURRENT_SYMBOL) || writing.has(PHASE_CURRENT_SYMBOL) || phaseState === "running"}
@@ -432,6 +436,7 @@
                 <div>
                   {#if metadata[MOTOR_DIR_SYMBOL]}
                     <select
+                      class:ramModified={$modifiedParameterIds.has(metadata[MOTOR_DIR_SYMBOL].id)}
                       class="compact-select"
                       disabled={!isWritable(MOTOR_DIR_SYMBOL) || writing.has(MOTOR_DIR_SYMBOL) || phaseState === "running"}
                       value={motorDirection()}
