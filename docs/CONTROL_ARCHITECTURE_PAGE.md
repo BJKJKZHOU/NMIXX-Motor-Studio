@@ -230,26 +230,25 @@ Parameters page ---------+
 
 ## Initial implementation
 
-The current GUI still renders Current, Speed and Position as sections inside one `ControlPage.svelte`. That is an implementation stage, not the intended final navigation model.
-
-The intended next structure is:
+The desktop GUI now exposes Control Architecture as a parent domain with three loop-specific child views:
 
 ```text
 Control Architecture
-├─ Current Loop page
-├─ Speed Loop page
-└─ Position Loop page
+├─ Current Loop
+├─ Speed Loop
+└─ Position Loop
 ```
 
-Each child page keeps Parameter editing inside the relevant diagram blocks and reserves the controller-selection location for future firmware-exposed choices.
+The shell owns the child navigation and preserves the selected loop during the application session. `ControlPage.svelte` renders only the selected loop while continuing to use the same shared Parameter bindings and write path.
 
-Implementation guidance:
+The current child diagrams are still the first structural version. Next implementation work should:
 
-- split the existing three loop sections into loop-specific child pages without creating new Parameter storage;
-- keep common gains editable in Architecture even when they also appear on Control Tuning;
+- keep Parameter editing inside the relevant diagram blocks;
+- make actual Kp/Ki editable where firmware exposes them as writable;
+- keep the controller-selection location reserved for firmware-exposed controller choices;
+- clarify observer/feedback placement, especially Mechanical ESO on the Speed Loop page;
 - add filters, feedforward, feedback selection and controller-specific blocks only when their firmware/Application contracts exist;
-- show the inter-loop relationship through clear input/output signals such as `Wm Ref` and `Iq Ref`; do not force all three loops into one giant combined diagram;
-- preserve the selected child when practical so returning to Control Architecture reopens the engineer's previous loop.
+- show inter-loop relationships through clear input/output signals such as `Wm Ref` and `Iq Ref`, without forcing all three loops into one giant combined diagram.
 
 ## Non-goals
 
