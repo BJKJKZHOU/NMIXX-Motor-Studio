@@ -18,12 +18,15 @@
   import type { ParameterMetadata, ParameterValue } from "./parameters/types";
 
   type Page = "connection" | "motor" | "encoder" | "limits" | "control" | "tuning" | "analysis" | "parameters" | "events" | "automation";
+  type ControlLoopPage = "current" | "speed" | "position";
 
   const GLOBAL_SYMBOLS = ["PARAM_MOTOR_STATE", "PARAM_RUN_IQ", "PARAM_RUN_WM", "PARAM_RUN_POSITION"] as const;
   const MOTOR_DISABLED = 0;
   const MOTOR_RUN = 2;
 
   let activePage: Page = "connection";
+  let activeControlLoop: ControlLoopPage = "current";
+  let controlArchitectureExpanded = true;
   let connection: ConnectionInfo | undefined;
   let errorText = "";
   let scopeSummary: ScopeSummary = { state: "STOPPED", selectedChannels: 0, lostFrames: 0 };
@@ -49,7 +52,7 @@
     { id: "motor", title: "Motor", icon: "codicon-circuit-board" },
     { id: "encoder", title: "Encoder", icon: "codicon-record" },
     { id: "limits", title: "Limits / Safety", icon: "codicon-shield" },
-    { id: "control", title: "Control", icon: "codicon-settings-gear" },
+    { id: "control", title: "Control Architecture", icon: "codicon-settings-gear" },
     { id: "tuning", title: "Control Tuning", icon: "codicon-tune" },
     { id: "analysis", title: "Analysis", icon: "codicon-graph-line" },
   ];
@@ -337,8 +340,28 @@
             <LimitsPage {connection} onError={setError} />
           </div>
         {:else if activePage === "control"}
-          <div class="domain-page-container">
-            <ControlPage {connection} {motorState} onError={setError} />
+          <div class="control-domain-shell">
+            <aside class="control-navigation" aria-label="Control Architecture pages">
+              <button
+                class="control-navigation-parent"
+                onclick={() => controlArchitectureExpanded = !controlArchitectureExpanded}
+                aria-expanded={controlArchitectureExpanded}
+              >
+                <i class="codicon codicon-settings-gear"></i>
+                <span>Control Architecture</span>
+                <i class={`codicon ${controlArchitectureExpanded ? "codicon-chevron-down" : "codicon-chevron-right"} control-navigation-chevron`}></i>
+              </button>
+              {#if controlArchitectureExpanded}
+                <div class="control-navigation-children">
+                  <button class:active={activeControlLoop === "current"} onclick={() => activeControlLoop = "current"}>Current Loop</button>
+                  <button class:active={activeControlLoop === "speed"} onclick={() => activeControlLoop = "speed"}>Speed Loop</button>
+                  <button class:active={activeControlLoop === "position"} onclick={() => activeControlLoop = "position"}>Position Loop</button>
+                </div>
+              {/if}
+            </aside>
+            <div class="control-domain-page">
+              <ControlPage {connection} {motorState} loop={activeControlLoop} onError={setError} />
+            </div>
           </div>
         {:else if activePage === "tuning"}
           <div class="domain-page-container">
@@ -428,6 +451,76 @@
 
   .domain-page-container {
     grid-row: 1 / -1;
+    min-width: 0;
+    min-height: 0;
+    display: grid;
+  }
+
+  .control-domain-shell {
+    grid-row: 1 / -1;
+    min-width: 0;
+    min-height: 0;
+    display: grid;
+    grid-template-columns: 196px minmax(0, 1fr);
+  }
+
+  .control-navigation {
+    min-width: 0;
+    min-height: 0;
+    background: var(--vscode-sideBar-background);
+    border-right: 1px solid var(--vscode-panel-border);
+  }
+
+  .control-navigation-parent,
+  .control-navigation-children button {
+    width: 100%;
+    border: 0;
+    color: var(--vscode-sideBar-foreground);
+    background: transparent;
+    text-align: left;
+    cursor: default;
+  }
+
+  .control-navigation-parent {
+    height: 36px;
+    display: grid;
+    grid-template-columns: 20px minmax(0, 1fr) 18px;
+    align-items: center;
+    gap: 7px;
+    padding: 0 8px 0 10px;
+    font-size: 12px;
+    font-weight: 600;
+    border-bottom: 1px solid color-mix(in srgb, var(--vscode-panel-border) 75%, transparent);
+  }
+
+  .control-navigation-parent:hover,
+  .control-navigation-children button:hover {
+    background: var(--vscode-list-hoverBackground);
+  }
+
+  .control-navigation-chevron {
+    justify-self: end;
+    color: var(--vscode-descriptionForeground);
+  }
+
+  .control-navigation-children {
+    display: grid;
+  }
+
+  .control-navigation-children button {
+    height: 31px;
+    padding: 0 12px 0 37px;
+    font-size: 12px;
+    color: var(--vscode-descriptionForeground);
+  }
+
+  .control-navigation-children button.active {
+    color: var(--vscode-list-activeSelectionForeground);
+    background: var(--vscode-list-activeSelectionBackground);
+    font-weight: 600;
+  }
+
+  .control-domain-page {
     min-width: 0;
     min-height: 0;
     display: grid;
