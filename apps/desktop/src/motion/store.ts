@@ -1,7 +1,8 @@
-import { writable } from "svelte/store";
-import type { MotionState } from "./types";
+import { get, writable } from "svelte/store";
+import { getMotion, getMotionPreview, setMotion } from "./api";
+import type { MotionPreview, MotionState } from "./types";
 
-export const motionState = writable<MotionState>({
+const defaultMotion: MotionState = {
   mode: "position",
   trajectory: "trapezoidal",
   acceleration: 20,
@@ -27,4 +28,42 @@ export const motionState = writable<MotionState>({
   mitKp: 10,
   mitKd: 0.5,
   mitTorqueFeedforward: 0,
-});
+};
+
+export const motionState = writable<MotionState>(defaultMotion);
+export const motionPreview = writable<MotionPreview | undefined>(undefined);
+
+let initialized = false;
+let revision = 0;
+
+export async function initializeMotion(): Promise<void> {
+  if (initialized) return;
+  const config = await getMotion();
+  motionState.set(config);
+  motionPreview.set(await getMotionPreview());
+  initialized = true;
+}
+
+export async function updateMotion<K extends keyof MotionState>(
+  key: K,
+  value: MotionState[K],
+): Promise<void> {
+  const previous = get(motionState);
+  const next = { ...previous, [key]: value };
+  const currentRevision = ++revision;
+  motionState.set(next);
+
+  try {
+    const canonical = await setMotion(next);
+    if (currentRevision !== revision) return;
+    motionState.set(canonical);
+    motionPreview.set(await getMotionPreview());
+  } catch (error) {
+    if (currentRevision === revision) motionState.set(previous);
+    throw error;
+  }
+}
+
+export async function refreshMotionPreview(): Promise<void> {
+  motionPreview.set(await getMotionPreview());
+}
