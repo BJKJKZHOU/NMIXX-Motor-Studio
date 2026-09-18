@@ -112,6 +112,11 @@
     return `${Math.round(value * 1e6)} µs`;
   }
 
+  function formatSignedTime(value: number): string {
+    if (Math.abs(value) < 1e-12) return "0";
+    return `${value < 0 ? "-" : "+"}${formatTime(Math.abs(value))}`;
+  }
+
   function defaultVerticalScale(channel: PlotChannel): number {
     const unit = (channel.unit ?? "").toLowerCase();
     if (unit === "a") return 0.5;
@@ -651,8 +656,8 @@
       <section class="side-section">
         <div class="section-heading">CURSOR</div>
         <div class="property-grid">
-          <span>X1</span><strong>{cursorA === undefined ? "—" : formatTime(Math.abs(cursorA))}</strong>
-          <span>X2</span><strong>{cursorB === undefined ? "—" : formatTime(Math.abs(cursorB))}</strong>
+          <span>X1</span><strong>{cursorA === undefined ? "—" : formatSignedTime(cursorA)}</strong>
+          <span>X2</span><strong>{cursorB === undefined ? "—" : formatSignedTime(cursorB)}</strong>
           <span>Δt</span><strong>{cursorA === undefined || cursorB === undefined ? "—" : formatTime(Math.abs(cursorB - cursorA))}</strong>
           <span>1/Δt</span><strong>{cursorA === undefined || cursorB === undefined || cursorA === cursorB ? "—" : `${(1 / Math.abs(cursorB - cursorA)).toFixed(2)} Hz`}</strong>
         </div>
