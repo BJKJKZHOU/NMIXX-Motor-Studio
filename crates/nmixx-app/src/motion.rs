@@ -123,9 +123,16 @@ impl MotionService {
     }
 
     pub fn preview(&self) -> Result<MotionPreview, String> {
+        self.preview_with_speed_limit(None)
+    }
+
+    pub fn preview_with_speed_limit(
+        &self,
+        effective_speed_limit: Option<f64>,
+    ) -> Result<MotionPreview, String> {
         let config = self.get();
         validate(&config)?;
-        Ok(generate_preview(&config))
+        Ok(generate_preview(&config, effective_speed_limit))
     }
 
     pub(crate) fn run(
@@ -323,39 +330,62 @@ fn mode_wire_value(mode: MotionMode) -> Result<u8, String> {
 }
 
 fn validate(config: &MotionConfig) -> Result<(), String> {
-    let finite = [
-        config.acceleration,
-        config.deceleration,
-        config.filter_time_ms,
-        config.position_target_turn,
-        config.position_max_speed,
-        config.speed_target,
-        config.sensorless_speed_target,
-        config.sensorless_startup_current,
-        config.sensorless_entry_speed,
-        config.torque_target_nm,
-        config.torque_ramp_nm_per_s,
-        config.mit_position_ref,
-        config.mit_velocity_ref,
-        config.mit_kp,
-        config.mit_kd,
-        config.mit_torque_feedforward,
-    ];
-    if finite.iter().any(|value| !value.is_finite()) {
-        return Err("Motion values must be finite".to_owned());
+    let require_finite = |value: f64, name: &str| {
+        if value.is_finite() {
+            Ok(())
+        } else {
+            Err(format!("{name} must be finite"))
+        }
+    };
+
+    let validate_trajectory = || -> Result<(), String> {
+        require_finite(config.acceleration, "Acceleration")?;
+        require_finite(config.deceleration, "Deceleration")?;
+        if config.acceleration <= 0.0 || config.deceleration <= 0.0 {
+            return Err("Acceleration and deceleration must be positive".to_owned());
+        }
+        if config.trajectory == TrajectoryType::Filtered {
+            require_finite(config.filter_time_ms, "Filter time")?;
+            if config.filter_time_ms < 0.0 {
+                return Err("Filter time cannot be negative".to_owned());
+            }
+        }
+        Ok(())
+    };
+
+    match config.mode {
+        MotionMode::Position => {
+            validate_trajectory()?;
+            require_finite(config.position_target_turn, "Position target")?;
+            require_finite(config.position_max_speed, "Position max speed")?;
+            if config.position_max_speed <= 0.0 {
+                return Err("Position max speed must be positive".to_owned());
+            }
+        }
+        MotionMode::Speed => {
+            validate_trajectory()?;
+            require_finite(config.speed_target, "Speed target")?;
+        }
+        MotionMode::SensorlessSpeed => {
+            validate_trajectory()?;
+            require_finite(config.sensorless_speed_target, "Sensorless speed target")?;
+        }
+        MotionMode::Torque => {
+            require_finite(config.torque_target_nm, "Torque target")?;
+            require_finite(config.torque_ramp_nm_per_s, "Torque ramp")?;
+            if config.torque_ramp_nm_per_s <= 0.0 {
+                return Err("Torque ramp must be positive".to_owned());
+            }
+        }
+        MotionMode::Mit => {
+            require_finite(config.mit_position_ref, "MIT position reference")?;
+            require_finite(config.mit_velocity_ref, "MIT velocity reference")?;
+            require_finite(config.mit_kp, "MIT Kp")?;
+            require_finite(config.mit_kd, "MIT Kd")?;
+            require_finite(config.mit_torque_feedforward, "MIT torque feedforward")?;
+        }
     }
-    if config.acceleration <= 0.0 || config.deceleration <= 0.0 {
-        return Err("Acceleration and deceleration must be positive".to_owned());
-    }
-    if config.position_max_speed <= 0.0 {
-        return Err("Position max speed must be positive".to_owned());
-    }
-    if config.filter_time_ms < 0.0 {
-        return Err("Filter time cannot be negative".to_owned());
-    }
-    if config.torque_ramp_nm_per_s <= 0.0 {
-        return Err("Torque ramp must be positive".to_owned());
-    }
+
     Ok(())
 }
 
@@ -379,10 +409,17 @@ fn ramp_fraction(config: &MotionConfig, x: f64) -> f64 {
     }
 }
 
-fn generate_preview(config: &MotionConfig) -> MotionPreview {
+fn limited_speed(requested: f64, effective_speed_limit: Option<f64>) -> f64 {
+    match effective_speed_limit {
+        Some(limit) if limit.is_finite() && limit >= 0.0 => requested.min(limit),
+        _ => requested,
+    }
+}
+
+fn generate_preview(config: &MotionConfig, effective_speed_limit: Option<f64>) -> MotionPreview {
     match config.mode {
-        MotionMode::Position => position_preview(config),
-        MotionMode::Speed | MotionMode::SensorlessSpeed => speed_preview(config),
+        MotionMode::Position => position_preview(config, effective_speed_limit),
+        MotionMode::Speed | MotionMode::SensorlessSpeed => speed_preview(config, effective_speed_limit),
         MotionMode::Torque => torque_preview(config),
         MotionMode::Mit => MotionPreview {
             times: Vec::new(),
@@ -396,7 +433,7 @@ fn generate_preview(config: &MotionConfig) -> MotionPreview {
     }
 }
 
-fn position_preview(config: &MotionConfig) -> MotionPreview {
+fn position_preview(config: &MotionConfig, effective_speed_limit: Option<f64>) -> MotionPreview {
     let distance = config.position_target_turn.abs() * std::f64::consts::TAU;
     if distance <= f64::EPSILON {
         return MotionPreview {
@@ -414,7 +451,7 @@ fn position_preview(config: &MotionConfig) -> MotionPreview {
     let a = config.acceleration;
     let d = config.deceleration;
     let factor = s_time_factor(config);
-    let speed_limit = config.position_max_speed;
+    let speed_limit = limited_speed(config.position_max_speed, effective_speed_limit);
     let ramp_distance_at_limit = 0.5 * factor * speed_limit * speed_limit * (1.0 / a + 1.0 / d);
     let peak_speed = if ramp_distance_at_limit <= distance {
         speed_limit
@@ -481,12 +518,12 @@ fn position_preview(config: &MotionConfig) -> MotionPreview {
     }
 }
 
-fn speed_preview(config: &MotionConfig) -> MotionPreview {
+fn speed_preview(config: &MotionConfig, effective_speed_limit: Option<f64>) -> MotionPreview {
     let target = match config.mode {
         MotionMode::SensorlessSpeed => config.sensorless_speed_target,
         _ => config.speed_target,
     };
-    let magnitude = target.abs();
+    let magnitude = limited_speed(target.abs(), effective_speed_limit);
     let sign = target.signum();
     let factor = s_time_factor(config);
     let base_ramp = factor * magnitude / config.acceleration;
@@ -604,6 +641,41 @@ mod tests {
 
         assert!((final_position - 1.0).abs() < 5e-3);
         assert!(final_speed.abs() < 1e-2);
+    }
+
+    #[test]
+    fn speed_validation_ignores_position_only_fields() {
+        let service = MotionService::default();
+        let mut config = service.get();
+        config.mode = MotionMode::Speed;
+        config.position_max_speed = 0.0;
+        config.speed_target = 20.0;
+        assert!(service.set(config).is_ok());
+    }
+
+    #[test]
+    fn speed_preview_respects_effective_speed_limit() {
+        let service = MotionService::default();
+        let mut config = service.get();
+        config.mode = MotionMode::Speed;
+        config.speed_target = 1000.0;
+        service.set(config).unwrap();
+
+        let preview = service.preview_with_speed_limit(Some(100.0)).unwrap();
+        assert!((preview.primary.last().unwrap() - 100.0).abs() < 1e-6);
+    }
+
+    #[test]
+    fn position_preview_respects_effective_speed_limit() {
+        let service = MotionService::default();
+        let mut config = service.get();
+        config.position_target_turn = 20.0;
+        config.position_max_speed = 100.0;
+        service.set(config).unwrap();
+
+        let preview = service.preview_with_speed_limit(Some(10.0)).unwrap();
+        let peak = preview.secondary.iter().copied().fold(0.0_f64, f64::max);
+        assert!(peak <= 10.0 + 1e-6);
     }
 
     #[test]
