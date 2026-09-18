@@ -6,7 +6,7 @@ use std::time::Duration;
 
 use clap::Parser;
 use nmixx_app::{
-    DEFAULT_USB_BAUD, DevicePlotCapabilities, DeviceSession, HostSchema, ScopeConfig, ScopeSession,
+    ApplicationSession, DEFAULT_USB_BAUD, DevicePlotCapabilities, HostSchema, ScopeConfig,
     StreamSnapshot,
 };
 
@@ -58,11 +58,10 @@ fn run() -> Result<(), Box<dyn Error>> {
     }
 
     let schema = HostSchema::load(&args.schema)?;
-    let session = DeviceSession::open_usb(&args.port, args.baud)?;
-    let capabilities = DevicePlotCapabilities::discover(&session)?;
+    let app = ApplicationSession::open_usb(&args.port, args.baud, schema)?;
 
     if args.list || args.channels.is_empty() {
-        print_capabilities(&capabilities, &schema);
+        print_capabilities(app.plot_capabilities(), app.schema());
         if args.channels.is_empty() {
             println!();
             println!("select one or more FAST-capable parameters to start Scope");
@@ -70,11 +69,8 @@ fn run() -> Result<(), Box<dyn Error>> {
         return Ok(());
     }
 
-    let parameter_ids = resolve_parameter_ids(&schema, &args.channels)?;
-    let scope = ScopeSession::from_fast_capabilities(
-        session,
-        &capabilities,
-        &schema,
+    let parameter_ids = resolve_parameter_ids(app.schema(), &args.channels)?;
+    let config = app.scope_configure(
         &parameter_ids,
         Duration::from_secs_f64(args.history),
         args.config_id,
@@ -84,12 +80,12 @@ fn run() -> Result<(), Box<dyn Error>> {
     println!("port: {} @ {}", args.port, args.baud);
     println!(
         "FAST: {} channel(s) @ {} Hz, block={}, {:.3} s RAM history",
-        scope.config().channels.len(),
-        scope.config().sample_rate_hz,
-        capabilities.fast_block_samples,
-        scope.config().history.as_secs_f64()
+        config.channels.len(),
+        config.sample_rate_hz,
+        app.plot_capabilities().fast_block_samples,
+        config.history.as_secs_f64()
     );
-    for (index, channel) in scope.config().channels.iter().enumerate() {
+    for (index, channel) in config.channels.iter().enumerate() {
         println!(
             "  ch{}: {} (0x{:04X}) scale={}{}",
             index,
@@ -101,7 +97,7 @@ fn run() -> Result<(), Box<dyn Error>> {
     }
     println!("type 'help' for commands");
 
-    repl(&scope)
+    repl(&app)
 }
 
 fn print_capabilities(capabilities: &DevicePlotCapabilities, schema: &HostSchema) {
@@ -158,7 +154,7 @@ fn resolve_parameter_ids(schema: &HostSchema, keys: &[String]) -> Result<Vec<u16
     Ok(ids)
 }
 
-fn repl(scope: &ScopeSession) -> Result<(), Box<dyn Error>> {
+fn repl(app: &ApplicationSession) -> Result<(), Box<dyn Error>> {
     let stdin = io::stdin();
     let mut lines = stdin.lock().lines();
 
@@ -173,19 +169,19 @@ fn repl(scope: &ScopeSession) -> Result<(), Box<dyn Error>> {
         match command.to_ascii_lowercase().as_str() {
             "help" | "?" => print_help(),
             "live" | "resume" => {
-                scope.resume()?;
+                app.scope_resume()?;
                 println!("LIVE");
             }
             "pause" => {
-                scope.pause()?;
+                app.scope_pause()?;
                 println!("PAUSED");
             }
             "stop" => {
-                scope.stop()?;
+                app.scope_stop()?;
                 println!("STOPPED");
             }
             "clear" => {
-                scope.clear()?;
+                app.scope_clear()?;
                 println!("buffer cleared");
             }
             "capture" => {
@@ -194,16 +190,16 @@ fn repl(scope: &ScopeSession) -> Result<(), Box<dyn Error>> {
                     return Err("capture accepts exactly one duration".into());
                 }
                 let duration = parse_duration(text)?;
-                scope.capture(duration)?;
+                app.scope_capture(duration)?;
                 println!("CAPTURING {:.3} s", duration.as_secs_f64());
             }
-            "status" => print_status(scope)?,
+            "status" => print_status(app)?,
             "export" => {
                 let path = words.next().ok_or("export requires a file path")?;
                 if words.next().is_some() {
                     return Err("export accepts exactly one file path".into());
                 }
-                export_csv(scope, Path::new(path))?;
+                export_csv(app, Path::new(path))?;
             }
             "quit" | "exit" => break,
             other => println!("unknown command '{other}'; type 'help'"),
@@ -224,10 +220,11 @@ fn print_help() {
     println!("quit | exit         stop Plot and close Scope");
 }
 
-fn print_status(scope: &ScopeSession) -> Result<(), Box<dyn Error>> {
-    let status = scope.status()?;
-    let duration = status.samples as f64 / f64::from(scope.config().sample_rate_hz);
-    let capacity_s = status.capacity_samples as f64 / f64::from(scope.config().sample_rate_hz);
+fn print_status(app: &ApplicationSession) -> Result<(), Box<dyn Error>> {
+    let status = app.scope_status()?;
+    let config = app.scope_config()?;
+    let duration = status.samples as f64 / f64::from(config.sample_rate_hz);
+    let capacity_s = status.capacity_samples as f64 / f64::from(config.sample_rate_hz);
     println!("state: {:?}", status.state);
     println!("samples: {} / {}", status.samples, status.capacity_samples);
     println!("duration: {:.6} / {:.3} s", duration, capacity_s);
@@ -235,9 +232,10 @@ fn print_status(scope: &ScopeSession) -> Result<(), Box<dyn Error>> {
     Ok(())
 }
 
-fn export_csv(scope: &ScopeSession, path: &Path) -> Result<(), Box<dyn Error>> {
-    let snapshot = scope.snapshot()?;
-    write_snapshot_csv(&snapshot, scope.config(), path)?;
+fn export_csv(app: &ApplicationSession, path: &Path) -> Result<(), Box<dyn Error>> {
+    let snapshot = app.scope_snapshot()?;
+    let config = app.scope_config()?;
+    write_snapshot_csv(&snapshot, &config, path)?;
     println!(
         "exported {} samples ({:.6} s) -> {}",
         snapshot.sample_count(),
