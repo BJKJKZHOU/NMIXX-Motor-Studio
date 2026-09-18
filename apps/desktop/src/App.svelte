@@ -9,7 +9,7 @@
   import MotorPage from "./motor/MotorPage.svelte";
   import EncoderPage from "./encoder/EncoderPage.svelte";
   import LimitsPage from "./limits/LimitsPage.svelte";
-  import { disableMotor, enableMotor, onActionCompleted, stopMotor } from "./actions/api";
+  import { disableMotor, enableMotor, onActionCompleted, saveParameters, stopMotor } from "./actions/api";
   import type { ActionCompletion, ActionHandle } from "./actions/types";
   import { listParameters, readParameters, refreshAllParameters as refreshParameterCache } from "./parameters/api";
   import type { ParameterMetadata, ParameterValue } from "./parameters/types";
@@ -188,6 +188,11 @@
     await startGlobalMotorAction("ACTION_MOTOR_STOP", stopMotor);
   }
 
+  async function savePersistentParameters() {
+    if (!connection || motorState !== MOTOR_DISABLED || motorActionBusy) return;
+    await startGlobalMotorAction("ACTION_PARAMETER_SAVE", saveParameters);
+  }
+
   onMount(() => {
     let disposed = false;
     onActionCompleted((completion) => {
@@ -263,7 +268,12 @@
           <button class="tool-button global-action" disabled={!connection || readingParameters} onclick={() => void refreshAllParameters()} title="Read current RAM parameters from device">
             <i class={`codicon ${readingParameters ? "codicon-loading codicon-modifier-spin" : "codicon-refresh"}`}></i> Read
           </button>
-          <button class="tool-button global-action" disabled title="Persistent configuration save is not exposed by this firmware yet">
+          <button
+            class="tool-button global-action"
+            disabled={!connection || motorState !== MOTOR_DISABLED || motorActionBusy}
+            onclick={() => void savePersistentParameters()}
+            title="Save persistent RAM parameters to device storage"
+          >
             <i class="codicon codicon-save"></i> Save
           </button>
         </div>
