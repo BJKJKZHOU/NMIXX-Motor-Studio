@@ -209,6 +209,74 @@ The Control page selects the active control structure and supplies usable defaul
 
 For example, selecting position/speed control may choose the position, speed and current-loop controller types. A sensorless mode may additionally choose startup strategy and observer. Once the structure is selected, detailed gain adjustment can be surfaced beside Scope/Bode/FFT views while still using the same Parameter service underneath.
 
+### Motion is a shared runtime model, not page-local state
+
+Motion is a first-class application domain. The full Motion page and the compact Motion controls shown during Control Tuning are two views over the **same Application-level Motion model**.
+
+```text
+                    Application / Motion model
+                              |
+                 +------------+------------+
+                 |                         |
+            Motion page              Control Tuning
+          full editor/view            compact editor
+                 |                         |
+                 +------------+------------+
+                              |
+                       same state object
+```
+
+There must not be separate page-local copies of motion parameters, an Apply/synchronize step, or a snapshot that diverges between these views. Editing a shared field from either page updates the same runtime state and the other view must reflect the new value immediately.
+
+The Motion page is the complete motion-command editor. Control Tuning exposes only the compact subset needed to excite the motor while tuning controllers and observing analysis data. Fields hidden from the compact tuning view still belong to the same Motion model.
+
+The initial operating/control modes exposed by Motion are broader than the traditional position/speed/torque trio:
+
+- **Position**
+- **Speed**
+- **Sensorless Speed**
+- **Torque**
+- **MIT**
+
+The mode selector itself is shared state. If a view is allowed to change the active mode, every other Motion view observes that same active mode.
+
+Mode-specific command fields also share one owner. Conceptually the Application API should expose one coherent Motion domain such as:
+
+```text
+motion.mode
+
+motion.position.target
+motion.position.speed
+motion.position.acc
+motion.position.dec
+
+motion.speed.target
+motion.speed.acc
+motion.speed.dec
+
+motion.sensorless_speed.target
+...
+
+motion.mit.position_ref
+motion.mit.velocity_ref
+motion.mit.kp
+motion.mit.kd
+motion.mit.torque_ff
+```
+
+The exact public API names may evolve, but GUI components must not create parallel storage for these values.
+
+The distinction between the two GUI surfaces is therefore **capability and density**, not ownership:
+
+- **Motion page**: complete mode-specific command configuration, trajectory/command preview, advanced motion options where applicable, and Run/Stop.
+- **Control Tuning**: compact controls for the same Motion state beside Scope/Bode/FFT-oriented tuning tools.
+
+Run and Stop follow the same rule. Motion-page buttons and Control-Tuning buttons call the same Application-level motion execution/stop semantics rather than separate command paths.
+
+Sensorless Speed remains a separate operating mode rather than a checkbox on normal Speed because startup and observer handover have distinct runtime semantics. The Motion page should expose only the user-facing startup controls needed for normal operation; low-level observer/handover tuning belongs to deeper control/debug configuration.
+
+MIT is also represented as its own mode because its command surface is inherently different from trajectory Position/Speed control: position reference, velocity reference, Kp, Kd and torque feedforward are edited as one MIT command set.
+
 ### Analysis shares acquisition and plotting infrastructure
 
 Scope, FFT and Bode are related analysis functions, but not identical workflows. They share channel metadata, acquisition buffers, plotting, cursors, units and export infrastructure where practical.
