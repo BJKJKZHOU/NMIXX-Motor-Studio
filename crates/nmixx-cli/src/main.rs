@@ -6,8 +6,9 @@ use std::time::Duration;
 
 use clap::{Parser, Subcommand, ValueEnum};
 use nmixx_app::{
-    ActionMetadata, AxdrStatus, DEFAULT_USB_BAUD, DeviceSession, HostSchema, ParameterMetadata,
-    ParameterType, ParameterValue, PositionValue, SchemaNumber, SchemaStore, SessionEvent,
+    ActionHandle, ActionMetadata, AxdrStatus, ConfigService, DEFAULT_USB_BAUD, DeviceSession,
+    HostSchema, MotorActionService, ParameterMetadata, ParameterType, ParameterValue,
+    PositionValue, SchemaNumber, SchemaStore, SessionEvent,
 };
 
 #[derive(Debug, Parser)]
@@ -41,6 +42,14 @@ enum Command {
         #[command(subcommand)]
         command: ParamCommand,
     },
+    Motor {
+        #[command(subcommand)]
+        command: MotorCommand,
+    },
+    Config {
+        #[command(subcommand)]
+        command: ConfigCommand,
+    },
     Action {
         #[command(subcommand)]
         command: ActionCommand,
@@ -71,6 +80,34 @@ enum ParamCommand {
         value: String,
         #[arg(long = "type", value_enum)]
         ty: Option<CliParameterType>,
+    },
+}
+
+#[derive(Debug, Subcommand)]
+enum MotorCommand {
+    Enable {
+        #[arg(long, default_value_t = 30)]
+        timeout: u64,
+    },
+    Disable {
+        #[arg(long, default_value_t = 30)]
+        timeout: u64,
+    },
+    Stop {
+        #[arg(long, default_value_t = 30)]
+        timeout: u64,
+    },
+    PhaseSearch {
+        #[arg(long, default_value_t = 30)]
+        timeout: u64,
+    },
+}
+
+#[derive(Debug, Subcommand)]
+enum ConfigCommand {
+    Save {
+        #[arg(long, default_value_t = 30)]
+        timeout: u64,
     },
 }
 
@@ -218,6 +255,35 @@ fn run() -> Result<(), Box<dyn Error>> {
                 println!("OK");
             }
         },
+        Command::Motor { command } => {
+            let schema = require_schema(schema.as_ref())?;
+            let session = open_session(port.as_deref(), baud)?;
+            let events = session.subscribe()?;
+            let service = MotorActionService::new(session.clone(), schema.clone());
+            let (handle, label, timeout) = match command {
+                MotorCommand::Enable { timeout } => (service.enable()?, "motor enable", timeout),
+                MotorCommand::Disable { timeout } => (service.disable()?, "motor disable", timeout),
+                MotorCommand::Stop { timeout } => (service.stop()?, "motor stop", timeout),
+                MotorCommand::PhaseSearch { timeout } => {
+                    (service.phase_search_start()?, "phase search", timeout)
+                }
+            };
+            println!("accepted txn={} {}", handle.txn.get(), label);
+            wait_for_action_completion(&events, handle, label, timeout)?;
+        }
+        Command::Config { command } => {
+            let schema = require_schema(schema.as_ref())?;
+            let session = open_session(port.as_deref(), baud)?;
+            let events = session.subscribe()?;
+            let service = ConfigService::new(session.clone(), schema.clone());
+            match command {
+                ConfigCommand::Save { timeout } => {
+                    let handle = service.save()?;
+                    println!("accepted txn={} config save", handle.txn.get());
+                    wait_for_action_completion(&events, handle, "config save", timeout)?;
+                }
+            }
+        }
         Command::Action { command } => match command {
             ActionCommand::List => print_action_list(require_schema(schema.as_ref())?),
             ActionCommand::Info { key } => {
@@ -264,6 +330,32 @@ fn run() -> Result<(), Box<dyn Error>> {
         },
     }
     Ok(())
+}
+
+fn wait_for_action_completion(
+    events: &std::sync::mpsc::Receiver<SessionEvent>,
+    handle: ActionHandle,
+    label: &str,
+    timeout: u64,
+) -> Result<(), Box<dyn Error>> {
+    loop {
+        match events.recv_timeout(Duration::from_secs(timeout)) {
+            Ok(SessionEvent::ActionCompleted { handle: completed, status }) if completed == handle => {
+                match status {
+                    AxdrStatus::Ok => println!("completed OK"),
+                    other => return Err(format!("{label} completed {other:?}").into()),
+                }
+                return Ok(());
+            }
+            Ok(_) => continue,
+            Err(RecvTimeoutError::Timeout) => {
+                return Err(format!("{label} completion timed out after {timeout}s").into());
+            }
+            Err(RecvTimeoutError::Disconnected) => {
+                return Err("device session closed while waiting for action".into());
+            }
+        }
+    }
 }
 
 fn require_schema(schema: Option<&HostSchema>) -> Result<&HostSchema, Box<dyn Error>> {
