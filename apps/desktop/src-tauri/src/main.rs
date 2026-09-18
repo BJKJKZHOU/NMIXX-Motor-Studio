@@ -2,12 +2,13 @@ use std::sync::Mutex;
 use std::time::Duration;
 
 use nmixx_app::{
-    ApplicationSession, DEFAULT_USB_BAUD, HostSchema, MotionCapabilities, MotionConfig,
-    MotionPreview, MotionService, ParameterMetadata, ParameterValue, PositionValue,
-    RangeMetadata, SchemaNumber, ScopeRate, ScopeSelection, StreamState,
+    ActionHandle, ActionMetadata, ApplicationSession, AxdrStatus, DEFAULT_USB_BAUD, HostSchema,
+    IdentificationKind, MotionCapabilities, MotionConfig, MotionPreview, MotionService,
+    ParameterMetadata, ParameterValue, PositionValue, PreflightDomain, RangeMetadata,
+    SchemaNumber, ScopeRate, ScopeSelection, StreamState,
 };
 use serde::{Deserialize, Serialize};
-use tauri::State;
+use tauri::{Emitter, State};
 
 #[derive(Default)]
 struct DesktopState {
@@ -113,6 +114,61 @@ impl From<&ParameterMetadata> for ParameterMetadataDto {
             allowed: value.allowed.iter().copied().map(Into::into).collect(),
             allowed_symbols: value.allowed_symbols.clone(),
         }
+    }
+}
+
+#[derive(Debug, Serialize)]
+#[serde(rename_all = "camelCase")]
+struct ActionMetadataDto {
+    id: u16,
+    symbol: String,
+    name: Option<String>,
+    description: String,
+}
+
+impl From<&ActionMetadata> for ActionMetadataDto {
+    fn from(value: &ActionMetadata) -> Self {
+        Self {
+            id: value.id,
+            symbol: value.symbol.clone(),
+            name: value.name.clone(),
+            description: value.description.clone(),
+        }
+    }
+}
+
+#[derive(Debug, Clone, Serialize)]
+#[serde(rename_all = "camelCase")]
+struct ActionHandleDto {
+    txn: u8,
+    action_id: u16,
+    symbol: String,
+}
+
+#[derive(Debug, Clone, Serialize)]
+#[serde(rename_all = "camelCase")]
+struct ActionCompletionDto {
+    txn: u8,
+    action_id: u16,
+    symbol: String,
+    status: String,
+    ok: bool,
+}
+
+#[derive(Debug, Serialize)]
+#[serde(rename_all = "camelCase")]
+struct PreflightIssueDto {
+    parameter_id: Option<u16>,
+    reason: String,
+    suggested_domain: &'static str,
+}
+
+fn preflight_domain_name(domain: PreflightDomain) -> &'static str {
+    match domain {
+        PreflightDomain::LimitsSafety => "limits",
+        PreflightDomain::Motor => "motor",
+        PreflightDomain::Encoder => "encoder",
+        PreflightDomain::Identification => "identification",
     }
 }
 
@@ -250,6 +306,61 @@ fn application(state: &State<'_, Mutex<DesktopState>>) -> Result<ApplicationSess
         .ok_or_else(|| "device is not connected".to_owned())
 }
 
+fn parameter_result(id: u16, result: Result<ParameterValue, impl ToString>) -> ParameterReadResultDto {
+    match result {
+        Ok(value) => ParameterReadResultDto {
+            id,
+            value: Some(value.into()),
+            error: None,
+        },
+        Err(error) => ParameterReadResultDto {
+            id,
+            value: None,
+            error: Some(error.to_string()),
+        },
+    }
+}
+
+fn spawn_action_completion(
+    app: tauri::AppHandle,
+    events: std::sync::mpsc::Receiver<nmixx_app::SessionEvent>,
+    handle: ActionHandle,
+    symbol: String,
+) {
+    std::thread::spawn(move || {
+        while let Ok(event) = events.recv() {
+            let nmixx_app::SessionEvent::ActionCompleted {
+                handle: completed,
+                status,
+            } = event
+            else {
+                continue;
+            };
+            if completed != handle {
+                continue;
+            }
+
+            let payload = ActionCompletionDto {
+                txn: completed.txn.get(),
+                action_id: completed.action_id,
+                symbol,
+                status: format!("{status:?}"),
+                ok: status == AxdrStatus::Ok,
+            };
+            let _ = app.emit("action-completed", payload);
+            break;
+        }
+    });
+}
+
+fn action_handle_dto(handle: ActionHandle, symbol: String) -> ActionHandleDto {
+    ActionHandleDto {
+        txn: handle.txn.get(),
+        action_id: handle.action_id,
+        symbol,
+    }
+}
+
 #[tauri::command]
 fn device_list() -> Result<Vec<String>, String> {
     ApplicationSession::available_usb_ports().map_err(|error| error.to_string())
@@ -283,6 +394,7 @@ fn device_connect(
     )
     .map_err(|error| error.to_string())?;
 
+    let _ = app.parameter_refresh_all().map_err(|error| error.to_string())?;
     let capabilities = app.plot_capabilities().map_err(|error| error.to_string())?;
     let channels = capabilities
         .with_schema(app.schema())
@@ -374,6 +486,175 @@ fn parameter_write(
     application(&state)?
         .parameter_write(id, value.into())
         .map_err(|error| error.to_string())
+}
+
+#[tauri::command]
+fn parameter_cached_many(
+    state: State<'_, Mutex<DesktopState>>,
+    ids: Vec<u16>,
+) -> Result<Vec<ParameterReadResultDto>, String> {
+    let app = application(&state)?;
+    Ok(ids
+        .into_iter()
+        .map(|id| match app.parameter_cached(id) {
+            Ok(Some(value)) => ParameterReadResultDto {
+                id,
+                value: Some(value.into()),
+                error: None,
+            },
+            Ok(None) => ParameterReadResultDto {
+                id,
+                value: None,
+                error: Some("parameter has not been read into the shared cache".to_owned()),
+            },
+            Err(error) => ParameterReadResultDto {
+                id,
+                value: None,
+                error: Some(error.to_string()),
+            },
+        })
+        .collect())
+}
+
+#[tauri::command]
+fn parameter_refresh_all(
+    app_handle: tauri::AppHandle,
+    state: State<'_, Mutex<DesktopState>>,
+) -> Result<Vec<ParameterReadResultDto>, String> {
+    let app = application(&state)?;
+    let values = app.parameter_refresh_all().map_err(|error| error.to_string())?;
+    let result = values
+        .into_iter()
+        .map(|(id, result)| parameter_result(id, result))
+        .collect::<Vec<_>>();
+    let _ = app_handle.emit("parameters-refreshed", ());
+    Ok(result)
+}
+
+#[tauri::command]
+fn phase_search_preflight(
+    state: State<'_, Mutex<DesktopState>>,
+) -> Result<Vec<PreflightIssueDto>, String> {
+    let issues = application(&state)?
+        .preflight_phase_search()
+        .map_err(|error| error.to_string())?;
+    Ok(issues
+        .into_iter()
+        .map(|issue| PreflightIssueDto {
+            parameter_id: issue.parameter_id,
+            reason: issue.reason,
+            suggested_domain: preflight_domain_name(issue.suggested_domain),
+        })
+        .collect())
+}
+
+#[tauri::command]
+fn identification_preflight(
+    state: State<'_, Mutex<DesktopState>>,
+    kind: String,
+) -> Result<Vec<PreflightIssueDto>, String> {
+    let kind = match kind.as_str() {
+        "rs_ls" => IdentificationKind::RsLs,
+        "flux" => IdentificationKind::Flux,
+        "jb" => IdentificationKind::Jb,
+        other => return Err(format!("unknown identification preflight kind '{other}'")),
+    };
+    let issues = application(&state)?
+        .preflight_identification(kind)
+        .map_err(|error| error.to_string())?;
+    Ok(issues
+        .into_iter()
+        .map(|issue| PreflightIssueDto {
+            parameter_id: issue.parameter_id,
+            reason: issue.reason,
+            suggested_domain: preflight_domain_name(issue.suggested_domain),
+        })
+        .collect())
+}
+
+#[tauri::command]
+fn action_list(state: State<'_, Mutex<DesktopState>>) -> Result<Vec<ActionMetadataDto>, String> {
+    let app = application(&state)?;
+    Ok(app.schema().actions.iter().map(Into::into).collect())
+}
+
+#[tauri::command]
+fn action_start(
+    app_handle: tauri::AppHandle,
+    state: State<'_, Mutex<DesktopState>>,
+    key: String,
+) -> Result<ActionHandleDto, String> {
+    let app = application(&state)?;
+    let symbol = app
+        .schema()
+        .action_by_key(&key)
+        .ok_or_else(|| format!("Action '{key}' is not exposed by the HostSchema"))?
+        .symbol
+        .clone();
+    let events = app.subscribe().map_err(|error| error.to_string())?;
+    let handle = app.action_start(&key).map_err(|error| error.to_string())?;
+    let result = action_handle_dto(handle, symbol.clone());
+    spawn_action_completion(app_handle, events, handle, symbol);
+    Ok(result)
+}
+
+fn start_semantic_action(
+    app_handle: tauri::AppHandle,
+    app: ApplicationSession,
+    symbol: &str,
+    start: impl FnOnce(&ApplicationSession) -> Result<ActionHandle, nmixx_app::ApplicationError>,
+) -> Result<ActionHandleDto, String> {
+    let events = app.subscribe().map_err(|error| error.to_string())?;
+    let handle = start(&app).map_err(|error| error.to_string())?;
+    let symbol = symbol.to_owned();
+    let result = action_handle_dto(handle, symbol.clone());
+    spawn_action_completion(app_handle, events, handle, symbol);
+    Ok(result)
+}
+
+#[tauri::command]
+fn motor_enable(
+    app_handle: tauri::AppHandle,
+    state: State<'_, Mutex<DesktopState>>,
+) -> Result<ActionHandleDto, String> {
+    start_semantic_action(app_handle, application(&state)?, "ACTION_MOTOR_ENABLE", |app| app.motor_enable())
+}
+
+#[tauri::command]
+fn motor_stop(
+    app_handle: tauri::AppHandle,
+    state: State<'_, Mutex<DesktopState>>,
+) -> Result<ActionHandleDto, String> {
+    start_semantic_action(app_handle, application(&state)?, "ACTION_MOTOR_STOP", |app| app.motor_stop())
+}
+
+#[tauri::command]
+fn motor_disable(
+    app_handle: tauri::AppHandle,
+    state: State<'_, Mutex<DesktopState>>,
+) -> Result<ActionHandleDto, String> {
+    start_semantic_action(app_handle, application(&state)?, "ACTION_MOTOR_DISABLE", |app| app.motor_disable())
+}
+
+#[tauri::command]
+fn config_save_available(state: State<'_, Mutex<DesktopState>>) -> Result<bool, String> {
+    Ok(application(&state)?.config_save_available())
+}
+
+#[tauri::command]
+fn config_save(
+    app_handle: tauri::AppHandle,
+    state: State<'_, Mutex<DesktopState>>,
+) -> Result<ActionHandleDto, String> {
+    start_semantic_action(app_handle, application(&state)?, "ACTION_PARAMETER_SAVE", |app| app.config_save())
+}
+
+#[tauri::command]
+fn phase_search_start(
+    app_handle: tauri::AppHandle,
+    state: State<'_, Mutex<DesktopState>>,
+) -> Result<ActionHandleDto, String> {
+    start_semantic_action(app_handle, application(&state)?, "ACTION_PHASE_SEARCH_START", |app| app.phase_search_start())
 }
 
 #[tauri::command]
@@ -563,7 +844,19 @@ fn main() {
             parameter_list,
             parameter_read,
             parameter_read_many,
+            parameter_cached_many,
+            parameter_refresh_all,
             parameter_write,
+            phase_search_preflight,
+            identification_preflight,
+            action_list,
+            action_start,
+            motor_enable,
+            motor_stop,
+            motor_disable,
+            config_save_available,
+            config_save,
+            phase_search_start,
             motion_get,
             motion_set,
             motion_preview,
