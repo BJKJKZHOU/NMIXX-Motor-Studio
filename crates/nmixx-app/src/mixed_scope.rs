@@ -537,8 +537,9 @@ fn ingest_group(
                 )
             }
             Err(error) => {
-                state.runtime_error = Some(error.to_string());
+                let message = error.to_string();
                 group.pipeline.stream_mut().pause();
+                state.runtime_error = Some(message);
                 (true, true)
             }
         }
