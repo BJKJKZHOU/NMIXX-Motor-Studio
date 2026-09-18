@@ -4,7 +4,7 @@
   import { listParameters, onParametersRefreshed, readCachedParameters, readCurrentParameters, readParameters, writeParameter } from "../parameters/api";
   import type { ParameterMetadata, ParameterValue } from "../parameters/types";
   import { modifiedParameterIds } from "../parameters/persistence";
-  import { listActions, onActionCompleted, startAction, startIdentification as startIdentificationAction } from "../actions/api";
+  import { applyIdentification as applyIdentificationAction, listActions, onActionCompleted, startIdentification as startIdentificationAction } from "../actions/api";
   import type { ActionCompletion, ActionHandle, ActionMetadata } from "../actions/types";
 
 
@@ -106,7 +106,7 @@
   let loading = $state(false);
   let writing = $state<Set<string>>(new Set());
   let identStates = $state<Record<IdentKey, IdentState>>(initialIdentStates());
-  let pendingHandles = $state<Record<string, { identKey: IdentKey; kind: "identify" | "apply" }>>({});
+  let pendingHandles = $state<Record<string, { identKey: IdentKey; kind: "identify" }>>({});
   let generation = 0;
 
   onMount(() => {
@@ -406,11 +406,9 @@
 
     setIdentState(identKey, "applying");
     try {
-      const handle = await startAction(applyActionSymbol);
-      pendingHandles = {
-        ...pendingHandles,
-        [handleKey(handle)]: { identKey, kind: "apply" },
-      };
+      await applyIdentificationAction();
+      await refreshSymbols(IDENT_CONFIGS[identKey].activeSymbols);
+      setIdentState(identKey, "applied");
     } catch (error) {
       setIdentState(identKey, "failed", error instanceof Error ? error.message : String(error));
       onError(error);
@@ -425,10 +423,7 @@
         (key) => identStates[key].phase === "running" && IDENT_CONFIGS[key].startAction === completion.symbol,
       );
       if (runningKey) pending = { identKey: runningKey, kind: "identify" };
-      else if (completion.symbol === applyActionSymbol) {
-        const applyingKey = (Object.keys(IDENT_CONFIGS) as IdentKey[]).find((key) => identStates[key].phase === "applying");
-        if (applyingKey) pending = { identKey: applyingKey, kind: "apply" };
-      }
+
     }
 
     if (!pending) return;
@@ -444,17 +439,12 @@
 
     const config = IDENT_CONFIGS[pending.identKey];
     try {
-      if (pending.kind === "identify") {
-        const patch = await refreshSymbols([...config.resultSymbols, config.validSymbol, failReasonSymbol]);
-        if (numericValue(patch[config.validSymbol]) === 1) {
-          setIdentState(pending.identKey, "ready");
-        } else {
-          const reason = numericValue(patch[failReasonSymbol]);
-          setIdentState(pending.identKey, "failed", reason && reason !== 0 ? `Reason ${reason}` : "No valid result");
-        }
+      const patch = await refreshSymbols([...config.resultSymbols, config.validSymbol, failReasonSymbol]);
+      if (numericValue(patch[config.validSymbol]) === 1) {
+        setIdentState(pending.identKey, "ready");
       } else {
-        await refreshSymbols(config.activeSymbols);
-        setIdentState(pending.identKey, "applied");
+        const reason = numericValue(patch[failReasonSymbol]);
+        setIdentState(pending.identKey, "failed", reason && reason !== 0 ? `Reason ${reason}` : "No valid result");
       }
     } catch (error) {
       setIdentState(pending.identKey, "failed", error instanceof Error ? error.message : String(error));
