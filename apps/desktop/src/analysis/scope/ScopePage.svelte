@@ -5,7 +5,6 @@
   import type { ConnectionInfo, PlotChannel } from "../../connection/types";
   import { configureScope, readScopeSnapshot, startScope, stopScope } from "./api";
   import type { ScopeConfig, ScopeRate, ScopeSnapshot, ScopeSummary } from "./types";
-  import MotionCompactEditor from "../tuning/MotionCompactEditor.svelte";
 
   export let connection: ConnectionInfo | undefined;
   export let active = false;
@@ -860,7 +859,6 @@
       </div>
     </section>
 
-    <MotionCompactEditor capabilities={connection?.motion} {onError} />
   </aside>
 
   <section id="scope-workspace" class="scope-workspace">
