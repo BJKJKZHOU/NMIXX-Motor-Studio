@@ -1,5 +1,6 @@
 export type MotionMode = "position" | "speed" | "sensorless-speed" | "torque" | "mit";
 export type TrajectoryType = "trapezoidal" | "s-curve" | "filtered";
+export type SCurveMode = "peak-accel" | "matched-time";
 
 export interface MotionState {
   mode: MotionMode;
@@ -7,6 +8,7 @@ export interface MotionState {
   acceleration: number;
   deceleration: number;
   filterTimeMs: number;
+  sCurveMode: SCurveMode;
   repeat: boolean;
 
   positionCommand: "absolute" | "incremental";
