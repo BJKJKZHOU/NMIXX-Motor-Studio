@@ -2,9 +2,9 @@ use std::sync::Mutex;
 use std::time::Duration;
 
 use nmixx_app::{
-    DEFAULT_USB_BAUD, DevicePlotCapabilities, DeviceSession, HostSchema, ParameterMetadata,
-    ParameterService, ParameterValue, PositionValue, RangeMetadata, SchemaNumber, ScopeSession,
-    StreamState,
+    DEFAULT_USB_BAUD, DevicePlotCapabilities, DeviceSession, HostSchema, MotionConfig,
+    MotionPreview, MotionService, ParameterMetadata, ParameterService, ParameterValue,
+    PositionValue, RangeMetadata, SchemaNumber, ScopeSession, StreamState,
 };
 use serde::{Deserialize, Serialize};
 use tauri::State;
@@ -16,6 +16,7 @@ struct DesktopState {
     parameters: Option<ParameterService>,
     capabilities: Option<DevicePlotCapabilities>,
     scope: Option<ScopeSession>,
+    motion: MotionService,
     port: Option<String>,
 }
 
@@ -368,6 +369,27 @@ fn parameter_write(
 }
 
 #[tauri::command]
+fn motion_get(state: State<'_, Mutex<DesktopState>>) -> Result<MotionConfig, String> {
+    let guard = state.lock().map_err(|_| "desktop state is poisoned".to_owned())?;
+    Ok(guard.motion.get())
+}
+
+#[tauri::command]
+fn motion_set(
+    state: State<'_, Mutex<DesktopState>>,
+    config: MotionConfig,
+) -> Result<MotionConfig, String> {
+    let guard = state.lock().map_err(|_| "desktop state is poisoned".to_owned())?;
+    guard.motion.set(config)
+}
+
+#[tauri::command]
+fn motion_preview(state: State<'_, Mutex<DesktopState>>) -> Result<MotionPreview, String> {
+    let guard = state.lock().map_err(|_| "desktop state is poisoned".to_owned())?;
+    guard.motion.preview()
+}
+
+#[tauri::command]
 fn scope_configure(
     state: State<'_, Mutex<DesktopState>>,
     parameter_ids: Vec<u16>,
@@ -503,6 +525,9 @@ fn main() {
             parameter_read,
             parameter_read_many,
             parameter_write,
+            motion_get,
+            motion_set,
+            motion_preview,
             scope_configure,
             scope_live,
             scope_pause,
