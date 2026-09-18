@@ -2,6 +2,8 @@ use std::sync::{Arc, RwLock};
 
 use serde::{Deserialize, Serialize};
 
+use crate::{ActionHandle, DeviceSession, ParameterService, ParameterValue, PositionValue};
+
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "kebab-case")]
 pub enum MotionMode {
@@ -124,6 +126,197 @@ impl MotionService {
         let config = self.get();
         validate(&config)?;
         Ok(generate_preview(&config))
+    }
+
+    pub fn run(
+        &self,
+        parameters: &ParameterService,
+        session: &DeviceSession,
+    ) -> Result<ActionHandle, String> {
+        let config = self.get();
+        validate(&config)?;
+
+        if config.trajectory != TrajectoryType::Trapezoidal
+            && matches!(config.mode, MotionMode::Position | MotionMode::Speed | MotionMode::SensorlessSpeed)
+        {
+            return Err("selected trajectory is not executable on the connected device".to_owned());
+        }
+
+        let state = read_u8(parameters, "PARAM_MOTOR_STATE")?;
+        let desired_mode = mode_wire_value(config.mode)?;
+
+        if state == 0 {
+            write_by_symbol(parameters, "PARAM_MOTOR_MODE", ParameterValue::U8(desired_mode))?;
+        } else {
+            let active_mode = read_u8(parameters, "PARAM_MOTOR_MODE")?;
+            if active_mode != desired_mode {
+                return Err("changing Motion mode requires the motor to be DISABLED".to_owned());
+            }
+        }
+
+        match config.mode {
+            MotionMode::Position => {
+                write_by_symbol(
+                    parameters,
+                    "PARAM_MOTION_WM_MAX",
+                    ParameterValue::F32(config.position_max_speed as f32),
+                )?;
+                write_motion_limits(parameters, &config)?;
+
+                let target_turns = match config.position_command {
+                    PositionCommand::Absolute => config.position_target_turn,
+                    PositionCommand::Incremental => {
+                        let current = read_position(parameters, "PARAM_RUN_POSITION")?;
+                        position_to_turns(current) + config.position_target_turn
+                    }
+                };
+                write_by_symbol(
+                    parameters,
+                    "PARAM_TARGET_POSITION",
+                    ParameterValue::Position(turns_to_position(target_turns)?),
+                )?;
+            }
+            MotionMode::Speed => {
+                write_motion_limits(parameters, &config)?;
+                write_by_symbol(
+                    parameters,
+                    "PARAM_TARGET_SPEED",
+                    ParameterValue::F32(config.speed_target as f32),
+                )?;
+            }
+            MotionMode::SensorlessSpeed => {
+                write_motion_limits(parameters, &config)?;
+                write_by_symbol(
+                    parameters,
+                    "PARAM_TARGET_SPEED",
+                    ParameterValue::F32(config.sensorless_speed_target as f32),
+                )?;
+            }
+            MotionMode::Torque => {
+                write_by_symbol(
+                    parameters,
+                    "PARAM_TARGET_TORQUE",
+                    ParameterValue::F32(config.torque_target_nm as f32),
+                )?;
+            }
+            MotionMode::Mit => {
+                return Err("MIT is not supported by the connected device".to_owned());
+            }
+        }
+
+        if state == 0 {
+            start_action(parameters, session, "ACTION_MOTOR_ENABLE")?;
+        } else if state != 1 {
+            return Err("motor must be DISABLED or ENABLED before Run".to_owned());
+        }
+
+        start_action(parameters, session, "ACTION_MOTOR_RUN")
+    }
+
+    pub fn stop(
+        &self,
+        parameters: &ParameterService,
+        session: &DeviceSession,
+    ) -> Result<ActionHandle, String> {
+        start_action(parameters, session, "ACTION_MOTOR_STOP")
+    }
+}
+
+fn parameter_id(parameters: &ParameterService, symbol: &str) -> Result<u16, String> {
+    parameters
+        .schema()
+        .parameter_by_key(symbol)
+        .map(|metadata| metadata.id)
+        .ok_or_else(|| format!("connected device does not expose {symbol}"))
+}
+
+fn action_id(parameters: &ParameterService, symbol: &str) -> Result<u16, String> {
+    parameters
+        .schema()
+        .action_by_key(symbol)
+        .map(|metadata| metadata.id)
+        .ok_or_else(|| format!("connected device does not expose {symbol}"))
+}
+
+fn write_by_symbol(
+    parameters: &ParameterService,
+    symbol: &str,
+    value: ParameterValue,
+) -> Result<(), String> {
+    let id = parameter_id(parameters, symbol)?;
+    parameters.write(id, value).map_err(|error| error.to_string())
+}
+
+fn read_u8(parameters: &ParameterService, symbol: &str) -> Result<u8, String> {
+    let id = parameter_id(parameters, symbol)?;
+    match parameters.read(id).map_err(|error| error.to_string())? {
+        ParameterValue::U8(value) => Ok(value),
+        _ => Err(format!("{symbol} is not a u8 parameter")),
+    }
+}
+
+fn read_position(parameters: &ParameterService, symbol: &str) -> Result<PositionValue, String> {
+    let id = parameter_id(parameters, symbol)?;
+    match parameters.read(id).map_err(|error| error.to_string())? {
+        ParameterValue::Position(value) => Ok(value),
+        _ => Err(format!("{symbol} is not a position parameter")),
+    }
+}
+
+fn start_action(
+    parameters: &ParameterService,
+    session: &DeviceSession,
+    symbol: &str,
+) -> Result<ActionHandle, String> {
+    let id = action_id(parameters, symbol)?;
+    session.action_start(id).map_err(|error| error.to_string())
+}
+
+fn write_motion_limits(parameters: &ParameterService, config: &MotionConfig) -> Result<(), String> {
+    write_by_symbol(
+        parameters,
+        "PARAM_MOTION_WM_ACC",
+        ParameterValue::F32(config.acceleration as f32),
+    )?;
+    write_by_symbol(
+        parameters,
+        "PARAM_MOTION_WM_DEC",
+        ParameterValue::F32(config.deceleration as f32),
+    )
+}
+
+fn position_to_turns(position: PositionValue) -> f64 {
+    f64::from(position.turns) + f64::from(position.theta) / std::f64::consts::TAU
+}
+
+fn turns_to_position(turns: f64) -> Result<PositionValue, String> {
+    if !turns.is_finite() {
+        return Err("position target must be finite".to_owned());
+    }
+
+    let whole = turns.floor();
+    if whole < f64::from(i32::MIN) || whole > f64::from(i32::MAX) {
+        return Err("position target is outside the supported turn range".to_owned());
+    }
+
+    let theta = ((turns - whole) * std::f64::consts::TAU) as f32;
+    Ok(PositionValue {
+        turns: whole as i32,
+        theta,
+    })
+}
+
+// Current AxDr_L Motor_Mode_e values. Host Schema already exports the symbols,
+// but schema v1 does not yet export symbol -> numeric enum values. Keep this
+// compatibility mapping isolated here so schema enum metadata can replace it
+// without changing the Motion API or GUI.
+fn mode_wire_value(mode: MotionMode) -> Result<u8, String> {
+    match mode {
+        MotionMode::Torque => Ok(0),
+        MotionMode::Speed => Ok(1),
+        MotionMode::Position => Ok(2),
+        MotionMode::SensorlessSpeed => Ok(5),
+        MotionMode::Mit => Err("MIT has no AxDr_L Motor Mode value".to_owned()),
     }
 }
 
