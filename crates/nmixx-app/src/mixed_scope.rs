@@ -783,20 +783,26 @@ fn ingest_fast(
 ) -> Result<(), MixedScopeError> {
     let config_id = frame.data().get(2).copied().ok_or(MixedScopeError::UnknownConfig(0))?;
     let mut state = shared.lock().map_err(|_| MixedScopeError::Closed)?;
-    let group = state.fast.as_mut().ok_or(MixedScopeError::UnknownConfig(config_id))?;
-    promote_if_pending(group, config_id)?;
+    let (ids, scales) = {
+        let group = state.fast.as_mut().ok_or(MixedScopeError::UnknownConfig(config_id))?;
+        promote_if_pending(group, config_id)?;
+        let ids = group.active.ids.clone();
+        let scales = group.active.scales.clone();
 
-    let decoded = decode_fast_data(frame, group.active.ids.len())?;
+        let decoded = decode_fast_data(frame, ids.len())?;
+        group.sequence.observe(decoded.sequence);
+        group.lost_frames = group.sequence.lost_total();
+        (ids, (scales, decoded))
+    };
+
+    let (scales, decoded) = scales;
     let values = decoded
-        .dequantize(&group.active.scales)
+        .dequantize(&scales)
         .ok_or(MixedScopeError::Runtime("FAST scale count mismatch".to_owned()))?;
-    let sequence = group.sequence.observe(decoded.sequence);
-    group.lost_frames = group.sequence.lost_total();
-    let _ = sequence;
 
-    let channel_count = group.active.ids.len();
+    let channel_count = ids.len();
     for sample in values.chunks_exact(channel_count) {
-        for (index, id) in group.active.ids.iter().enumerate() {
+        for (index, id) in ids.iter().enumerate() {
             if let Some(history) = state.histories.get_mut(id) {
                 history.stream.push_sample(&[sample[index]])?;
             }
@@ -811,20 +817,23 @@ fn ingest_normal(
 ) -> Result<(), MixedScopeError> {
     let decoded = decode_normal_data(frame)?;
     let mut state = shared.lock().map_err(|_| MixedScopeError::Closed)?;
-    let group = state
-        .normal
-        .as_mut()
-        .ok_or(MixedScopeError::UnknownConfig(decoded.config_id))?;
-    promote_if_pending(group, decoded.config_id)?;
+    let ids = {
+        let group = state
+            .normal
+            .as_mut()
+            .ok_or(MixedScopeError::UnknownConfig(decoded.config_id))?;
+        promote_if_pending(group, decoded.config_id)?;
 
-    if decoded.values.len() != group.active.ids.len() {
-        return Err(MixedScopeError::Runtime("NORMAL channel count mismatch".to_owned()));
-    }
+        if decoded.values.len() != group.active.ids.len() {
+            return Err(MixedScopeError::Runtime("NORMAL channel count mismatch".to_owned()));
+        }
 
-    group.sequence.observe(decoded.sequence);
-    group.lost_frames = group.sequence.lost_total();
+        group.sequence.observe(decoded.sequence);
+        group.lost_frames = group.sequence.lost_total();
+        group.active.ids.clone()
+    };
 
-    for (index, id) in group.active.ids.iter().enumerate() {
+    for (index, id) in ids.iter().enumerate() {
         if let Some(history) = state.histories.get_mut(id) {
             history.stream.push_sample(&[decoded.values[index]])?;
         }
