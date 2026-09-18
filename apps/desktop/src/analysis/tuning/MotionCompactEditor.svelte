@@ -1,8 +1,10 @@
 <script lang="ts">
   import { onMount } from "svelte";
   import { initializeMotion, motionState, updateMotion } from "../../motion/store";
+  import type { MotionCapabilities } from "../../connection/types";
   import type { MotionMode, MotionState, TrajectoryType } from "../../motion/types";
 
+  export let capabilities: MotionCapabilities | undefined;
   export let onError: (error: unknown) => void = () => undefined;
 
   const modeLabels: Record<MotionMode, string> = {
@@ -33,6 +35,22 @@
       || $motionState.mode === "sensorless-speed";
   }
 
+  function modeSupported(mode: MotionMode): boolean {
+    if (!capabilities) return true;
+    if (mode === "position") return capabilities.position;
+    if (mode === "speed") return capabilities.speed;
+    if (mode === "sensorless-speed") return capabilities.sensorlessSpeed;
+    if (mode === "torque") return capabilities.torque;
+    return capabilities.mit;
+  }
+
+  function trajectorySupported(trajectory: TrajectoryType): boolean {
+    if (!capabilities) return true;
+    if (trajectory === "trapezoidal") return capabilities.trajectoryTrapezoidal;
+    if (trajectory === "s-curve") return capabilities.trajectorySCurve;
+    return capabilities.trajectoryFiltered;
+  }
+
   onMount(() => {
     void initializeMotion().catch(onError);
   });
@@ -48,7 +66,7 @@
         onchange={(event) => update("mode", (event.currentTarget as HTMLSelectElement).value as MotionMode)}
       >
         {#each Object.entries(modeLabels) as [value, label]}
-          <option value={value}>{label}</option>
+          <option value={value} disabled={!modeSupported(value as MotionMode)}>{label}</option>
         {/each}
       </select>
     </label>
@@ -135,7 +153,7 @@
           onchange={(event) => update("trajectory", (event.currentTarget as HTMLSelectElement).value as TrajectoryType)}
         >
           {#each Object.entries(trajectoryLabels) as [value, label]}
-            <option value={value}>{label}</option>
+            <option value={value} disabled={!trajectorySupported(value as TrajectoryType)}>{label}</option>
           {/each}
         </select>
       </label>
