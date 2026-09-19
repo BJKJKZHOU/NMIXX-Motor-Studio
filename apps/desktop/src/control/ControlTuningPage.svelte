@@ -11,6 +11,7 @@
   } from "../parameters/api";
   import type { ParameterMetadata, ParameterValue } from "../parameters/types";
   import { modifiedParameterIds } from "../parameters/persistence";
+  import { parameterDraftSnapshot, parameterMetadataSnapshot, parameterValueSnapshot } from "../parameters/sessionState";
   import {
     initializeMotion,
     motionState,
@@ -83,9 +84,9 @@
 
   let { connection, motorState, onError = () => undefined }: Props = $props();
 
-  let metadata = $state<Record<string, ParameterMetadata>>({});
-  let values = $state<Record<string, ParameterValue | null>>({});
-  let drafts = $state<Record<string, string>>({});
+  let metadata = $state<Record<string, ParameterMetadata>>(parameterMetadataSnapshot(SYMBOLS));
+  let values = $state<Record<string, ParameterValue | null>>(parameterValueSnapshot(SYMBOLS));
+  let drafts = $state<Record<string, string>>(parameterDraftSnapshot(SYMBOLS));
   let writing = $state<Set<string>>(new Set());
   let loading = $state(false);
   let motionActionBusy = $state(false);
@@ -122,6 +123,12 @@
   $effect(() => {
     const activeConnection = connection;
     const token = ++generation;
+
+    if (activeConnection) {
+      metadata = parameterMetadataSnapshot(SYMBOLS);
+      values = parameterValueSnapshot(SYMBOLS);
+      drafts = parameterDraftSnapshot(SYMBOLS);
+    }
 
     if (!activeConnection) {
       metadata = {};
@@ -283,11 +290,14 @@
     const value = enumValue(symbol, enumSymbol);
     if (!meta || value === null || locked(symbol)) return;
 
+    const previous = values[symbol] ?? null;
+    values = { ...values, [symbol]: { type: "u8", value } };
     writing = new Set(writing).add(symbol);
     try {
       await writeParameter(meta.id, { type: "u8", value });
       await refreshSymbols(refresh);
     } catch (error) {
+      values = { ...values, [symbol]: previous };
       onError(error);
     } finally {
       const next = new Set(writing);
@@ -403,6 +413,7 @@
       const status = await startTuningExperiment();
       experimentState = status.state;
       experimentMessage = status.message ?? "";
+      experimentSnapshotState = undefined;
       await refreshExperiment();
     } catch (error) {
       onError(error);
@@ -712,7 +723,6 @@
                     class:ramModified={$modifiedParameterIds.has(metadata[spec.source].id)}
                     class="compact-select"
                     disabled={locked(spec.source)}
-                    value={sourceText(spec.source)}
                     onchange={(event) => {
                       const next = (event.currentTarget as HTMLSelectElement).value;
                       void setSource(
@@ -722,8 +732,8 @@
                       );
                     }}
                   >
-                    <option value="Bandwidth">Bandwidth</option>
-                    <option value="Manual">Manual</option>
+                    <option value="Bandwidth" selected={sourceText(spec.source) === "Bandwidth"}>Bandwidth</option>
+                    <option value="Manual" selected={sourceText(spec.source) === "Manual"}>Manual</option>
                   </select>
                 {:else}
                   <span class="unavailable">Firmware unavailable</span>

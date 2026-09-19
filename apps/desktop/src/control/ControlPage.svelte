@@ -11,6 +11,7 @@
   } from "../parameters/api";
   import type { ParameterMetadata, ParameterValue } from "../parameters/types";
   import { modifiedParameterIds } from "../parameters/persistence";
+  import { parameterDraftSnapshot, parameterMetadataSnapshot, parameterValueSnapshot } from "../parameters/sessionState";
 
   type ControlLoopPage = "current" | "speed" | "position";
 
@@ -46,9 +47,9 @@
 
   let { connection, motorState, loop = "current", onError = () => undefined }: Props = $props();
 
-  let metadata = $state<Record<string, ParameterMetadata>>({});
-  let values = $state<Record<string, ParameterValue | null>>({});
-  let drafts = $state<Record<string, string>>({});
+  let metadata = $state<Record<string, ParameterMetadata>>(parameterMetadataSnapshot(SYMBOLS));
+  let values = $state<Record<string, ParameterValue | null>>(parameterValueSnapshot(SYMBOLS));
+  let drafts = $state<Record<string, string>>(parameterDraftSnapshot(SYMBOLS));
   let writing = $state<Set<string>>(new Set());
   let loading = $state(false);
   let generation = 0;
@@ -71,6 +72,12 @@
   $effect(() => {
     const activeConnection = connection;
     const token = ++generation;
+
+    if (activeConnection) {
+      metadata = parameterMetadataSnapshot(SYMBOLS);
+      values = parameterValueSnapshot(SYMBOLS);
+      drafts = parameterDraftSnapshot(SYMBOLS);
+    }
 
     if (!activeConnection) {
       metadata = {};
@@ -223,11 +230,14 @@
     const value = enumValue(symbol, mode === "Manual" ? "CTRL_TUNE_MANUAL" : "CTRL_TUNE_BANDWIDTH");
     if (!meta || value === null || locked(symbol)) return;
 
+    const previous = values[symbol] ?? null;
+    values = { ...values, [symbol]: { type: "u8", value } };
     writing = new Set(writing).add(symbol);
     try {
       await writeParameter(meta.id, { type: "u8", value });
       await refreshSymbols(refresh);
     } catch (error) {
+      values = { ...values, [symbol]: previous };
       onError(error);
     } finally {
       const next = new Set(writing);
@@ -285,11 +295,10 @@
                     class:ramModified={$modifiedParameterIds.has(metadata[CURRENT_SOURCE].id)}
                     class="compact-select"
                     disabled={locked(CURRENT_SOURCE)}
-                    value={sourceText(CURRENT_SOURCE)}
                     onchange={(event) => void setSource(CURRENT_SOURCE, event.currentTarget.value as "Bandwidth" | "Manual", [CURRENT_SOURCE, CURRENT_BW, ID_KP, ID_KI, IQ_KP, IQ_KI])}
                   >
-                    <option value="Bandwidth">Bandwidth</option>
-                    <option value="Manual">Manual</option>
+                    <option value="Bandwidth" selected={sourceText(CURRENT_SOURCE) === "Bandwidth"}>Bandwidth</option>
+                    <option value="Manual" selected={sourceText(CURRENT_SOURCE) === "Manual"}>Manual</option>
                   </select>
                 </div>
               {/if}
@@ -333,9 +342,9 @@
               {#if metadata[SPEED_SOURCE]}
                 <div class="block-field">
                   <span>{label(SPEED_SOURCE, "Gain Source")}</span>
-                  <select class:ramModified={$modifiedParameterIds.has(metadata[SPEED_SOURCE].id)} class="compact-select" disabled={locked(SPEED_SOURCE)} value={sourceText(SPEED_SOURCE)} onchange={(event) => void setSource(SPEED_SOURCE, event.currentTarget.value as "Bandwidth" | "Manual", [SPEED_SOURCE, SPEED_BW, SPEED_KP, SPEED_KI])}>
-                    <option value="Bandwidth">Bandwidth</option>
-                    <option value="Manual">Manual</option>
+                  <select class:ramModified={$modifiedParameterIds.has(metadata[SPEED_SOURCE].id)} class="compact-select" disabled={locked(SPEED_SOURCE)} onchange={(event) => void setSource(SPEED_SOURCE, event.currentTarget.value as "Bandwidth" | "Manual", [SPEED_SOURCE, SPEED_BW, SPEED_KP, SPEED_KI])}>
+                    <option value="Bandwidth" selected={sourceText(SPEED_SOURCE) === "Bandwidth"}>Bandwidth</option>
+                    <option value="Manual" selected={sourceText(SPEED_SOURCE) === "Manual"}>Manual</option>
                   </select>
                 </div>
               {/if}

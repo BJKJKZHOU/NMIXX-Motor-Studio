@@ -1,7 +1,7 @@
 <script lang="ts">
   import { untrack } from "svelte";
   import type { ConnectionInfo } from "../connection/types";
-  import { listParameters, onParametersRefreshed, readCachedParameters, readCurrentParameters, readParameters, writeParameter } from "../parameters/api";
+  import { listParameters, readParameter, readParameters, writeParameter } from "../parameters/api";
   import type { ParameterMetadata, ParameterValue } from "../parameters/types";
   import { modifiedParameterIds } from "../parameters/persistence";
   import { listActions, onActionCompleted } from "../actions/api";
@@ -52,6 +52,9 @@
   let actions = $state<Record<string, ActionMetadata>>({});
   let values = $state<Record<string, ParameterValue | null>>({});
   let drafts = $state<Record<string, string>>({});
+  let encoderProtocolValue = $state<number | null>(null);
+  let encoderSpiTypeValue = $state<number | null>(null);
+  let motorDirectionValue = $state<"normal" | "reversed">("normal");
   let loading = $state(false);
   let writing = $state<Set<string>>(new Set());
   let phaseState = $state<PhaseState>("idle");
@@ -71,6 +74,9 @@
       actions = {};
       values = {};
       drafts = {};
+      encoderProtocolValue = null;
+      encoderSpiTypeValue = null;
+      motorDirectionValue = "normal";
       loading = false;
       return;
     }
@@ -81,8 +87,8 @@
   $effect(() => {
     let disposed = false;
     let actionUnlisten: (() => void) | undefined;
-    let refreshUnlisten: (() => void) | undefined;
 
+    onParametersRefreshed(() => void refreshValues()).catch(onError);
     onActionCompleted((completion) => handleActionCompleted(completion))
       .then((stop) => {
         if (disposed) stop();
@@ -90,17 +96,9 @@
       })
       .catch(onError);
 
-    onParametersRefreshed(() => void refreshFromCache())
-      .then((stop) => {
-        if (disposed) stop();
-        else refreshUnlisten = stop;
-      })
-      .catch(onError);
-
     return () => {
       disposed = true;
       actionUnlisten?.();
-      refreshUnlisten?.();
     };
   });
 
@@ -149,22 +147,14 @@
     return candidates.filter((option) => allowed.has(option.symbol));
   }
 
-  function encoderProtocol(): number | null {
-    return numericValue(ENCODER_PROTOCOL_SYMBOL);
-  }
-
   function isSpiProtocol(): boolean {
-    return encoderProtocol() === 1;
+    return encoderProtocolValue === 1;
   }
 
   function zeroReferenceText(): string {
     const valid = numericValue(ZERO_VALID_SYMBOL);
     if (valid === null) return "—";
     return valid === 1 ? "Set" : "Not set";
-  }
-
-  function motorDirection(): "normal" | "reversed" {
-    return numericValue(MOTOR_DIR_SYMBOL) === -1 ? "reversed" : "normal";
   }
 
   function parameterValue(meta: ParameterMetadata, text: string): ParameterValue {
@@ -195,6 +185,15 @@
     }
     values = nextValues;
     drafts = nextDrafts;
+
+    const protocol = nextValues[ENCODER_PROTOCOL_SYMBOL];
+    if (protocol?.type === "u8") encoderProtocolValue = Number(protocol.value);
+
+    const spiType = nextValues[ENCODER_SPI_TYPE_SYMBOL];
+    if (spiType?.type === "u8") encoderSpiTypeValue = Number(spiType.value);
+
+    const direction = nextValues[MOTOR_DIR_SYMBOL];
+    if (direction?.type === "i8") motorDirectionValue = Number(direction.value) === -1 ? "reversed" : "normal";
   }
 
   async function loadEncoder(activeConnection: ConnectionInfo, token: number) {
@@ -210,24 +209,13 @@
       metadata = Object.fromEntries(entries.map((item) => [item.symbol, item]));
 
       const readable = entries.filter((item) => item.access.toLowerCase().includes("r"));
-      const results = await readCurrentParameters(readable.map((item) => item.id));
+      const results = await readParameters(readable.map((item) => item.id));
       if (token !== generation || connection !== activeConnection) return;
       applyValues(readable, results);
     } catch (error) {
       if (token === generation) onError(error);
     } finally {
       if (token === generation) loading = false;
-    }
-  }
-
-  async function refreshFromCache() {
-    if (!connection || Object.keys(metadata).length === 0) return;
-    try {
-      const readable = Object.values(metadata).filter((item) => item.access.toLowerCase().includes("r"));
-      const results = await readCachedParameters(readable.map((item) => item.id));
-      applyValues(readable, results);
-    } catch (error) {
-      onError(error);
     }
   }
 
@@ -262,11 +250,24 @@
     const meta = metadata[symbol];
     if (!meta || meta.typeName !== "u8" || !isWritable(symbol) || writing.has(symbol)) return;
 
+    const previous = values[symbol] ?? null;
     writing = new Set(writing).add(symbol);
     try {
       await writeParameter(meta.id, { type: "u8", value });
-      await refreshValues();
+      const readback = await readParameter(meta.id);
+      values = { ...values, [symbol]: readback.value };
+      if (symbol === ENCODER_PROTOCOL_SYMBOL && readback.value.type === "u8") {
+        encoderProtocolValue = Number(readback.value.value);
+      } else if (symbol === ENCODER_SPI_TYPE_SYMBOL && readback.value.type === "u8") {
+        encoderSpiTypeValue = Number(readback.value.value);
+      }
     } catch (error) {
+      values = { ...values, [symbol]: previous };
+      if (symbol === ENCODER_PROTOCOL_SYMBOL) {
+        encoderProtocolValue = previous?.type === "u8" ? Number(previous.value) : null;
+      } else if (symbol === ENCODER_SPI_TYPE_SYMBOL) {
+        encoderSpiTypeValue = previous?.type === "u8" ? Number(previous.value) : null;
+      }
       onError(error);
     } finally {
       const next = new Set(writing);
@@ -279,11 +280,17 @@
     const meta = metadata[MOTOR_DIR_SYMBOL];
     if (!meta || !isWritable(MOTOR_DIR_SYMBOL) || writing.has(MOTOR_DIR_SYMBOL)) return;
 
+    const previous = values[MOTOR_DIR_SYMBOL] ?? null;
+    const nextValue = direction === "normal" ? 1 : -1;
     writing = new Set(writing).add(MOTOR_DIR_SYMBOL);
     try {
-      await writeParameter(meta.id, { type: "i8", value: direction === "normal" ? 1 : -1 });
-      await refreshValues();
+      await writeParameter(meta.id, { type: "i8", value: nextValue });
+      const readback = await readParameter(meta.id);
+      values = { ...values, [MOTOR_DIR_SYMBOL]: readback.value };
+      motorDirectionValue = readback.value.type === "i8" && Number(readback.value.value) === -1 ? "reversed" : "normal";
     } catch (error) {
+      values = { ...values, [MOTOR_DIR_SYMBOL]: previous };
+      motorDirectionValue = previous?.type === "i8" && Number(previous.value) === -1 ? "reversed" : "normal";
       onError(error);
     } finally {
       const next = new Set(writing);
@@ -352,8 +359,8 @@
                       class:ramModified={$modifiedParameterIds.has(metadata[ENCODER_PROTOCOL_SYMBOL].id)}
                       class="compact-select"
                       disabled={!isWritable(ENCODER_PROTOCOL_SYMBOL) || writing.has(ENCODER_PROTOCOL_SYMBOL) || phaseState === "running"}
-                      value={String(numericValue(ENCODER_PROTOCOL_SYMBOL) ?? "")}
-                      onchange={(event) => void setU8(ENCODER_PROTOCOL_SYMBOL, Number((event.currentTarget as HTMLSelectElement).value))}
+                      bind:value={encoderProtocolValue}
+                      onchange={() => encoderProtocolValue !== null && void setU8(ENCODER_PROTOCOL_SYMBOL, encoderProtocolValue)}
                     >
                       {#each enumOptions(ENCODER_PROTOCOL_SYMBOL, PROTOCOL_OPTIONS) as option}
                         <option value={option.value}>{option.label}</option>
@@ -372,8 +379,8 @@
                         class:ramModified={$modifiedParameterIds.has(metadata[ENCODER_SPI_TYPE_SYMBOL].id)}
                         class="compact-select"
                         disabled={!isWritable(ENCODER_SPI_TYPE_SYMBOL) || writing.has(ENCODER_SPI_TYPE_SYMBOL) || phaseState === "running"}
-                        value={String(numericValue(ENCODER_SPI_TYPE_SYMBOL) ?? "")}
-                        onchange={(event) => void setU8(ENCODER_SPI_TYPE_SYMBOL, Number((event.currentTarget as HTMLSelectElement).value))}
+                        bind:value={encoderSpiTypeValue}
+                        onchange={() => encoderSpiTypeValue !== null && void setU8(ENCODER_SPI_TYPE_SYMBOL, encoderSpiTypeValue)}
                       >
                         {#each enumOptions(ENCODER_SPI_TYPE_SYMBOL, SPI_TYPE_OPTIONS) as option}
                           <option value={option.value}>{option.label}</option>
@@ -440,8 +447,8 @@
                       class:ramModified={$modifiedParameterIds.has(metadata[MOTOR_DIR_SYMBOL].id)}
                       class="compact-select"
                       disabled={!isWritable(MOTOR_DIR_SYMBOL) || writing.has(MOTOR_DIR_SYMBOL) || phaseState === "running"}
-                      value={motorDirection()}
-                      onchange={(event) => void setMotorDirection((event.currentTarget as HTMLSelectElement).value as "normal" | "reversed")}
+                      bind:value={motorDirectionValue}
+                      onchange={() => void setMotorDirection(motorDirectionValue)}
                     >
                       <option value="normal">Normal</option>
                       <option value="reversed">Reversed</option>

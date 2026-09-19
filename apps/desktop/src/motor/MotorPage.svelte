@@ -4,6 +4,7 @@
   import { listParameters, onParametersRefreshed, readCachedParameters, readCurrentParameters, readParameters, writeParameter } from "../parameters/api";
   import type { ParameterMetadata, ParameterValue } from "../parameters/types";
   import { modifiedParameterIds } from "../parameters/persistence";
+  import { parameterDraftSnapshot, parameterMetadataSnapshot, parameterValueSnapshot } from "../parameters/sessionState";
   import { applyIdentification as applyIdentificationAction, listActions, onActionCompleted, startIdentification as startIdentificationAction } from "../actions/api";
   import type { ActionCompletion, ActionHandle, ActionMetadata } from "../actions/types";
 
@@ -101,12 +102,22 @@
   const failReasonSymbol = "PARAM_IDENT_FAIL_REASON";
   const applyActionSymbol = "ACTION_IDENT_APPLY";
 
+  const ALL_PARAMETER_SYMBOLS = [
+    ...ROWS.flatMap((row) =>
+      [row.activeSymbol, row.identifiedSymbol, row.identifiedValidSymbol].filter(
+        (symbol): symbol is string => !!symbol,
+      ),
+    ),
+    ...IDENTIFICATION_SETTING_SYMBOLS,
+    failReasonSymbol,
+  ];
+
   let { connection, onError = () => undefined }: Props = $props();
 
-  let metadata = $state<Record<string, ParameterMetadata>>({});
+  let metadata = $state<Record<string, ParameterMetadata>>(parameterMetadataSnapshot(ALL_PARAMETER_SYMBOLS));
   let actions = $state<Record<string, ActionMetadata>>({});
-  let values = $state<Record<string, ParameterValue | null>>({});
-  let drafts = $state<Record<string, string>>({});
+  let values = $state<Record<string, ParameterValue | null>>(parameterValueSnapshot(ALL_PARAMETER_SYMBOLS));
+  let drafts = $state<Record<string, string>>(parameterDraftSnapshot(ALL_PARAMETER_SYMBOLS));
   let loading = $state(false);
   let writing = $state<Set<string>>(new Set());
   let identStates = $state<Record<IdentKey, IdentState>>(initialIdentStates());
@@ -144,6 +155,12 @@
     const token = ++generation;
     identStates = initialIdentStates();
     pendingHandles = {};
+
+    if (activeConnection) {
+      metadata = parameterMetadataSnapshot(ALL_PARAMETER_SYMBOLS);
+      values = parameterValueSnapshot(ALL_PARAMETER_SYMBOLS);
+      drafts = parameterDraftSnapshot(ALL_PARAMETER_SYMBOLS);
+    }
 
     if (!activeConnection) {
       metadata = {};

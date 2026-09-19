@@ -16,6 +16,7 @@
   import { listParameters, onParametersRefreshed, readCachedParameters, readCurrentParameters, readParameter, writeParameter } from "./api";
   import type { ParameterMetadata, ParameterValue } from "./types";
   import { modifiedParameterIds } from "./persistence";
+  import { parameterMetadataSnapshot, parameterValueById, parameterValueText } from "./sessionState";
 
   type Props = {
     connection: ConnectionInfo | undefined;
@@ -31,11 +32,31 @@
 
   let { connection, onError = () => undefined }: Props = $props();
 
-  let rows = $state<ParameterRow[]>([]);
+  function cachedRows(): ParameterRow[] {
+    return Object.values(parameterMetadataSnapshot()).map((meta) => {
+      const value = parameterValueById(meta.id) ?? null;
+      return {
+        meta,
+        value,
+        error: null,
+        pending: isReadable(meta) && value === null,
+      };
+    });
+  }
+
+  function cachedDrafts(source: ParameterRow[]): Record<number, string> {
+    return Object.fromEntries(
+      source
+        .filter((row) => row.value !== null)
+        .map((row) => [row.meta.id, parameterValueText(row.value)]),
+    );
+  }
+
+  let rows = $state<ParameterRow[]>(cachedRows());
   let loadingRegistry = $state(false);
   let readingValues = $state(false);
   let search = $state("");
-  let drafts = $state<Record<number, string>>({});
+  let drafts = $state<Record<number, string>>(cachedDrafts(rows));
   let writing = $state<Set<number>>(new Set());
   let loadGeneration = 0;
 
@@ -88,6 +109,11 @@
   $effect(() => {
     const activeConnection = connection;
     const generation = ++loadGeneration;
+
+    if (activeConnection) {
+      rows = cachedRows();
+      drafts = cachedDrafts(rows);
+    }
 
     if (!activeConnection) {
       rows = [];

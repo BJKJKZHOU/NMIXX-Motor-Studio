@@ -115,6 +115,7 @@ parameter_schema = 1
 
 [[parameters]]
 symbol = "PARAM_MOTOR_MODE"
+label = "Motor Mode"
 id = 1793
 type = "u8"
 access = "rw"
@@ -123,6 +124,7 @@ allowed_symbols = ["TORQUE", "SPEED", "POSITION", "SENSORLESS_SPEED"]
 
 [[parameters]]
 symbol = "PARAM_TARGET_POSITION"
+label = "Position Target"
 id = 1796
 type = "position"
 access = "rw"
@@ -130,6 +132,7 @@ description = "position"
 
 [[parameters]]
 symbol = "PARAM_TARGET_SPEED"
+label = "Speed Target"
 id = 1795
 type = "f32"
 access = "rw"
@@ -137,6 +140,7 @@ description = "speed"
 
 [[parameters]]
 symbol = "PARAM_TARGET_TORQUE"
+label = "Torque Target"
 id = 1794
 type = "f32"
 access = "rw"
@@ -144,6 +148,7 @@ description = "torque"
 
 [[parameters]]
 symbol = "PARAM_MOTION_WM_MAX"
+label = "Max Speed"
 id = 1537
 type = "f32"
 access = "rw"
@@ -151,6 +156,7 @@ description = "max speed"
 
 [[parameters]]
 symbol = "PARAM_MOTION_WM_ACC"
+label = "Acceleration"
 id = 1538
 type = "f32"
 access = "rw"
@@ -158,6 +164,7 @@ description = "acc"
 
 [[parameters]]
 symbol = "PARAM_MOTION_WM_DEC"
+label = "Deceleration"
 id = 1539
 type = "f32"
 access = "rw"
@@ -165,11 +172,13 @@ description = "dec"
 
 [[actions]]
 symbol = "ACTION_MOTOR_RUN"
+label = "Run"
 id = 4098
 description = "run"
 
 [[actions]]
 symbol = "ACTION_MOTOR_STOP"
+label = "Stop"
 id = 4099
 description = "stop"
 "#,
