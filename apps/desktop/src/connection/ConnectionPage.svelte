@@ -2,7 +2,7 @@
   import { onMount } from "svelte";
   import { connectDevice, disconnectDevice, listDevices } from "./api";
   import type { ConnectionInfo } from "./types";
-import { connectionPort, connectionSchemaPath } from "./formState";
+  import { connectionPort, connectionSchemaPath } from "./formState";
 
   export let connection: ConnectionInfo | undefined;
   export let onConnected: (connection: ConnectionInfo) => void = () => undefined;
@@ -13,7 +13,7 @@ import { connectionPort, connectionSchemaPath } from "./formState";
   let busy = false;
 
   function preferredPort(candidates: string[], current: string): string {
-    if (current && candidates.includes(current)) return current;
+    if (current) return current;
     return candidates.find((item) => /(?:ttyACM|ttyUSB|cu\.usb|tty\.usb)/i.test(item)) ?? candidates[0] ?? "";
   }
 
