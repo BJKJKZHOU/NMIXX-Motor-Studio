@@ -295,11 +295,10 @@
                     class:ramModified={$modifiedParameterIds.has(metadata[CURRENT_SOURCE].id)}
                     class="compact-select"
                     disabled={locked(CURRENT_SOURCE)}
-                    value={sourceText(CURRENT_SOURCE)}
                     onchange={(event) => void setSource(CURRENT_SOURCE, event.currentTarget.value as "Bandwidth" | "Manual", [CURRENT_SOURCE, CURRENT_BW, ID_KP, ID_KI, IQ_KP, IQ_KI])}
                   >
-                    <option value="Bandwidth">Bandwidth</option>
-                    <option value="Manual">Manual</option>
+                    <option value="Bandwidth" selected={sourceText(CURRENT_SOURCE) === "Bandwidth"}>Bandwidth</option>
+                    <option value="Manual" selected={sourceText(CURRENT_SOURCE) === "Manual"}>Manual</option>
                   </select>
                 </div>
               {/if}
@@ -343,9 +342,9 @@
               {#if metadata[SPEED_SOURCE]}
                 <div class="block-field">
                   <span>{label(SPEED_SOURCE, "Gain Source")}</span>
-                  <select class:ramModified={$modifiedParameterIds.has(metadata[SPEED_SOURCE].id)} class="compact-select" disabled={locked(SPEED_SOURCE)} value={sourceText(SPEED_SOURCE)} onchange={(event) => void setSource(SPEED_SOURCE, event.currentTarget.value as "Bandwidth" | "Manual", [SPEED_SOURCE, SPEED_BW, SPEED_KP, SPEED_KI])}>
-                    <option value="Bandwidth">Bandwidth</option>
-                    <option value="Manual">Manual</option>
+                  <select class:ramModified={$modifiedParameterIds.has(metadata[SPEED_SOURCE].id)} class="compact-select" disabled={locked(SPEED_SOURCE)} onchange={(event) => void setSource(SPEED_SOURCE, event.currentTarget.value as "Bandwidth" | "Manual", [SPEED_SOURCE, SPEED_BW, SPEED_KP, SPEED_KI])}>
+                    <option value="Bandwidth" selected={sourceText(SPEED_SOURCE) === "Bandwidth"}>Bandwidth</option>
+                    <option value="Manual" selected={sourceText(SPEED_SOURCE) === "Manual"}>Manual</option>
                   </select>
                 </div>
               {/if}
