@@ -366,11 +366,10 @@
                       class:ramModified={$modifiedParameterIds.has(metadata[ENCODER_PROTOCOL_SYMBOL].id)}
                       class="compact-select"
                       disabled={!isWritable(ENCODER_PROTOCOL_SYMBOL) || writing.has(ENCODER_PROTOCOL_SYMBOL) || phaseState === "running"}
-                      value={String(numericValue(ENCODER_PROTOCOL_SYMBOL) ?? "")}
                       onchange={(event) => void setU8(ENCODER_PROTOCOL_SYMBOL, Number((event.currentTarget as HTMLSelectElement).value))}
                     >
                       {#each enumOptions(ENCODER_PROTOCOL_SYMBOL, PROTOCOL_OPTIONS) as option}
-                        <option value={option.value}>{option.label}</option>
+                        <option value={option.value} selected={numericValue(ENCODER_PROTOCOL_SYMBOL) === option.value}>{option.label}</option>
                       {/each}
                     </select>
                   {:else}
@@ -386,11 +385,10 @@
                         class:ramModified={$modifiedParameterIds.has(metadata[ENCODER_SPI_TYPE_SYMBOL].id)}
                         class="compact-select"
                         disabled={!isWritable(ENCODER_SPI_TYPE_SYMBOL) || writing.has(ENCODER_SPI_TYPE_SYMBOL) || phaseState === "running"}
-                        value={String(numericValue(ENCODER_SPI_TYPE_SYMBOL) ?? "")}
                         onchange={(event) => void setU8(ENCODER_SPI_TYPE_SYMBOL, Number((event.currentTarget as HTMLSelectElement).value))}
                       >
                         {#each enumOptions(ENCODER_SPI_TYPE_SYMBOL, SPI_TYPE_OPTIONS) as option}
-                          <option value={option.value}>{option.label}</option>
+                          <option value={option.value} selected={numericValue(ENCODER_SPI_TYPE_SYMBOL) === option.value}>{option.label}</option>
                         {/each}
                       </select>
                     {:else}
@@ -454,11 +452,10 @@
                       class:ramModified={$modifiedParameterIds.has(metadata[MOTOR_DIR_SYMBOL].id)}
                       class="compact-select"
                       disabled={!isWritable(MOTOR_DIR_SYMBOL) || writing.has(MOTOR_DIR_SYMBOL) || phaseState === "running"}
-                      value={motorDirection()}
                       onchange={(event) => void setMotorDirection((event.currentTarget as HTMLSelectElement).value as "normal" | "reversed")}
                     >
-                      <option value="normal">Normal</option>
-                      <option value="reversed">Reversed</option>
+                      <option value="normal" selected={motorDirection() === "normal"}>Normal</option>
+                      <option value="reversed" selected={motorDirection() === "reversed"}>Reversed</option>
                     </select>
                   {:else}
                     <span class="muted">—</span>
