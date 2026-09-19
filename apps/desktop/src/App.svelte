@@ -28,6 +28,8 @@
   let activePage: Page = "connection";
   let activeControlLoop: ControlLoopPage = "current";
   let controlArchitectureExpanded = true;
+  let connectionPort = "";
+  let connectionSchemaPath = "../../../AxDr_L_Motor/build/host/axdr-host-schema.toml";
   let connection: ConnectionInfo | undefined;
   let errorText = "";
   let scopeSummary: ScopeSummary = { state: "STOPPED", selectedChannels: 0, lostFrames: 0 };
@@ -284,7 +286,7 @@
 
     <main class="main-area">
         {#if activePage === "connection"}
-          <ConnectionPage {connection} onConnected={(next) => void setConnection(next)} onDisconnected={() => void setConnection(undefined)} onError={setError} />
+          <ConnectionPage {connection} bind:port={connectionPort} bind:schemaPath={connectionSchemaPath} onConnected={(next) => void setConnection(next)} onDisconnected={() => void setConnection(undefined)} onError={setError} />
         {:else if activePage === "motor"}
           <div class="domain-page-container">
             <MotorPage {connection} onError={setError} />
