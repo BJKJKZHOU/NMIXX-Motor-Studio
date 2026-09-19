@@ -11,7 +11,7 @@
   } from "../parameters/api";
   import type { ParameterMetadata, ParameterValue } from "../parameters/types";
   import { modifiedParameterIds } from "../parameters/persistence";
-  import { parameterMetadataSnapshot, parameterValueSnapshot } from "../parameters/sessionState";
+  import { parameterDraftSnapshot, parameterMetadataSnapshot, parameterValueSnapshot } from "../parameters/sessionState";
 
   type ControlLoopPage = "current" | "speed" | "position";
 
@@ -49,7 +49,7 @@
 
   let metadata = $state<Record<string, ParameterMetadata>>(parameterMetadataSnapshot(SYMBOLS));
   let values = $state<Record<string, ParameterValue | null>>(parameterValueSnapshot(SYMBOLS));
-  let drafts = $state<Record<string, string>>({});
+  let drafts = $state<Record<string, string>>(parameterDraftSnapshot(SYMBOLS));
   let writing = $state<Set<string>>(new Set());
   let loading = $state(false);
   let generation = 0;
@@ -76,6 +76,7 @@
     if (activeConnection) {
       metadata = parameterMetadataSnapshot(SYMBOLS);
       values = parameterValueSnapshot(SYMBOLS);
+      drafts = parameterDraftSnapshot(SYMBOLS);
     }
 
     if (!activeConnection) {
