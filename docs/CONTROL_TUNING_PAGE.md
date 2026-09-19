@@ -85,13 +85,17 @@ The page deliberately does not reproduce the complete control diagram. Structura
 
 The page does not duplicate Connect/Disconnect controls or motor Enable/Disable/Stop controls inside its own content area.
 
-### Shared Motion editor
+### Shared Motion model, tuning-specific presentation
 
-The Motion command area is not a separate tuning-only command model. It reuses the same Application-level Motion model as the full Motion page through the shared compact Motion editor.
+The Motion command area is not a separate tuning-only command model. It is a Control Tuning-specific UI projection over the same Application-level Motion model used by the full Motion page.
 
-Changing mode, target, trajectory, acceleration or deceleration in Control Tuning updates the same Motion state seen by the full Motion page, and vice versa. The compact editor calls the same Motion Application API for Run/Stop rather than maintaining placeholder controls or a second page-local copy.
+The Control Tuning page intentionally keeps its compact workflow-oriented presentation: Mode, Position command semantics, Repeat, Position/Speed target fields, Acc/Dec, Copy Accel to Decel, and Run/Stop. It does not have to reuse the full Motion page component or expose every advanced Motion setting.
 
-The finite experiment waveform/orchestration remains a separate Control Tuning responsibility. Reusing the Motion editor does not mean the bounded tuning-capture workflow has been implemented by the GUI itself.
+Changing a field that is shown here updates the same Motion state seen by the full Motion page, and vice versa. Run/Stop call the same Motion Application API; there is no second page-local command copy.
+
+Control Tuning normally operates as a repeated ENABLED-state workflow: tune parameters -> Run -> inspect response -> tune again -> Run. Run does not automatically Enable/Disable the motor and does not require a confirmation dialog. When the motor is not ENABLED, Run is simply unavailable with a concise reason such as "Enable motor first".
+
+The finite experiment waveform/orchestration remains a separate Control Tuning responsibility. Sharing the Motion model does not mean the bounded tuning-capture workflow has been implemented by the GUI itself.
 
 ## Tuning parameter semantics
 
