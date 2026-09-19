@@ -4,7 +4,7 @@
   import { listParameters, onParametersRefreshed, readCachedParameters, readCurrentParameters, readParameters, writeParameter } from "../parameters/api";
   import type { ParameterMetadata, ParameterValue } from "../parameters/types";
   import { modifiedParameterIds } from "../parameters/persistence";
-  import { parameterMetadataSnapshot, parameterValueSnapshot } from "../parameters/sessionState";
+  import { parameterDraftSnapshot, parameterMetadataSnapshot, parameterValueSnapshot } from "../parameters/sessionState";
   import { listActions, onActionCompleted } from "../actions/api";
   import type { ActionCompletion, ActionHandle, ActionMetadata } from "../actions/types";
   import { startPhaseSearch as startPhaseSearchAction } from "./api";
@@ -52,7 +52,7 @@
   let metadata = $state<Record<string, ParameterMetadata>>(parameterMetadataSnapshot(ALL_PARAMETER_SYMBOLS));
   let actions = $state<Record<string, ActionMetadata>>({});
   let values = $state<Record<string, ParameterValue | null>>(parameterValueSnapshot(ALL_PARAMETER_SYMBOLS));
-  let drafts = $state<Record<string, string>>({});
+  let drafts = $state<Record<string, string>>(parameterDraftSnapshot(ALL_PARAMETER_SYMBOLS));
   let loading = $state(false);
   let writing = $state<Set<string>>(new Set());
   let phaseState = $state<PhaseState>("idle");
@@ -70,6 +70,7 @@
     if (activeConnection) {
       metadata = parameterMetadataSnapshot(ALL_PARAMETER_SYMBOLS);
       values = parameterValueSnapshot(ALL_PARAMETER_SYMBOLS);
+      drafts = parameterDraftSnapshot(ALL_PARAMETER_SYMBOLS);
     }
 
     if (!activeConnection) {
