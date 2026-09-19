@@ -11,7 +11,14 @@
   } from "../parameters/api";
   import type { ParameterMetadata, ParameterValue } from "../parameters/types";
   import { modifiedParameterIds } from "../parameters/persistence";
-  import MotionCompactEditor from "../analysis/tuning/MotionCompactEditor.svelte";
+  import {
+    executeMotion,
+    initializeMotion,
+    motionState,
+    stopMotionExecution,
+    updateMotion,
+  } from "../motion/store";
+  import type { MotionMode, MotionState } from "../motion/types";
 
   type Props = {
     connection: ConnectionInfo | undefined;
@@ -26,6 +33,7 @@
     gains: string[];
   };
 
+  const MOTOR_ENABLED = 1;
   const MOTOR_RUN = 2;
 
   const CURRENT_BW = "PARAM_CTRL_CURRENT_BW_HZ";
@@ -71,9 +79,13 @@
   let drafts = $state<Record<string, string>>({});
   let writing = $state<Set<string>>(new Set());
   let loading = $state(false);
+  let motionActionBusy = $state(false);
+  let copyAccelToDecel = $state(false);
   let generation = 0;
 
   onMount(() => {
+    void initializeMotion().catch(onError);
+
     let disposed = false;
     let unlisten: (() => void) | undefined;
     onParametersRefreshed(() => void refreshFromCache())
@@ -277,6 +289,82 @@
   function gainRefresh(spec: LoopSpec): string[] {
     return [spec.source, ...spec.gains, spec.bandwidth];
   }
+
+  const motionModeLabels: Record<MotionMode, string> = {
+    position: "Position",
+    speed: "Speed",
+    "sensorless-speed": "Sensorless Speed",
+    torque: "Torque",
+    mit: "MIT",
+  };
+
+  function motionModeSupported(mode: MotionMode): boolean {
+    const caps = connection?.motion;
+    if (!caps) return false;
+    if (mode === "position") return caps.position;
+    if (mode === "speed") return caps.speed;
+    if (mode === "sensorless-speed") return caps.sensorlessSpeed;
+    if (mode === "torque") return caps.torque;
+    return caps.mit;
+  }
+
+  function motionNumber(event: Event): number {
+    return Number((event.currentTarget as HTMLInputElement).value);
+  }
+
+  function updateMotionField<K extends keyof MotionState>(key: K, value: MotionState[K]) {
+    void updateMotion(key, value).catch(onError);
+  }
+
+  function updateAcceleration(value: number) {
+    updateMotionField("acceleration", value);
+    if (copyAccelToDecel) updateMotionField("deceleration", value);
+  }
+
+  function toggleCopyAccelToDecel(checked: boolean) {
+    copyAccelToDecel = checked;
+    if (checked) updateMotionField("deceleration", $motionState.acceleration);
+  }
+
+  function canRunMotion(): boolean {
+    return !!connection
+      && motorState === MOTOR_ENABLED
+      && !motionActionBusy
+      && !hasDirtyDraft()
+      && connection.motion.run
+      && motionModeSupported($motionState.mode);
+  }
+
+  function canStopMotion(): boolean {
+    return !!connection
+      && motorState === MOTOR_RUN
+      && !motionActionBusy
+      && connection.motion.stop;
+  }
+
+  async function runTuningMotion() {
+    if (!canRunMotion()) return;
+    motionActionBusy = true;
+    try {
+      await executeMotion();
+    } catch (error) {
+      onError(error);
+    } finally {
+      motionActionBusy = false;
+    }
+  }
+
+  async function stopTuningMotion() {
+    if (!canStopMotion()) return;
+    motionActionBusy = true;
+    try {
+      await stopMotionExecution();
+    } catch (error) {
+      onError(error);
+    } finally {
+      motionActionBusy = false;
+    }
+  }
 </script>
 
 <div class="tuning-root">
@@ -299,7 +387,249 @@
             </div>
           </section>
 
-          <MotionCompactEditor capabilities={connection.motion} {onError} />
+          <section class="motion-panel">
+            <div class="section-title motion-title">Motion Command</div>
+
+            <div class="motion-toolbar">
+              <label class="motion-mode">
+                <span>Mode</span>
+                <select
+                  class="compact-select motion-mode-select"
+                  value={$motionState.mode}
+                  disabled={motorState === MOTOR_RUN || motionActionBusy}
+                  onchange={(event) => updateMotionField("mode", (event.currentTarget as HTMLSelectElement).value as MotionMode)}
+                >
+                  {#each Object.entries(motionModeLabels) as [value, labelText]}
+                    <option value={value} disabled={!motionModeSupported(value as MotionMode)}>{labelText}</option>
+                  {/each}
+                </select>
+              </label>
+
+              {#if $motionState.mode === "position"}
+                <div class="position-mode-options" aria-label="Position command mode">
+                  <label>
+                    <input
+                      type="radio"
+                      name="tuning-position-command"
+                      checked={$motionState.positionCommand === "incremental"}
+                      disabled={motorState === MOTOR_RUN || motionActionBusy}
+                      onchange={() => updateMotionField("positionCommand", "incremental")}
+                    />
+                    Incremental
+                  </label>
+                  <label>
+                    <input
+                      type="radio"
+                      name="tuning-position-command"
+                      checked={$motionState.positionCommand === "absolute"}
+                      disabled={motorState === MOTOR_RUN || motionActionBusy}
+                      onchange={() => updateMotionField("positionCommand", "absolute")}
+                    />
+                    Absolute
+                  </label>
+                  <label>
+                    <input
+                      type="checkbox"
+                      checked={$motionState.repeat}
+                      disabled={motorState === MOTOR_RUN || motionActionBusy}
+                      onchange={(event) => updateMotionField("repeat", (event.currentTarget as HTMLInputElement).checked)}
+                    />
+                    Repeat
+                  </label>
+                </div>
+              {/if}
+            </div>
+
+            {#if $motionState.mode === "position"}
+              <div class="motion-grid">
+                <label>
+                  <span>Position</span>
+                  <span class="motion-editor">
+                    <input
+                      class="compact-input mono"
+                      type="number"
+                      value={$motionState.positionTargetTurn}
+                      disabled={motorState === MOTOR_RUN || motionActionBusy}
+                      oninput={(event) => updateMotionField("positionTargetTurn", motionNumber(event))}
+                    />
+                    <span class="unit">turn</span>
+                  </span>
+                </label>
+                <label>
+                  <span>Max Speed</span>
+                  <span class="motion-editor">
+                    <input
+                      class="compact-input mono"
+                      type="number"
+                      value={$motionState.positionMaxSpeed}
+                      disabled={motorState === MOTOR_RUN || motionActionBusy}
+                      oninput={(event) => updateMotionField("positionMaxSpeed", motionNumber(event))}
+                    />
+                    <span class="unit">rad/s</span>
+                  </span>
+                </label>
+                <label>
+                  <span>Accel</span>
+                  <span class="motion-editor">
+                    <input
+                      class="compact-input mono"
+                      type="number"
+                      value={$motionState.acceleration}
+                      disabled={motorState === MOTOR_RUN || motionActionBusy}
+                      oninput={(event) => updateAcceleration(motionNumber(event))}
+                    />
+                    <span class="unit">rad/s²</span>
+                  </span>
+                </label>
+                <label>
+                  <span>Decel</span>
+                  <span class="motion-editor">
+                    <input
+                      class="compact-input mono"
+                      type="number"
+                      value={$motionState.deceleration}
+                      disabled={motorState === MOTOR_RUN || motionActionBusy || copyAccelToDecel}
+                      oninput={(event) => updateMotionField("deceleration", motionNumber(event))}
+                    />
+                    <span class="unit">rad/s²</span>
+                  </span>
+                </label>
+              </div>
+            {:else if $motionState.mode === "speed" || $motionState.mode === "sensorless-speed"}
+              <div class="motion-grid">
+                <label>
+                  <span>Target Speed</span>
+                  <span class="motion-editor">
+                    <input
+                      class="compact-input mono"
+                      type="number"
+                      value={$motionState.mode === "speed" ? $motionState.speedTarget : $motionState.sensorlessSpeedTarget}
+                      disabled={motorState === MOTOR_RUN || motionActionBusy}
+                      oninput={(event) => $motionState.mode === "speed"
+                        ? updateMotionField("speedTarget", motionNumber(event))
+                        : updateMotionField("sensorlessSpeedTarget", motionNumber(event))}
+                    />
+                    <span class="unit">rad/s</span>
+                  </span>
+                </label>
+                <div></div>
+                <label>
+                  <span>Accel</span>
+                  <span class="motion-editor">
+                    <input
+                      class="compact-input mono"
+                      type="number"
+                      value={$motionState.acceleration}
+                      disabled={motorState === MOTOR_RUN || motionActionBusy}
+                      oninput={(event) => updateAcceleration(motionNumber(event))}
+                    />
+                    <span class="unit">rad/s²</span>
+                  </span>
+                </label>
+                <label>
+                  <span>Decel</span>
+                  <span class="motion-editor">
+                    <input
+                      class="compact-input mono"
+                      type="number"
+                      value={$motionState.deceleration}
+                      disabled={motorState === MOTOR_RUN || motionActionBusy || copyAccelToDecel}
+                      oninput={(event) => updateMotionField("deceleration", motionNumber(event))}
+                    />
+                    <span class="unit">rad/s²</span>
+                  </span>
+                </label>
+              </div>
+            {:else if $motionState.mode === "torque"}
+              <div class="motion-grid">
+                <label>
+                  <span>Torque</span>
+                  <span class="motion-editor">
+                    <input
+                      class="compact-input mono"
+                      type="number"
+                      value={$motionState.torqueTargetNm}
+                      disabled={motorState === MOTOR_RUN || motionActionBusy}
+                      oninput={(event) => updateMotionField("torqueTargetNm", motionNumber(event))}
+                    />
+                    <span class="unit">N·m</span>
+                  </span>
+                </label>
+                <label>
+                  <span>Ramp</span>
+                  <span class="motion-editor">
+                    <input
+                      class="compact-input mono"
+                      type="number"
+                      value={$motionState.torqueRampNmPerS}
+                      disabled={motorState === MOTOR_RUN || motionActionBusy}
+                      oninput={(event) => updateMotionField("torqueRampNmPerS", motionNumber(event))}
+                    />
+                    <span class="unit">N·m/s</span>
+                  </span>
+                </label>
+              </div>
+            {:else}
+              <div class="motion-grid">
+                <label>
+                  <span>Position</span>
+                  <span class="motion-editor">
+                    <input class="compact-input mono" type="number" value={$motionState.mitPositionRef} disabled={motorState === MOTOR_RUN || motionActionBusy} oninput={(event) => updateMotionField("mitPositionRef", motionNumber(event))} />
+                    <span class="unit">turn</span>
+                  </span>
+                </label>
+                <label>
+                  <span>Velocity</span>
+                  <span class="motion-editor">
+                    <input class="compact-input mono" type="number" value={$motionState.mitVelocityRef} disabled={motorState === MOTOR_RUN || motionActionBusy} oninput={(event) => updateMotionField("mitVelocityRef", motionNumber(event))} />
+                    <span class="unit">rad/s</span>
+                  </span>
+                </label>
+                <label>
+                  <span>Kp</span>
+                  <span class="motion-editor"><input class="compact-input mono" type="number" value={$motionState.mitKp} disabled={motorState === MOTOR_RUN || motionActionBusy} oninput={(event) => updateMotionField("mitKp", motionNumber(event))} /></span>
+                </label>
+                <label>
+                  <span>Kd</span>
+                  <span class="motion-editor"><input class="compact-input mono" type="number" value={$motionState.mitKd} disabled={motorState === MOTOR_RUN || motionActionBusy} oninput={(event) => updateMotionField("mitKd", motionNumber(event))} /></span>
+                </label>
+              </div>
+            {/if}
+
+            <div class="motion-footer">
+              {#if $motionState.mode === "position" || $motionState.mode === "speed" || $motionState.mode === "sensorless-speed"}
+                <label class="copy-decel">
+                  <input
+                    type="checkbox"
+                    checked={copyAccelToDecel}
+                    disabled={motorState === MOTOR_RUN || motionActionBusy}
+                    onchange={(event) => toggleCopyAccelToDecel((event.currentTarget as HTMLInputElement).checked)}
+                  />
+                  Copy Accel to Decel
+                </label>
+              {:else}
+                <span></span>
+              {/if}
+
+              <div class="motion-actions">
+                <vscode-button
+                  disabled={!canRunMotion()}
+                  title={hasDirtyDraft()
+                    ? "Commit or discard tuning edits first"
+                    : motorState !== MOTOR_ENABLED
+                      ? "Enable motor first"
+                      : "Run motion"}
+                  onclick={() => void runTuningMotion()}
+                >Run</vscode-button>
+                <vscode-button
+                  secondary
+                  disabled={!canStopMotion()}
+                  title="Stop current motion and return to ENABLED"
+                  onclick={() => void stopTuningMotion()}
+                >Stop</vscode-button>
+              </div>
+            </div>
+          </section>
         </div>
 
         <aside class="parameter-column">
@@ -474,6 +804,94 @@
     font-size: 24px;
   }
 
+  .motion-panel {
+    border: 1px solid var(--vscode-panel-border);
+    border-radius: 4px;
+    background: color-mix(in srgb, var(--vscode-editor-background) 96%, var(--vscode-foreground) 4%);
+    padding: 14px;
+  }
+
+  .motion-title {
+    font-size: 16px;
+    margin-bottom: 14px;
+  }
+
+  .motion-toolbar {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    gap: 18px;
+    margin-bottom: 12px;
+  }
+
+  .motion-mode {
+    display: flex;
+    align-items: center;
+    gap: 10px;
+    color: var(--vscode-descriptionForeground);
+    font-size: 12px;
+  }
+
+  .motion-mode-select {
+    min-width: 130px;
+  }
+
+  .position-mode-options {
+    display: flex;
+    align-items: center;
+    gap: 18px;
+    color: var(--vscode-descriptionForeground);
+    font-size: 12px;
+  }
+
+  .position-mode-options label,
+  .copy-decel {
+    display: inline-flex;
+    align-items: center;
+    gap: 6px;
+  }
+
+  .motion-grid {
+    display: grid;
+    grid-template-columns: repeat(2, minmax(0, 1fr));
+    gap: 10px 22px;
+  }
+
+  .motion-grid > label {
+    display: grid;
+    grid-template-columns: 88px minmax(0, 1fr);
+    align-items: center;
+    gap: 10px;
+    color: var(--vscode-descriptionForeground);
+    font-size: 12px;
+  }
+
+  .motion-editor {
+    display: grid;
+    grid-template-columns: minmax(100px, 1fr) auto;
+    align-items: center;
+    gap: 8px;
+  }
+
+  .motion-footer {
+    margin-top: 14px;
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    gap: 16px;
+  }
+
+  .copy-decel {
+    color: var(--vscode-descriptionForeground);
+    font-size: 12px;
+  }
+
+  .motion-actions {
+    display: flex;
+    align-items: center;
+    gap: 8px;
+  }
+
   .parameter-column {
     display: grid;
     gap: 10px;
@@ -554,5 +972,14 @@
       grid-template-columns: 1fr;
     }
 
+    .motion-grid {
+      grid-template-columns: 1fr;
+    }
+
+    .motion-toolbar,
+    .motion-footer {
+      align-items: flex-start;
+      flex-direction: column;
+    }
   }
 </style>
