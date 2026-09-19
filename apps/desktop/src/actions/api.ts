@@ -1,9 +1,11 @@
 import { invoke } from "@tauri-apps/api/core";
 import { listen, type UnlistenFn } from "@tauri-apps/api/event";
 import type { ActionCompletion, ActionHandle, ActionMetadata } from "./types";
+import type { PreflightIssue } from "../preflight/api";
 
 export type IdentificationKind = "rsLs" | "flux" | "jb";
 export type IdentificationStartResult =
+  | { status: "blocked"; issues: PreflightIssue[] }
   | { status: "requires_enable" }
   | { status: "started"; handle: ActionHandle };
 

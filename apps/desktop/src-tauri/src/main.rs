@@ -140,6 +140,7 @@ impl From<&ActionMetadata> for ActionMetadataDto {
 #[derive(Debug, Serialize)]
 #[serde(tag = "status", rename_all = "snake_case")]
 enum IdentificationStartDto {
+    Blocked { issues: Vec<PreflightIssueDto> },
     RequiresEnable,
     Started { handle: ActionHandleDto },
 }
@@ -603,6 +604,16 @@ fn identification_start(
         .identification_start(kind_value, allow_enable)
         .map_err(|error| error.to_string())?
     {
+        IdentificationStart::Blocked(issues) => Ok(IdentificationStartDto::Blocked {
+            issues: issues
+                .into_iter()
+                .map(|issue| PreflightIssueDto {
+                    parameter_id: issue.parameter_id,
+                    reason: issue.reason,
+                    suggested_domain: preflight_domain_name(issue.suggested_domain),
+                })
+                .collect(),
+        }),
         IdentificationStart::RequiresEnable => Ok(IdentificationStartDto::RequiresEnable),
         IdentificationStart::Started(handle) => {
             let dto = action_handle_dto(handle, symbol.to_owned());

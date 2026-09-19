@@ -381,12 +381,29 @@
       }
 
       let result = await startIdentificationAction(identKey, false);
+      if (result.status === "blocked") {
+        setIdentState(
+          identKey,
+          "failed",
+          result.issues.map((issue) => issue.reason).join("\n"),
+        );
+        return;
+      }
+
       if (result.status === "requires_enable") {
         const confirmed = window.confirm(
           `${actionLabel(config.startAction)} identification requires enabling the motor.\n\nEnable motor and continue?`,
         );
         if (!confirmed) return;
         result = await startIdentificationAction(identKey, true);
+        if (result.status === "blocked") {
+          setIdentState(
+            identKey,
+            "failed",
+            result.issues.map((issue) => issue.reason).join("\n"),
+          );
+          return;
+        }
       }
 
       if (result.status !== "started") return;
