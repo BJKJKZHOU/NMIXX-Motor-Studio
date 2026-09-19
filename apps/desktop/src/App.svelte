@@ -65,10 +65,6 @@
     errorText = error instanceof Error ? error.message : String(error);
   }
 
-  function updateScopeSummary(summary: ScopeSummary) {
-    scopeSummary = summary;
-  }
-
   async function setConnection(next: ConnectionInfo | undefined) {
     connection = next;
     errorText = "";
@@ -335,7 +331,7 @@
           </section>
         {/if}
         <div class:inactive={activePage !== "analysis"} class="scope-page-container">
-          <ScopePage {connection} active={activePage === "analysis"} onSummary={updateScopeSummary} onError={setError} />
+          <ScopePage {connection} active={activePage === "analysis"} onSummary={(summary) => scopeSummary = summary} onError={setError} />
         </div>
         {#if errorText}<div class="error-text app-error">{errorText}</div>{/if}
     </main>
