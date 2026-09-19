@@ -269,11 +269,14 @@
     const meta = metadata[symbol];
     if (!meta || meta.typeName !== "u8" || !isWritable(symbol) || writing.has(symbol)) return;
 
+    const previous = values[symbol] ?? null;
+    values = { ...values, [symbol]: { type: "u8", value } };
     writing = new Set(writing).add(symbol);
     try {
       await writeParameter(meta.id, { type: "u8", value });
       await refreshValues();
     } catch (error) {
+      values = { ...values, [symbol]: previous };
       onError(error);
     } finally {
       const next = new Set(writing);
@@ -286,11 +289,15 @@
     const meta = metadata[MOTOR_DIR_SYMBOL];
     if (!meta || !isWritable(MOTOR_DIR_SYMBOL) || writing.has(MOTOR_DIR_SYMBOL)) return;
 
+    const nextValue = direction === "normal" ? 1 : -1;
+    const previous = values[MOTOR_DIR_SYMBOL] ?? null;
+    values = { ...values, [MOTOR_DIR_SYMBOL]: { type: "i8", value: nextValue } };
     writing = new Set(writing).add(MOTOR_DIR_SYMBOL);
     try {
-      await writeParameter(meta.id, { type: "i8", value: direction === "normal" ? 1 : -1 });
+      await writeParameter(meta.id, { type: "i8", value: nextValue });
       await refreshValues();
     } catch (error) {
+      values = { ...values, [MOTOR_DIR_SYMBOL]: previous };
       onError(error);
     } finally {
       const next = new Set(writing);
