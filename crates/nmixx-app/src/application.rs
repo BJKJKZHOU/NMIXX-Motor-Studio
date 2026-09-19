@@ -459,8 +459,17 @@ impl ApplicationSession {
             0.0
         };
 
+        let scope_exists = self
+            .inner
+            .scope
+            .lock()
+            .map_err(|_| ApplicationError::Poisoned)?
+            .is_some();
+        if scope_exists {
+            self.scope_stop()?;
+        }
+
         self.scope_configure(&selections, TUNING_HISTORY, 2)?;
-        self.scope_stop()?;
         self.scope_clear()?;
         self.scope_live()?;
 
