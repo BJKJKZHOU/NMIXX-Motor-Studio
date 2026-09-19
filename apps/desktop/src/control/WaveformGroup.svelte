@@ -15,7 +15,7 @@
   let resizeObserver: ResizeObserver | undefined;
 
   $: rebuildKey = channels.map((channel) => channel.id).join(",");
-  $: if (host && rebuildKey) updatePlot();
+  $: if (host && rebuildKey && series) updatePlot();
 
   function alignedData(): uPlot.AlignedData {
     const first = series.find((entry) => entry.id === channels[0]?.id);
