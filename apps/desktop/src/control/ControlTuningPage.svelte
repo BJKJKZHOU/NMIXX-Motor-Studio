@@ -355,7 +355,7 @@
   }
 
   function motionLocked(): boolean {
-    return motionLocked() || experimentActive();
+    return motorState === MOTOR_RUN || motionActionBusy || experimentActive();
   }
 
   async function refreshExperiment() {
