@@ -5,7 +5,7 @@ use nmixx_app::{
     ActionHandle, ActionMetadata, ApplicationSession, AxdrStatus, DEFAULT_USB_BAUD, HostSchema,
     IdentificationKind, IdentificationStart, MotionCapabilities, MotionConfig, MotionPreview, MotionService,
     ParameterMetadata, ParameterValue, PositionValue, PreflightDomain, RangeMetadata,
-    SchemaNumber, ScopeRate, ScopeSelection, StreamState,
+    SchemaNumber, ScopeRate, ScopeSelection, StreamState, TuningExperimentState,
 };
 use serde::{Deserialize, Serialize};
 use tauri::{Emitter, State};
@@ -296,12 +296,38 @@ struct ScopeSnapshotDto {
     series: Vec<ScopeSeriesDto>,
 }
 
+#[derive(Debug, Serialize)]
+#[serde(rename_all = "camelCase")]
+struct TuningExperimentStatusDto {
+    state: &'static str,
+    message: Option<String>,
+}
+
+#[derive(Debug, Serialize)]
+#[serde(rename_all = "camelCase")]
+struct TuningExperimentSnapshotDto {
+    status: TuningExperimentStatusDto,
+    config: ScopeConfigDto,
+    snapshot: ScopeSnapshotDto,
+}
+
 fn stream_state_name(state: StreamState) -> &'static str {
     match state {
         StreamState::Stopped => "STOPPED",
         StreamState::Live => "LIVE",
         StreamState::Capturing => "CAPTURING",
         StreamState::Paused => "PAUSED",
+    }
+}
+
+fn tuning_experiment_state_name(state: TuningExperimentState) -> &'static str {
+    match state {
+        TuningExperimentState::Idle => "IDLE",
+        TuningExperimentState::Preparing => "PREPARING",
+        TuningExperimentState::Running => "RUNNING",
+        TuningExperimentState::Stopping => "STOPPING",
+        TuningExperimentState::Completed => "COMPLETED",
+        TuningExperimentState::Failed => "FAILED",
     }
 }
 
@@ -766,6 +792,117 @@ fn motion_stop(state: State<'_, Mutex<DesktopState>>) -> Result<(), String> {
 }
 
 #[tauri::command]
+fn tuning_experiment_start(
+    state: State<'_, Mutex<DesktopState>>,
+) -> Result<TuningExperimentStatusDto, String> {
+    let status = application(&state)?
+        .tuning_experiment_start()
+        .map_err(|error| error.to_string())?;
+    Ok(TuningExperimentStatusDto {
+        state: tuning_experiment_state_name(status.state),
+        message: status.message,
+    })
+}
+
+#[tauri::command]
+fn tuning_experiment_stop(
+    state: State<'_, Mutex<DesktopState>>,
+) -> Result<TuningExperimentStatusDto, String> {
+    let status = application(&state)?
+        .tuning_experiment_stop()
+        .map_err(|error| error.to_string())?;
+    Ok(TuningExperimentStatusDto {
+        state: tuning_experiment_state_name(status.state),
+        message: status.message,
+    })
+}
+
+#[tauri::command]
+fn tuning_experiment_status(
+    state: State<'_, Mutex<DesktopState>>,
+) -> Result<TuningExperimentStatusDto, String> {
+    let status = application(&state)?
+        .tuning_experiment_status()
+        .map_err(|error| error.to_string())?;
+    Ok(TuningExperimentStatusDto {
+        state: tuning_experiment_state_name(status.state),
+        message: status.message,
+    })
+}
+
+#[tauri::command]
+fn tuning_experiment_snapshot(
+    state: State<'_, Mutex<DesktopState>>,
+    max_points: Option<usize>,
+) -> Result<TuningExperimentSnapshotDto, String> {
+    let app = application(&state)?;
+    let result = app
+        .tuning_experiment_snapshot()
+        .map_err(|error| error.to_string())?;
+    let scope_status = app.scope_status().map_err(|error| error.to_string())?;
+    let max_points = max_points.unwrap_or(5000).clamp(200, 20_000);
+
+    let config = ScopeConfigDto {
+        history_seconds: result.config.history.as_secs_f64(),
+        channels: result
+            .config
+            .channels
+            .iter()
+            .map(|channel| ScopeChannelDto {
+                id: channel.id,
+                label: channel.label.clone(),
+                unit: channel.unit.clone(),
+                rate: match channel.rate {
+                    ScopeRate::Fast => "fast",
+                    ScopeRate::Normal => "normal",
+                },
+                sample_rate_hz: channel.sample_rate_hz,
+            })
+            .collect(),
+    };
+
+    let series = result
+        .snapshot
+        .series
+        .into_iter()
+        .map(|series| {
+            let sample_count = series.values.len();
+            let stride = sample_count.div_ceil(max_points).max(1);
+            let mut times = Vec::with_capacity(sample_count.div_ceil(stride));
+            let mut values = Vec::with_capacity(sample_count.div_ceil(stride));
+
+            for index in (0..sample_count).step_by(stride) {
+                let t = (index as f64 - sample_count.saturating_sub(1) as f64)
+                    / f64::from(series.sample_rate_hz);
+                times.push(t);
+                values.push(series.values[index]);
+            }
+
+            ScopeSeriesDto {
+                id: series.id,
+                sample_rate_hz: series.sample_rate_hz,
+                times,
+                values,
+            }
+        })
+        .collect();
+
+    Ok(TuningExperimentSnapshotDto {
+        status: TuningExperimentStatusDto {
+            state: tuning_experiment_state_name(result.status.state),
+            message: result.status.message,
+        },
+        config,
+        snapshot: ScopeSnapshotDto {
+            sample_count: scope_status.samples,
+            lost_frames: result.snapshot.lost_frames,
+            state: stream_state_name(result.snapshot.state),
+            series,
+        },
+    })
+}
+
+#[tauri::command]
 fn scope_configure(
     state: State<'_, Mutex<DesktopState>>,
     selections: Vec<ScopeSelectionDto>,
@@ -935,6 +1072,10 @@ fn main() {
             motion_preview,
             motion_run,
             motion_stop,
+            tuning_experiment_start,
+            tuning_experiment_stop,
+            tuning_experiment_status,
+            tuning_experiment_snapshot,
             scope_configure,
             scope_live,
             scope_pause,
