@@ -1,7 +1,7 @@
 <script lang="ts">
   import { untrack } from "svelte";
   import type { ConnectionInfo } from "../connection/types";
-  import { listParameters, onParametersRefreshed, readParameter, readParameters, writeParameter } from "../parameters/api";
+  import { listParameters, readParameter, readParameters, writeParameter } from "../parameters/api";
   import type { ParameterMetadata, ParameterValue } from "../parameters/types";
   import { modifiedParameterIds } from "../parameters/persistence";
   import { listActions, onActionCompleted } from "../actions/api";
@@ -147,10 +147,6 @@
     return candidates.filter((option) => allowed.has(option.symbol));
   }
 
-  function encoderProtocol(): number | null {
-    return numericValue(ENCODER_PROTOCOL_SYMBOL);
-  }
-
   function isSpiProtocol(): boolean {
     return encoderProtocolValue === 1;
   }
@@ -159,10 +155,6 @@
     const valid = numericValue(ZERO_VALID_SYMBOL);
     if (valid === null) return "—";
     return valid === 1 ? "Set" : "Not set";
-  }
-
-  function motorDirection(): "normal" | "reversed" {
-    return numericValue(MOTOR_DIR_SYMBOL) === -1 ? "reversed" : "normal";
   }
 
   function parameterValue(meta: ParameterMetadata, text: string): ParameterValue {
