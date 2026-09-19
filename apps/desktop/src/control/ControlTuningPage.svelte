@@ -112,7 +112,7 @@
   }
 
   function label(symbol: string): string {
-    return metadata[symbol]?.label ?? symbol;
+    return metadata[symbol]?.label ?? "Unavailable";
   }
 
   function unit(symbol: string): string {
@@ -159,14 +159,14 @@
 
   function parseValue(meta: ParameterMetadata, text: string): ParameterValue {
     const parsed = Number(text.trim());
-    if (!Number.isFinite(parsed)) throw new Error(`${meta.symbol}: value must be finite.`);
+    if (!Number.isFinite(parsed)) throw new Error(`${meta.label}: value must be finite.`);
 
     if (meta.typeName === "f32") return { type: "f32", value: parsed };
     if (meta.typeName === "u8") {
-      if (!Number.isInteger(parsed) || parsed < 0 || parsed > 255) throw new Error(`${meta.symbol}: expected u8.`);
+      if (!Number.isInteger(parsed) || parsed < 0 || parsed > 255) throw new Error(`${meta.label}: expected u8.`);
       return { type: "u8", value: parsed };
     }
-    throw new Error(`${meta.symbol}: unsupported tuning type ${meta.typeName}.`);
+    throw new Error(`${meta.label}: unsupported tuning type ${meta.typeName}.`);
   }
 
   function applyValues(entries: ParameterMetadata[], results: Awaited<ReturnType<typeof readParameters>>) {

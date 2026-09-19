@@ -196,11 +196,11 @@
   }
 
   function parameterLabel(symbol: string): string {
-    return metadata[symbol]?.label ?? symbol;
+    return metadata[symbol]?.label ?? "Unavailable";
   }
 
   function actionLabel(symbol: string): string {
-    return actions[symbol]?.label ?? symbol;
+    return actions[symbol]?.label ?? "Unavailable";
   }
 
   function isWritable(symbol: string): boolean {
@@ -209,13 +209,13 @@
 
   function parameterValue(meta: ParameterMetadata, text: string): ParameterValue {
     const parsed = Number(text.trim());
-    if (!Number.isFinite(parsed)) throw new Error(`${meta.symbol}: value must be finite.`);
+    if (!Number.isFinite(parsed)) throw new Error(`${meta.label}: value must be finite.`);
     if (meta.typeName === "u8") {
-      if (!Number.isInteger(parsed) || parsed < 0 || parsed > 255) throw new Error(`${meta.symbol}: expected u8.`);
+      if (!Number.isInteger(parsed) || parsed < 0 || parsed > 255) throw new Error(`${meta.label}: expected u8.`);
       return { type: "u8", value: parsed };
     }
     if (meta.typeName === "f32") return { type: "f32", value: parsed };
-    throw new Error(`${meta.symbol}: Motor page does not edit ${meta.typeName}.`);
+    throw new Error(`${meta.label}: Motor page does not edit ${meta.typeName}.`);
   }
 
   function applyValues(entries: ParameterMetadata[], results: Awaited<ReturnType<typeof readParameters>>) {
