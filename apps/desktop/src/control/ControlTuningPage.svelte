@@ -11,6 +11,7 @@
   } from "../parameters/api";
   import type { ParameterMetadata, ParameterValue } from "../parameters/types";
   import { modifiedParameterIds } from "../parameters/persistence";
+  import MotionCompactEditor from "../analysis/tuning/MotionCompactEditor.svelte";
 
   type Props = {
     connection: ConnectionInfo | undefined;
@@ -298,53 +299,7 @@
             </div>
           </section>
 
-          <section class="motion-panel">
-            <div class="section-title">Motion Command</div>
-
-            <div class="motion-toolbar">
-              <label class="motion-mode">
-                <span>Mode</span>
-                <select class="compact-select" disabled title="Motion experiment API is not implemented yet">
-                  <option>Position</option>
-                </select>
-              </label>
-
-              <div class="position-mode-options" aria-label="Position command mode">
-                <label><input type="radio" checked disabled /> Incremental</label>
-                <label><input type="radio" disabled /> Absolute</label>
-                <label><input type="checkbox" disabled /> Repeat</label>
-              </div>
-            </div>
-
-            <div class="motion-grid">
-              <label>
-                <span>Position</span>
-                <span class="motion-editor"><input class="compact-input mono" disabled /><span class="unit">turn</span></span>
-              </label>
-              <label>
-                <span>Max Speed</span>
-                <span class="motion-editor"><input class="compact-input mono" disabled /><span class="unit">rad/s</span></span>
-              </label>
-              <label>
-                <span>Accel</span>
-                <span class="motion-editor"><input class="compact-input mono" disabled /><span class="unit">rad/s²</span></span>
-              </label>
-              <label>
-                <span>Decel</span>
-                <span class="motion-editor"><input class="compact-input mono" disabled /><span class="unit">rad/s²</span></span>
-              </label>
-            </div>
-
-            <div class="motion-footer">
-              <label class="copy-decel"><input type="checkbox" disabled /> Copy Accel to Decel</label>
-              <div class="motion-actions">
-                <vscode-button disabled title={hasDirtyDraft() ? "Commit or discard edited values first" : "Tuning experiment engine is not implemented yet"}>Run</vscode-button>
-                <vscode-button secondary disabled title="Stops the same Application motor/task operation as the global Stop control">Stop</vscode-button>
-              </div>
-            </div>
-
-            <div class="motion-note">Motion fields are layout placeholders until the firmware/Application experiment contract is exposed.</div>
-          </section>
+          <MotionCompactEditor capabilities={connection.motion} {onError} />
         </div>
 
         <aside class="parameter-column">
@@ -491,15 +446,13 @@
   }
 
   .waveform-panel,
-  .motion-panel,
   .tuning-section {
     border: 1px solid var(--vscode-panel-border);
     border-radius: 4px;
     background: color-mix(in srgb, var(--vscode-editor-background) 96%, var(--vscode-foreground) 4%);
   }
 
-  .waveform-panel,
-  .motion-panel {
+  .waveform-panel {
     padding: 14px;
   }
 
@@ -519,88 +472,6 @@
 
   .reserved-panel .codicon {
     font-size: 24px;
-  }
-
-  .motion-toolbar {
-    display: flex;
-    align-items: center;
-    justify-content: space-between;
-    gap: 18px;
-    margin-bottom: 10px;
-  }
-
-  .motion-mode {
-    display: flex;
-    align-items: center;
-    gap: 9px;
-    color: var(--vscode-descriptionForeground);
-    font-size: 12px;
-  }
-
-  .motion-mode .compact-select {
-    min-width: 130px;
-  }
-
-  .position-mode-options {
-    display: flex;
-    align-items: center;
-    gap: 14px;
-    color: var(--vscode-descriptionForeground);
-    font-size: 12px;
-  }
-
-  .position-mode-options label,
-  .copy-decel {
-    display: inline-flex;
-    align-items: center;
-    gap: 6px;
-  }
-
-  .motion-grid {
-    display: grid;
-    grid-template-columns: repeat(2, minmax(0, 1fr));
-    gap: 8px 18px;
-  }
-
-  .motion-grid > label {
-    display: grid;
-    grid-template-columns: 86px minmax(0, 1fr);
-    align-items: center;
-    gap: 8px;
-    color: var(--vscode-descriptionForeground);
-    font-size: 12px;
-  }
-
-  .motion-editor {
-    display: grid;
-    grid-template-columns: minmax(90px, 1fr) auto;
-    align-items: center;
-    gap: 7px;
-  }
-
-  .motion-footer {
-    margin-top: 11px;
-    display: flex;
-    align-items: center;
-    justify-content: space-between;
-    gap: 16px;
-  }
-
-  .copy-decel {
-    color: var(--vscode-descriptionForeground);
-    font-size: 12px;
-  }
-
-  .motion-actions {
-    display: flex;
-    align-items: center;
-    gap: 8px;
-  }
-
-  .motion-note {
-    margin-top: 8px;
-    color: var(--vscode-descriptionForeground);
-    font-size: 10px;
   }
 
   .parameter-column {
@@ -683,14 +554,5 @@
       grid-template-columns: 1fr;
     }
 
-    .motion-grid {
-      grid-template-columns: 1fr;
-    }
-
-    .motion-toolbar,
-    .motion-footer {
-      align-items: flex-start;
-      flex-direction: column;
-    }
   }
 </style>
