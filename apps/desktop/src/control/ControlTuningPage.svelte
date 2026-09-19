@@ -158,7 +158,10 @@
   }
 
   function locked(symbol: string): boolean {
-    return motorState === MOTOR_RUN || writing.has(symbol) || !writable(symbol);
+    return experimentActive()
+      || motorState === MOTOR_RUN
+      || writing.has(symbol)
+      || !writable(symbol);
   }
 
   function dirty(symbol: string): boolean {
@@ -679,9 +682,11 @@
                   disabled={!canRunMotion()}
                   title={hasDirtyDraft()
                     ? "Commit or discard tuning edits first"
-                    : motorState !== MOTOR_ENABLED
-                      ? "Enable motor first"
-                      : "Run motion"}
+                    : experimentActive()
+                      ? "Tuning experiment is already running"
+                      : motorState !== MOTOR_ENABLED
+                        ? "Enable motor first"
+                        : "Run tuning experiment"}
                   onclick={() => void runTuningMotion()}
                 >Run</vscode-button>
                 <vscode-button
