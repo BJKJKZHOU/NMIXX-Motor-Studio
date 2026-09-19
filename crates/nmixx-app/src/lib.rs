@@ -4,8 +4,15 @@
 //! this layer. A `DeviceSession` owns one transport and exposes shared
 //! application-facing access to that device.
 
+mod application;
+mod config_service;
+mod motor_actions;
+mod preflight;
 mod connection;
 mod parameter_service;
+mod motion;
+mod mixed_scope;
+mod motion_capabilities;
 mod plot_capabilities;
 mod schema;
 mod schema_store;
@@ -14,8 +21,23 @@ mod session;
 mod stream;
 mod stream_pipeline;
 
+pub use application::{ApplicationError, ApplicationSession};
+pub use config_service::{ConfigService, ConfigServiceError};
 pub use connection::DEFAULT_USB_BAUD;
 pub use parameter_service::{ParameterService, ParameterServiceError};
+pub use motion::{
+    MotionConfig, MotionMode, MotionPreview, MotionService, PositionCommand, SCurveMode,
+    TrajectoryType,
+};
+pub use motion_capabilities::MotionCapabilities;
+pub use motor_actions::{MotorActionError, MotorActionService};
+pub use mixed_scope::{
+    MixedScopeChannel, MixedScopeConfig, MixedScopeError, MixedScopeSeries, MixedScopeSession,
+    MixedScopeSnapshot, MixedScopeStatus, ScopeRate, ScopeSelection,
+};
+pub use preflight::{
+    IdentificationKind, PreflightDomain, PreflightError, PreflightIssue, PreflightService,
+};
 pub use plot_capabilities::{
     DevicePlotCapabilities, DevicePlotChannel, PlotCapabilitiesError, PlotChannelInfo,
 };

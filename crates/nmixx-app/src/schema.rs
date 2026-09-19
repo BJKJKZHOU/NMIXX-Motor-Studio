@@ -39,7 +39,7 @@ pub struct SchemaSource {
 #[derive(Debug, Clone, Deserialize)]
 pub struct ParameterMetadata {
     pub symbol: String,
-    #[serde(default)]
+    #[serde(rename = "label", default)]
     pub name: Option<String>,
     pub id: u16,
     #[serde(rename = "type")]
@@ -77,7 +77,7 @@ impl ParameterMetadata {
 #[derive(Debug, Clone, Deserialize)]
 pub struct ActionMetadata {
     pub symbol: String,
-    #[serde(default)]
+    #[serde(rename = "label", default)]
     pub name: Option<String>,
     pub id: u16,
     pub description: String,
@@ -161,6 +161,7 @@ parameter_schema = 1
 
 [[parameters]]
 symbol = "PARAM_MOTOR_RS"
+label = "Rs"
 id = 272
 type = "f32"
 access = "rw"
@@ -173,16 +174,18 @@ exclusive_min = true
 
 [[actions]]
 symbol = "ACTION_MOTOR_ENABLE"
+label = "Enable"
 id = 4097
 description = "Enable motor"
 "#,
         )
         .unwrap();
 
-        let parameter = schema.parameter_by_key("PARAM_MOTOR_RS").unwrap();
+        let parameter = schema.parameter_by_key("Rs").unwrap();
         assert_eq!(parameter.id, 272);
+        assert_eq!(parameter.name.as_deref(), Some("Rs"));
         assert_eq!(parameter.parameter_type().unwrap(), ParameterType::F32);
         assert!(parameter.range.as_ref().unwrap().exclusive_min);
-        assert_eq!(schema.action_by_id(4097).unwrap().symbol, "ACTION_MOTOR_ENABLE");
+        assert_eq!(schema.action_by_key("Enable").unwrap().symbol, "ACTION_MOTOR_ENABLE");
     }
 }
