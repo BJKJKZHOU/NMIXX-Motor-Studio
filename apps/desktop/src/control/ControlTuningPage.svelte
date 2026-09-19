@@ -12,13 +12,22 @@
   import type { ParameterMetadata, ParameterValue } from "../parameters/types";
   import { modifiedParameterIds } from "../parameters/persistence";
   import {
-    executeMotion,
     initializeMotion,
     motionState,
-    stopMotionExecution,
     updateMotion,
   } from "../motion/store";
   import type { MotionMode, MotionState } from "../motion/types";
+  import ExperimentWaveform from "./ExperimentWaveform.svelte";
+  import {
+    readTuningExperimentSnapshot,
+    startTuningExperiment,
+    stopTuningExperiment,
+    tuningExperimentStatus,
+  } from "./tuningExperiment";
+  import type {
+    TuningExperimentSnapshot,
+    TuningExperimentState,
+  } from "./tuningExperiment";
 
   type Props = {
     connection: ConnectionInfo | undefined;
@@ -81,10 +90,18 @@
   let loading = $state(false);
   let motionActionBusy = $state(false);
   let copyAccelToDecel = $state(false);
+  let experimentState = $state<TuningExperimentState>("IDLE");
+  let experimentMessage = $state("");
+  let experimentSnapshot = $state<TuningExperimentSnapshot | undefined>(undefined);
+  let experimentRefreshBusy = false;
+  let experimentTimer: ReturnType<typeof setInterval> | undefined;
   let generation = 0;
 
   onMount(() => {
     void initializeMotion().catch(onError);
+    void refreshExperiment();
+
+    experimentTimer = setInterval(() => void refreshExperiment(), 100);
 
     let disposed = false;
     let unlisten: (() => void) | undefined;
@@ -97,6 +114,8 @@
     return () => {
       disposed = true;
       unlisten?.();
+      if (experimentTimer) clearInterval(experimentTimer);
+      experimentTimer = undefined;
     };
   });
 
@@ -110,6 +129,9 @@
       drafts = {};
       writing = new Set();
       loading = false;
+      experimentState = "IDLE";
+      experimentMessage = "";
+      experimentSnapshot = undefined;
       return;
     }
 
@@ -326,10 +348,39 @@
     if (checked) updateMotionField("deceleration", $motionState.acceleration);
   }
 
+  function experimentActive(): boolean {
+    return experimentState === "PREPARING"
+      || experimentState === "RUNNING"
+      || experimentState === "STOPPING";
+  }
+
+  function motionLocked(): boolean {
+    return motionLocked() || experimentActive();
+  }
+
+  async function refreshExperiment() {
+    if (!connection || experimentRefreshBusy) return;
+    experimentRefreshBusy = true;
+    try {
+      const status = await tuningExperimentStatus();
+      experimentState = status.state;
+      experimentMessage = status.message ?? "";
+
+      if (status.state !== "IDLE") {
+        experimentSnapshot = await readTuningExperimentSnapshot();
+      }
+    } catch (error) {
+      if (experimentState !== "IDLE") onError(error);
+    } finally {
+      experimentRefreshBusy = false;
+    }
+  }
+
   function canRunMotion(): boolean {
     return !!connection
       && motorState === MOTOR_ENABLED
       && !motionActionBusy
+      && !experimentActive()
       && !hasDirtyDraft()
       && connection.motion.run
       && motionModeSupported($motionState.mode);
@@ -337,7 +388,7 @@
 
   function canStopMotion(): boolean {
     return !!connection
-      && motorState === MOTOR_RUN
+      && experimentActive()
       && !motionActionBusy
       && connection.motion.stop;
   }
@@ -346,7 +397,10 @@
     if (!canRunMotion()) return;
     motionActionBusy = true;
     try {
-      await executeMotion();
+      const status = await startTuningExperiment();
+      experimentState = status.state;
+      experimentMessage = status.message ?? "";
+      await refreshExperiment();
     } catch (error) {
       onError(error);
     } finally {
@@ -358,7 +412,10 @@
     if (!canStopMotion()) return;
     motionActionBusy = true;
     try {
-      await stopMotionExecution();
+      const status = await stopTuningExperiment();
+      experimentState = status.state;
+      experimentMessage = status.message ?? "";
+      await refreshExperiment();
     } catch (error) {
       onError(error);
     } finally {
@@ -380,11 +437,17 @@
       <div class="tuning-layout">
         <div class="experiment-column">
           <section class="waveform-panel">
-            <div class="section-title">Experiment Waveform</div>
-            <div class="reserved-panel">
-              <i class="codicon codicon-graph-line"></i>
-              <div>Finite tuning capture will use the shared Scope pipeline.</div>
+            <div class="waveform-heading">
+              <div class="section-title">Experiment Waveform</div>
+              <div class="experiment-status" class:failed={experimentState === "FAILED"}>
+                {experimentState}
+                {#if experimentSnapshot}
+                  <span>· loss {experimentSnapshot.snapshot.lostFrames}</span>
+                {/if}
+              </div>
             </div>
+            {#if experimentMessage}<div class="experiment-message">{experimentMessage}</div>{/if}
+            <ExperimentWaveform result={experimentSnapshot} />
           </section>
 
           <section class="motion-panel">
@@ -396,7 +459,7 @@
                 <select
                   class="compact-select motion-mode-select"
                   value={$motionState.mode}
-                  disabled={motorState === MOTOR_RUN || motionActionBusy}
+                  disabled={motionLocked()}
                   onchange={(event) => updateMotionField("mode", (event.currentTarget as HTMLSelectElement).value as MotionMode)}
                 >
                   {#each Object.entries(motionModeLabels) as [value, labelText]}
@@ -412,7 +475,7 @@
                       type="radio"
                       name="tuning-position-command"
                       checked={$motionState.positionCommand === "incremental"}
-                      disabled={motorState === MOTOR_RUN || motionActionBusy}
+                      disabled={motionLocked()}
                       onchange={() => updateMotionField("positionCommand", "incremental")}
                     />
                     Incremental
@@ -422,7 +485,7 @@
                       type="radio"
                       name="tuning-position-command"
                       checked={$motionState.positionCommand === "absolute"}
-                      disabled={motorState === MOTOR_RUN || motionActionBusy}
+                      disabled={motionLocked()}
                       onchange={() => updateMotionField("positionCommand", "absolute")}
                     />
                     Absolute
@@ -431,7 +494,7 @@
                     <input
                       type="checkbox"
                       checked={$motionState.repeat}
-                      disabled={motorState === MOTOR_RUN || motionActionBusy}
+                      disabled={motionLocked()}
                       onchange={(event) => updateMotionField("repeat", (event.currentTarget as HTMLInputElement).checked)}
                     />
                     Repeat
@@ -449,7 +512,7 @@
                       class="compact-input mono"
                       type="number"
                       value={$motionState.positionTargetTurn}
-                      disabled={motorState === MOTOR_RUN || motionActionBusy}
+                      disabled={motionLocked()}
                       oninput={(event) => updateMotionField("positionTargetTurn", motionNumber(event))}
                     />
                     <span class="unit">turn</span>
@@ -462,7 +525,7 @@
                       class="compact-input mono"
                       type="number"
                       value={$motionState.positionMaxSpeed}
-                      disabled={motorState === MOTOR_RUN || motionActionBusy}
+                      disabled={motionLocked()}
                       oninput={(event) => updateMotionField("positionMaxSpeed", motionNumber(event))}
                     />
                     <span class="unit">rad/s</span>
@@ -475,7 +538,7 @@
                       class="compact-input mono"
                       type="number"
                       value={$motionState.acceleration}
-                      disabled={motorState === MOTOR_RUN || motionActionBusy}
+                      disabled={motionLocked()}
                       oninput={(event) => updateAcceleration(motionNumber(event))}
                     />
                     <span class="unit">rad/s²</span>
@@ -488,7 +551,7 @@
                       class="compact-input mono"
                       type="number"
                       value={$motionState.deceleration}
-                      disabled={motorState === MOTOR_RUN || motionActionBusy || copyAccelToDecel}
+                      disabled={motionLocked() || copyAccelToDecel}
                       oninput={(event) => updateMotionField("deceleration", motionNumber(event))}
                     />
                     <span class="unit">rad/s²</span>
@@ -504,7 +567,7 @@
                       class="compact-input mono"
                       type="number"
                       value={$motionState.mode === "speed" ? $motionState.speedTarget : $motionState.sensorlessSpeedTarget}
-                      disabled={motorState === MOTOR_RUN || motionActionBusy}
+                      disabled={motionLocked()}
                       oninput={(event) => $motionState.mode === "speed"
                         ? updateMotionField("speedTarget", motionNumber(event))
                         : updateMotionField("sensorlessSpeedTarget", motionNumber(event))}
@@ -520,7 +583,7 @@
                       class="compact-input mono"
                       type="number"
                       value={$motionState.acceleration}
-                      disabled={motorState === MOTOR_RUN || motionActionBusy}
+                      disabled={motionLocked()}
                       oninput={(event) => updateAcceleration(motionNumber(event))}
                     />
                     <span class="unit">rad/s²</span>
@@ -533,7 +596,7 @@
                       class="compact-input mono"
                       type="number"
                       value={$motionState.deceleration}
-                      disabled={motorState === MOTOR_RUN || motionActionBusy || copyAccelToDecel}
+                      disabled={motionLocked() || copyAccelToDecel}
                       oninput={(event) => updateMotionField("deceleration", motionNumber(event))}
                     />
                     <span class="unit">rad/s²</span>
@@ -549,7 +612,7 @@
                       class="compact-input mono"
                       type="number"
                       value={$motionState.torqueTargetNm}
-                      disabled={motorState === MOTOR_RUN || motionActionBusy}
+                      disabled={motionLocked()}
                       oninput={(event) => updateMotionField("torqueTargetNm", motionNumber(event))}
                     />
                     <span class="unit">N·m</span>
@@ -562,7 +625,7 @@
                       class="compact-input mono"
                       type="number"
                       value={$motionState.torqueRampNmPerS}
-                      disabled={motorState === MOTOR_RUN || motionActionBusy}
+                      disabled={motionLocked()}
                       oninput={(event) => updateMotionField("torqueRampNmPerS", motionNumber(event))}
                     />
                     <span class="unit">N·m/s</span>
@@ -574,24 +637,24 @@
                 <label>
                   <span>Position</span>
                   <span class="motion-editor">
-                    <input class="compact-input mono" type="number" value={$motionState.mitPositionRef} disabled={motorState === MOTOR_RUN || motionActionBusy} oninput={(event) => updateMotionField("mitPositionRef", motionNumber(event))} />
+                    <input class="compact-input mono" type="number" value={$motionState.mitPositionRef} disabled={motionLocked()} oninput={(event) => updateMotionField("mitPositionRef", motionNumber(event))} />
                     <span class="unit">turn</span>
                   </span>
                 </label>
                 <label>
                   <span>Velocity</span>
                   <span class="motion-editor">
-                    <input class="compact-input mono" type="number" value={$motionState.mitVelocityRef} disabled={motorState === MOTOR_RUN || motionActionBusy} oninput={(event) => updateMotionField("mitVelocityRef", motionNumber(event))} />
+                    <input class="compact-input mono" type="number" value={$motionState.mitVelocityRef} disabled={motionLocked()} oninput={(event) => updateMotionField("mitVelocityRef", motionNumber(event))} />
                     <span class="unit">rad/s</span>
                   </span>
                 </label>
                 <label>
                   <span>Kp</span>
-                  <span class="motion-editor"><input class="compact-input mono" type="number" value={$motionState.mitKp} disabled={motorState === MOTOR_RUN || motionActionBusy} oninput={(event) => updateMotionField("mitKp", motionNumber(event))} /></span>
+                  <span class="motion-editor"><input class="compact-input mono" type="number" value={$motionState.mitKp} disabled={motionLocked()} oninput={(event) => updateMotionField("mitKp", motionNumber(event))} /></span>
                 </label>
                 <label>
                   <span>Kd</span>
-                  <span class="motion-editor"><input class="compact-input mono" type="number" value={$motionState.mitKd} disabled={motorState === MOTOR_RUN || motionActionBusy} oninput={(event) => updateMotionField("mitKd", motionNumber(event))} /></span>
+                  <span class="motion-editor"><input class="compact-input mono" type="number" value={$motionState.mitKd} disabled={motionLocked()} oninput={(event) => updateMotionField("mitKd", motionNumber(event))} /></span>
                 </label>
               </div>
             {/if}
@@ -602,7 +665,7 @@
                   <input
                     type="checkbox"
                     checked={copyAccelToDecel}
-                    disabled={motorState === MOTOR_RUN || motionActionBusy}
+                    disabled={motionLocked()}
                     onchange={(event) => toggleCopyAccelToDecel((event.currentTarget as HTMLInputElement).checked)}
                   />
                   Copy Accel to Decel
@@ -624,7 +687,7 @@
                 <vscode-button
                   secondary
                   disabled={!canStopMotion()}
-                  title="Stop current motion and return to ENABLED"
+                  title="Stop the active tuning experiment and retain its waveform"
                   onclick={() => void stopTuningMotion()}
                 >Stop</vscode-button>
               </div>
@@ -790,18 +853,27 @@
     min-height: 430px;
   }
 
-  .reserved-panel {
-    min-height: 370px;
-    display: grid;
-    place-items: center;
-    align-content: center;
-    gap: 10px;
-    color: var(--vscode-descriptionForeground);
-    border: 1px dashed var(--vscode-panel-border);
+  .waveform-heading {
+    display: flex;
+    align-items: baseline;
+    justify-content: space-between;
+    gap: 12px;
   }
 
-  .reserved-panel .codicon {
-    font-size: 24px;
+  .experiment-status {
+    color: var(--vscode-descriptionForeground);
+    font-size: 10px;
+    font-weight: 600;
+  }
+
+  .experiment-status.failed,
+  .experiment-message {
+    color: var(--nmixx-status-errorForeground);
+  }
+
+  .experiment-message {
+    margin: -3px 0 8px;
+    font-size: 11px;
   }
 
   .motion-panel {
