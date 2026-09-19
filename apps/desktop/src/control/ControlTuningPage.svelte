@@ -95,6 +95,7 @@
   let experimentMessage = $state("");
   let experimentSnapshot = $state<TuningExperimentSnapshot | undefined>(undefined);
   let experimentRefreshBusy = false;
+  let experimentSnapshotState: TuningExperimentState | undefined;
   let experimentTimer: ReturnType<typeof setInterval> | undefined;
   let generation = 0;
 
@@ -102,7 +103,7 @@
     void initializeMotion().catch(onError);
     void refreshExperiment();
 
-    experimentTimer = setInterval(() => void refreshExperiment(), 100);
+    experimentTimer = setInterval(() => void refreshExperiment(), 250);
 
     let disposed = false;
     let unlisten: (() => void) | undefined;
@@ -139,6 +140,7 @@
       experimentState = "IDLE";
       experimentMessage = "";
       experimentSnapshot = undefined;
+      experimentSnapshotState = undefined;
       return;
     }
 
@@ -375,12 +377,23 @@
     if (!connection || experimentRefreshBusy) return;
     experimentRefreshBusy = true;
     try {
+      const previousState = experimentState;
       const status = await tuningExperimentStatus();
       experimentState = status.state;
       experimentMessage = status.message ?? "";
 
-      if (status.state !== "IDLE") {
-        experimentSnapshot = await readTuningExperimentSnapshot();
+      const active = status.state === "PREPARING"
+        || status.state === "RUNNING"
+        || status.state === "STOPPING";
+      const terminalChanged = (status.state === "COMPLETED" || status.state === "FAILED")
+        && experimentSnapshotState !== status.state;
+
+      if (active || terminalChanged) {
+        experimentSnapshot = await readTuningExperimentSnapshot(active ? 2500 : 5000);
+        experimentSnapshotState = status.state;
+      } else if (status.state === "IDLE" && previousState !== "IDLE") {
+        experimentSnapshot = undefined;
+        experimentSnapshotState = undefined;
       }
     } catch (error) {
       if (experimentState !== "IDLE") onError(error);
@@ -413,6 +426,7 @@
       const status = await startTuningExperiment();
       experimentState = status.state;
       experimentMessage = status.message ?? "";
+      experimentSnapshotState = undefined;
       await refreshExperiment();
     } catch (error) {
       onError(error);
