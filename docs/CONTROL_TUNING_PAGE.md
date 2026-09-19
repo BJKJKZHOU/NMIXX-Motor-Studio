@@ -85,6 +85,14 @@ The page deliberately does not reproduce the complete control diagram. Structura
 
 The page does not duplicate Connect/Disconnect controls or motor Enable/Disable/Stop controls inside its own content area.
 
+### Shared Motion editor
+
+The Motion command area is not a separate tuning-only command model. It reuses the same Application-level Motion model as the full Motion page through the shared compact Motion editor.
+
+Changing mode, target, trajectory, acceleration or deceleration in Control Tuning updates the same Motion state seen by the full Motion page, and vice versa. The compact editor calls the same Motion Application API for Run/Stop rather than maintaining placeholder controls or a second page-local copy.
+
+The finite experiment waveform/orchestration remains a separate Control Tuning responsibility. Reusing the Motion editor does not mean the bounded tuning-capture workflow has been implemented by the GUI itself.
+
 ## Tuning parameter semantics
 
 Bandwidth is a design entry; Kp/Ki are the actual controller parameters. Current and speed loops also expose a tuning source that defines who owns the actual gains when motor-model parameters change.
