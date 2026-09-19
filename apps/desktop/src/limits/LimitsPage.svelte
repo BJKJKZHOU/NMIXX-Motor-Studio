@@ -4,7 +4,7 @@
   import { listParameters, onParametersRefreshed, readCachedParameters, readCurrentParameters, readParameters, writeParameter } from "../parameters/api";
   import type { ParameterMetadata, ParameterValue } from "../parameters/types";
   import { modifiedParameterIds } from "../parameters/persistence";
-  import { parameterMetadataSnapshot, parameterValueSnapshot } from "../parameters/sessionState";
+  import { parameterDraftSnapshot, parameterMetadataSnapshot, parameterValueSnapshot } from "../parameters/sessionState";
 
   type Props = {
     connection: ConnectionInfo | undefined;
@@ -32,7 +32,7 @@
 
   let metadata = $state<Record<string, ParameterMetadata>>(parameterMetadataSnapshot(ALL_SYMBOLS));
   let values = $state<Record<string, ParameterValue | null>>(parameterValueSnapshot(ALL_SYMBOLS));
-  let drafts = $state<Record<string, string>>({});
+  let drafts = $state<Record<string, string>>(parameterDraftSnapshot(ALL_SYMBOLS));
   let loading = $state(false);
   let writing = $state<Set<string>>(new Set());
   let generation = 0;
@@ -59,6 +59,7 @@
     if (activeConnection) {
       metadata = parameterMetadataSnapshot(ALL_SYMBOLS);
       values = parameterValueSnapshot(ALL_SYMBOLS);
+      drafts = parameterDraftSnapshot(ALL_SYMBOLS);
     }
 
     if (!activeConnection) {
