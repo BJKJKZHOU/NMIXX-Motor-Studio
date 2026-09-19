@@ -90,6 +90,7 @@ impl Default for TuningExperimentRuntime {
 }
 
 const TUNING_HISTORY: Duration = Duration::from_secs(15);
+const TUNING_LIVE_WINDOW: Duration = Duration::from_secs(3);
 const TUNING_PRE_CAPTURE: Duration = Duration::from_millis(500);
 const TUNING_POST_CAPTURE: Duration = Duration::from_millis(750);
 const TUNING_POSITION_SETTLE: Duration = Duration::from_millis(500);
@@ -528,7 +529,17 @@ impl ApplicationSession {
     pub fn tuning_experiment_snapshot(&self) -> Result<TuningExperimentSnapshot, ApplicationError> {
         let status = self.tuning_experiment_status()?;
         let config = self.scope_config()?;
-        let snapshot = self.scope_snapshot_tail(config.history)?;
+        let window = if matches!(
+            status.state,
+            TuningExperimentState::Preparing
+                | TuningExperimentState::Running
+                | TuningExperimentState::Stopping
+        ) {
+            TUNING_LIVE_WINDOW.min(config.history)
+        } else {
+            config.history
+        };
+        let snapshot = self.scope_snapshot_tail(window)?;
         Ok(TuningExperimentSnapshot {
             status,
             config,
