@@ -722,7 +722,6 @@
                     class:ramModified={$modifiedParameterIds.has(metadata[spec.source].id)}
                     class="compact-select"
                     disabled={locked(spec.source)}
-                    value={sourceText(spec.source)}
                     onchange={(event) => {
                       const next = (event.currentTarget as HTMLSelectElement).value;
                       void setSource(
@@ -732,8 +731,8 @@
                       );
                     }}
                   >
-                    <option value="Bandwidth">Bandwidth</option>
-                    <option value="Manual">Manual</option>
+                    <option value="Bandwidth" selected={sourceText(spec.source) === "Bandwidth"}>Bandwidth</option>
+                    <option value="Manual" selected={sourceText(spec.source) === "Manual"}>Manual</option>
                   </select>
                 {:else}
                   <span class="unavailable">Firmware unavailable</span>
