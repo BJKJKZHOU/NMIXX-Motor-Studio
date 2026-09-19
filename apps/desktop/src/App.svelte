@@ -1,5 +1,5 @@
 <script lang="ts">
-  import { onDestroy, onMount } from "svelte";
+  import { onDestroy } from "svelte";
   import ConnectionPage from "./connection/ConnectionPage.svelte";
   import { disconnectDevice } from "./connection/api";
   import type { ConnectionInfo } from "./connection/types";

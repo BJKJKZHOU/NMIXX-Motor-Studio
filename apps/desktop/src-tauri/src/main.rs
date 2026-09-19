@@ -727,8 +727,15 @@ fn motion_set(
 
 #[tauri::command]
 fn motion_preview(state: State<'_, Mutex<DesktopState>>) -> Result<MotionPreview, String> {
-    let guard = state.lock().map_err(|_| "desktop state is poisoned".to_owned())?;
-    guard.motion.preview()
+    let (app, motion) = {
+        let guard = state.lock().map_err(|_| "desktop state is poisoned".to_owned())?;
+        (guard.app.clone(), guard.motion.clone())
+    };
+
+    match app {
+        Some(app) => app.motion_preview().map_err(|error| error.to_string()),
+        None => motion.preview(),
+    }
 }
 
 #[tauri::command]
