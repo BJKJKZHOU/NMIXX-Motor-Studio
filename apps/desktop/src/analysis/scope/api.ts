@@ -1,8 +1,8 @@
 import { invoke } from "@tauri-apps/api/core";
-import type { ScopeConfig, ScopeSnapshot } from "./types";
+import type { ScopeConfig, ScopeSelection, ScopeSnapshot } from "./types";
 
-export function configureScope(parameterIds: number[], historySeconds = 10): Promise<ScopeConfig> {
-  return invoke<ScopeConfig>("scope_configure", { parameterIds, historySeconds });
+export function configureScope(selections: ScopeSelection[], historySeconds = 10): Promise<ScopeConfig> {
+  return invoke<ScopeConfig>("scope_configure", { selections, historySeconds });
 }
 
 export function startScope(): Promise<void> {
@@ -13,10 +13,18 @@ export function pauseScope(): Promise<void> {
   return invoke("scope_pause");
 }
 
+export function stopScope(): Promise<void> {
+  return invoke("scope_stop");
+}
+
 export function clearScope(): Promise<void> {
   return invoke("scope_clear");
 }
 
-export function readScopeSnapshot(windowSeconds = 0.5, maxPoints = 2500): Promise<ScopeSnapshot> {
-  return invoke<ScopeSnapshot>("scope_snapshot", { windowSeconds, maxPoints });
+export function readScopeSnapshot(
+  windowSeconds = 0.5,
+  endOffsetSeconds = 0,
+  maxPoints = 2500,
+): Promise<ScopeSnapshot> {
+  return invoke<ScopeSnapshot>("scope_snapshot", { windowSeconds, endOffsetSeconds, maxPoints });
 }
