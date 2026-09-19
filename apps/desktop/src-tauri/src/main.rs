@@ -401,7 +401,7 @@ fn device_list() -> Result<Vec<String>, String> {
 }
 
 #[tauri::command]
-fn device_connect(
+async fn device_connect(
     state: State<'_, Mutex<DesktopState>>,
     port: String,
     schema_path: String,
@@ -428,7 +428,16 @@ fn device_connect(
     )
     .map_err(|error| error.to_string())?;
 
-    let _ = app.parameter_refresh_all().map_err(|error| error.to_string())?;
+    let readable_parameters = app
+        .parameter_metadata()
+        .iter()
+        .filter(|parameter| parameter.access.contains('r'))
+        .map(|parameter| (parameter.id, parameter.symbol.clone()))
+        .collect::<Vec<_>>();
+    for (id, symbol) in readable_parameters {
+        app.parameter_read(id)
+            .map_err(|error| format!("initial read of {symbol} (0x{id:04X}) failed: {error}"))?;
+    }
     let capabilities = app.plot_capabilities().map_err(|error| error.to_string())?;
     let channels = capabilities
         .with_schema(app.schema())

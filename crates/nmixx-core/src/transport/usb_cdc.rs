@@ -1,6 +1,6 @@
 use std::collections::VecDeque;
 use std::io::ErrorKind;
-use std::path::Path;
+use std::path::{Path, PathBuf};
 use std::time::{Duration, Instant};
 
 use serial2::SerialPort;
@@ -37,11 +37,14 @@ impl UsbCdcTransport {
     pub fn available_ports() -> Result<Vec<String>, TransportError> {
         SerialPort::available_ports()
             .map(|ports| {
-                ports
+                let mut ports = ports
                     .into_iter()
                     .filter(|path| is_usb_serial_path(path))
-                    .map(|path| path.to_string_lossy().into_owned())
-                    .collect()
+                    .map(|path| display_usb_serial_path(&path).to_string_lossy().into_owned())
+                    .collect::<Vec<_>>();
+                ports.sort();
+                ports.dedup();
+                ports
             })
             .map_err(|error| TransportError::Io(error.to_string()))
     }
@@ -71,16 +74,58 @@ impl UsbCdcTransport {
     }
 }
 
+impl Drop for UsbCdcTransport {
+    fn drop(&mut self) {
+        // A disconnected or non-responsive CDC device can leave bytes queued
+        // in the tty output buffer. Linux may otherwise wait for that queue
+        // while closing the file descriptor, delaying connection failure.
+        let _ = self.port.discard_output_buffer();
+    }
+}
+
 #[cfg(target_os = "linux")]
 fn is_usb_serial_path(path: &Path) -> bool {
     let path = path.to_string_lossy();
     path.starts_with("/dev/ttyACM") || path.starts_with("/dev/ttyUSB")
 }
 
+#[cfg(target_os = "linux")]
+fn display_usb_serial_path(path: &Path) -> PathBuf {
+    display_usb_serial_path_in(path, Path::new("/dev/serial/by-id"))
+}
+
+#[cfg(target_os = "linux")]
+fn display_usb_serial_path_in(path: &Path, by_id_dir: &Path) -> PathBuf {
+    let Ok(target) = std::fs::canonicalize(path) else {
+        return path.to_path_buf();
+    };
+    let Ok(entries) = std::fs::read_dir(by_id_dir) else {
+        return path.to_path_buf();
+    };
+
+    let mut matches = entries
+        .flatten()
+        .map(|entry| entry.path())
+        .filter(|candidate| {
+            std::fs::canonicalize(candidate).is_ok_and(|resolved| resolved == target)
+        })
+        .collect::<Vec<_>>();
+    matches.sort();
+    matches
+        .into_iter()
+        .next()
+        .unwrap_or_else(|| path.to_path_buf())
+}
+
 #[cfg(target_os = "macos")]
 fn is_usb_serial_path(path: &Path) -> bool {
     let path = path.to_string_lossy();
     path.starts_with("/dev/cu.usb") || path.starts_with("/dev/tty.usb")
+}
+
+#[cfg(not(target_os = "linux"))]
+fn display_usb_serial_path(path: &Path) -> PathBuf {
+    path.to_path_buf()
 }
 
 #[cfg(any(target_os = "windows", not(any(target_os = "linux", target_os = "macos", target_os = "windows"))))]
@@ -117,5 +162,59 @@ impl FrameTransport for UsbCdcTransport {
                 Err(error) => return Err(error),
             }
         }
+    }
+}
+
+#[cfg(all(test, target_os = "linux"))]
+mod tests {
+    use std::fs;
+    use std::os::unix::fs::symlink;
+    use std::sync::atomic::{AtomicU64, Ordering};
+
+    use super::display_usb_serial_path_in;
+
+    static NEXT_TEMP_DIR: AtomicU64 = AtomicU64::new(0);
+
+    fn temp_dir() -> std::path::PathBuf {
+        let sequence = NEXT_TEMP_DIR.fetch_add(1, Ordering::Relaxed);
+        std::env::temp_dir().join(format!(
+            "nmixx-usb-cdc-{}-{sequence}",
+            std::process::id()
+        ))
+    }
+
+    #[test]
+    fn linux_port_list_prefers_stable_by_id_symlink() {
+        let root = temp_dir();
+        let dev_dir = root.join("dev");
+        let by_id_dir = dev_dir.join("serial/by-id");
+        let tty_path = dev_dir.join("ttyACM1");
+        let stable_path = by_id_dir.join("usb-STM32_000000000001-if00");
+
+        fs::create_dir_all(&by_id_dir).unwrap();
+        fs::write(&tty_path, []).unwrap();
+        symlink("../../ttyACM1", &stable_path).unwrap();
+
+        assert_eq!(
+            display_usb_serial_path_in(&tty_path, &by_id_dir),
+            stable_path
+        );
+
+        fs::remove_dir_all(root).unwrap();
+    }
+
+    #[test]
+    fn linux_port_list_falls_back_to_tty_without_by_id_match() {
+        let root = temp_dir();
+        let tty_path = root.join("ttyACM0");
+        fs::create_dir_all(&root).unwrap();
+        fs::write(&tty_path, []).unwrap();
+
+        assert_eq!(
+            display_usb_serial_path_in(&tty_path, &root.join("missing")),
+            tty_path
+        );
+
+        fs::remove_dir_all(root).unwrap();
     }
 }
