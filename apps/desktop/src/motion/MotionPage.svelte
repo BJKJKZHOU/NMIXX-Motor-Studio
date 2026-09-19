@@ -99,10 +99,6 @@
   }
 </script>
 
-<section class="page-toolbar">
-  <div class="page-title">MOTION</div>
-</section>
-
 <div class="motion-simple-page">
   <div class="motion-mode-row">
     <label>
@@ -252,7 +248,6 @@
       <div class="motion-plot-area">
         {#if $motionPreview && $motionPreview.times.length > 1}
           <MotionTrajectoryPlot preview={$motionPreview} />
-          {#if hasTrajectory()}<div class="motion-plot-note">{trajectoryNote()}</div>{/if}
         {:else}
           <div class="motion-plot-empty">No trajectory preview for this command mode.</div>
         {/if}

@@ -192,11 +192,11 @@
   }
 
   function parameterLabel(symbol: string): string {
-    return metadata[symbol]?.name ?? symbol;
+    return metadata[symbol]?.label ?? symbol;
   }
 
   function actionLabel(symbol: string): string {
-    return actions[symbol]?.name ?? symbol;
+    return actions[symbol]?.label ?? symbol;
   }
 
   function isWritable(symbol: string): boolean {
@@ -509,6 +509,7 @@
                     {@const state = identStates[row.identKey]}
                     {@const startSymbol = IDENT_CONFIGS[row.identKey].startAction}
                     {@const startLabel = actionLabel(startSymbol)}
+                    <!-- svelte-ignore a11y_click_events_have_key_events a11y_no_static_element_interactions -->
                     <vscode-button
                       secondary
                       disabled={!actionAvailable(startSymbol) || identifyBusy()}
@@ -519,6 +520,7 @@
                     {#if state.phase === "running"}
                       <span class="action-status state-running"><i class="codicon codicon-loading codicon-modifier-spin"></i> Running</span>
                     {:else if state.phase === "ready"}
+                      <!-- svelte-ignore a11y_click_events_have_key_events a11y_no_static_element_interactions -->
                       <vscode-button class="apply-button" disabled={!actionAvailable(applyActionSymbol)} onclick={() => void applyIdentification(row.identKey!)} title="Apply the latest valid identification result to Active parameters">{actionLabel(applyActionSymbol)}</vscode-button>
                     {:else if state.phase === "applying"}
                       <span class="action-status state-running"><i class="codicon codicon-loading codicon-modifier-spin"></i> Applying</span>

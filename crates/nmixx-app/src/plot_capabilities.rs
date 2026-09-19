@@ -46,7 +46,7 @@ impl From<PlotCapabilityEntry> for DevicePlotChannel {
 pub struct PlotChannelInfo {
     pub id: u16,
     pub symbol: Option<String>,
-    pub name: Option<String>,
+    pub label: Option<String>,
     pub unit: Option<String>,
     pub description: Option<String>,
     pub supports_fast: bool,
@@ -127,7 +127,7 @@ impl DevicePlotCapabilities {
                 PlotChannelInfo {
                     id: channel.id,
                     symbol: metadata.map(|value| value.symbol.clone()),
-                    name: metadata.and_then(|value| value.name.clone()),
+                    label: metadata.map(|value| value.label.clone()),
                     unit: metadata.and_then(|value| value.unit.clone()),
                     description: metadata.map(|value| value.description.clone()),
                     supports_fast: channel.supports_fast(),

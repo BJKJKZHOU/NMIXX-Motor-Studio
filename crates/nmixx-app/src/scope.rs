@@ -13,7 +13,7 @@ use crate::{
 #[derive(Debug, Clone, PartialEq)]
 pub struct ScopeChannel {
     pub id: u16,
-    pub symbol: String,
+    pub label: String,
     pub unit: Option<String>,
     pub scale: f32,
 }
@@ -104,8 +104,8 @@ impl ScopeSession {
             let metadata = schema.parameter_by_id(*id);
             channels.push(ScopeChannel {
                 id: *id,
-                symbol: metadata
-                    .map(|value| value.symbol.clone())
+                label: metadata
+                    .map(|value| value.label.clone())
                     .unwrap_or_else(|| format!("0x{id:04X}")),
                 unit: metadata.and_then(|value| value.unit.clone()),
                 scale: capability.fast_scale,
@@ -129,7 +129,7 @@ impl ScopeSession {
         }
         for channel in &config.channels {
             if !channel.scale.is_finite() || channel.scale <= 0.0 {
-                return Err(ScopeError::InvalidScale(channel.symbol.clone()));
+                return Err(ScopeError::InvalidScale(channel.label.clone()));
             }
         }
 

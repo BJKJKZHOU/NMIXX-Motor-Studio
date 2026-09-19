@@ -19,7 +19,7 @@ CLI -----------+--> Application API --> Rust Application Core --> Device Core
 Automation ----+
 ```
 
-The GUI may eventually use Tauri, but Tauri is not an architectural dependency of the runtime.
+The current desktop GUI uses Tauri + Svelte, but Tauri is a client implementation choice rather than an architectural dependency of the runtime.
 
 ## Consequences
 

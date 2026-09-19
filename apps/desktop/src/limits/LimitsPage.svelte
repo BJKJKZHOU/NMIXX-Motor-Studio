@@ -83,7 +83,7 @@
   }
 
   function parameterLabel(symbol: string, fallback?: string): string {
-    return metadata[symbol]?.name ?? fallback ?? symbol;
+    return metadata[symbol]?.label ?? fallback ?? symbol;
   }
 
   function isWritable(symbol: string): boolean {
@@ -272,7 +272,7 @@
           </div>
         </section>
 
-        <section class="limits-section position-section unavailable-section" aria-disabled="true">
+        <section class="limits-section position-section unavailable-section">
           <div class="section-heading">
             <div class="section-title">Position Limits</div>
             <div class="section-note">Firmware unavailable</div>

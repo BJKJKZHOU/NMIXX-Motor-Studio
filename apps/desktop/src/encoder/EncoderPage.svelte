@@ -127,11 +127,11 @@
   }
 
   function parameterLabel(symbol: string, fallback?: string): string {
-    return metadata[symbol]?.name ?? fallback ?? symbol;
+    return metadata[symbol]?.label ?? fallback ?? symbol;
   }
 
   function actionLabel(symbol: string, fallback?: string): string {
-    return actions[symbol]?.name ?? fallback ?? symbol;
+    return actions[symbol]?.label ?? fallback ?? symbol;
   }
 
   function isWritable(symbol: string): boolean {
@@ -416,6 +416,7 @@
 
                 <div class="field-label">Phase search</div>
                 <div class="action-line">
+                  <!-- svelte-ignore a11y_click_events_have_key_events a11y_no_static_element_interactions -->
                   <vscode-button
                     secondary
                     disabled={phaseState === "running"}

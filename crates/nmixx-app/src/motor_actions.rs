@@ -53,6 +53,14 @@ impl MotorActionService {
         Self { session, schema, parameters }
     }
 
+    pub(crate) fn from_shared(
+        session: DeviceSession,
+        schema: HostSchema,
+        parameters: ParameterService,
+    ) -> Self {
+        Self { session, schema, parameters }
+    }
+
     /// Start the global motor Enable action.
     pub fn enable(&self) -> Result<ActionHandle, MotorActionError> {
         self.start_action(MOTOR_ENABLE)

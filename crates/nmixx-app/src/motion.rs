@@ -438,7 +438,7 @@ fn position_preview(config: &MotionConfig) -> MotionPreview {
 
     let mut times = Vec::with_capacity(samples);
     let mut position = Vec::with_capacity(samples);
-    let mut speed = Vec::with_capacity(samples);
+    let mut speed: Vec<f64> = Vec::with_capacity(samples);
     let mut pos = 0.0;
     let mut filtered_speed = 0.0;
 

@@ -92,7 +92,7 @@
   }
 
   function label(symbol: string, fallback: string): string {
-    return metadata[symbol]?.name ?? fallback;
+    return metadata[symbol]?.label ?? fallback;
   }
 
   function unit(symbol: string): string {
@@ -601,11 +601,6 @@
   .gain-grid span {
     color: var(--vscode-descriptionForeground);
     font-size: 10px;
-  }
-
-  .gain-grid strong {
-    font-size: 11px;
-    font-weight: 500;
   }
 
   .gain-input {

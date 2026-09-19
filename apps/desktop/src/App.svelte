@@ -54,8 +54,8 @@
     { id: "encoder", title: "Encoder", icon: "codicon-record" },
     { id: "limits", title: "Limits / Safety", icon: "codicon-shield" },
     { id: "control", title: "Control Architecture", icon: "codicon-settings-gear" },
-    { id: "tuning", title: "Control Tuning", icon: "codicon-tune" },
     { id: "motion", title: "Motion", icon: "codicon-play-circle" },
+    { id: "tuning", title: "Control Tuning", icon: "codicon-pulse" },
     { id: "analysis", title: "Analysis", icon: "codicon-graph-line" },
   ];
 
@@ -261,10 +261,6 @@
 </script>
 
 <div class="workbench">
-  <header class="titlebar">
-    <div class="brand">NMIXX Motor Studio</div>
-  </header>
-
   <div class="body">
     <nav class="activity-bar" aria-label="Commissioning workflow">
       {#each workflowPages as page}
@@ -281,52 +277,55 @@
       <div class="activity-spacer"></div>
     </nav>
 
-    <div class="workspace">
-      <div class="global-toolbar">
+    <div class="global-toolbar">
+      <div class="global-toolbar-left">
+        <div class="brand">NMIXX Motor Studio</div>
+        <div class="global-toolbar-divider" aria-hidden="true"></div>
         <div class="global-actions">
-          <button
-            class:enable-action={motorState === MOTOR_DISABLED}
-            class:disable-action={motorState !== null && motorState !== MOTOR_DISABLED}
-            class="tool-button global-action"
-            disabled={!connection || motorState === null || globalActionBusy}
-            onclick={() => void toggleMotorEnable()}
-            title={motorState === MOTOR_DISABLED ? "Enable motor" : "Disable motor"}
-          >
-            <i class={`codicon ${motorState === MOTOR_DISABLED ? "codicon-play" : "codicon-debug-disconnect"}`}></i>
-            {motorState === MOTOR_DISABLED ? "Enable" : "Disable"}
-          </button>
-          <button
-            class="tool-button global-action stop-action"
-            disabled={!connection || motorState !== MOTOR_RUN || globalActionBusy}
-            onclick={() => void stopCurrentMotorOperation()}
-            title="Stop current motor operation"
-          >
-            <i class="codicon codicon-debug-stop"></i> Stop
-          </button>
-          <span class="global-group-gap"></span>
-          <button class="tool-button global-action" disabled={!connection || readingParameters} onclick={() => void refreshAllParameters()} title="Read current RAM parameters from device">
-            <i class={`codicon ${readingParameters ? "codicon-loading codicon-modifier-spin" : "codicon-refresh"}`}></i> Read
-          </button>
-          <button
-            class="tool-button global-action"
-            disabled={!connection || !parameterSaveAvailable || motorState !== MOTOR_DISABLED || globalActionBusy}
-            onclick={() => void savePersistentParameters()}
-            title={!parameterSaveAvailable
-              ? "Parameter persistence is not exposed by this firmware"
-              : motorState !== MOTOR_DISABLED
-                ? "Disable the motor before saving persistent parameters"
-                : "Save persistent RAM parameters to device storage"}
-          >
-            <i class={`codicon ${saveFeedback === "saved" ? "codicon-check" : "codicon-save"}`}></i>
-            {saveFeedback === "saved" ? "Saved" : "Save"}
-          </button>
-        </div>
-        <button class="problems-indicator" disabled title="Problems service is not implemented yet">
-          <i class="codicon codicon-warning"></i><span>0</span>
+        <button
+          class:enable-action={motorState === MOTOR_DISABLED}
+          class:disable-action={motorState !== null && motorState !== MOTOR_DISABLED}
+          class="tool-button global-action"
+          disabled={!connection || motorState === null || globalActionBusy}
+          onclick={() => void toggleMotorEnable()}
+          title={motorState === MOTOR_DISABLED ? "Enable motor" : "Disable motor"}
+        >
+          <i class={`codicon ${motorState === MOTOR_DISABLED ? "codicon-play" : "codicon-debug-disconnect"}`}></i>
+          {motorState === MOTOR_DISABLED ? "Enable" : "Disable"}
         </button>
+        <button
+          class="tool-button global-action stop-action"
+          disabled={!connection || motorState !== MOTOR_RUN || globalActionBusy}
+          onclick={() => void stopCurrentMotorOperation()}
+          title="Stop current motor operation"
+        >
+          <i class="codicon codicon-debug-stop"></i> Stop
+        </button>
+        <span class="global-group-gap"></span>
+        <button class="tool-button global-action" disabled={!connection || readingParameters} onclick={() => void refreshAllParameters()} title="Read current RAM parameters from device">
+          <i class={`codicon ${readingParameters ? "codicon-loading codicon-modifier-spin" : "codicon-refresh"}`}></i> Read
+        </button>
+        <button
+          class="tool-button global-action"
+          disabled={!connection || !parameterSaveAvailable || motorState !== MOTOR_DISABLED || globalActionBusy}
+          onclick={() => void savePersistentParameters()}
+          title={!parameterSaveAvailable
+            ? "Parameter persistence is not exposed by this firmware"
+            : motorState !== MOTOR_DISABLED
+              ? "Disable the motor before saving persistent parameters"
+              : "Save persistent RAM parameters to device storage"}
+        >
+          <i class={`codicon ${saveFeedback === "saved" ? "codicon-check" : "codicon-save"}`}></i>
+          {saveFeedback === "saved" ? "Saved" : "Save"}
+        </button>
+        </div>
       </div>
+      <button class="problems-indicator" disabled title="Problems service is not implemented yet">
+        <i class="codicon codicon-warning"></i><span>0</span>
+      </button>
+    </div>
 
-      <main class="main-area">
+    <main class="main-area">
         {#if activePage === "connection"}
           <ConnectionPage {connection} onConnected={(next) => void setConnection(next)} onDisconnected={() => void setConnection(undefined)} onError={setError} />
         {:else if activePage === "motor"}
@@ -388,8 +387,7 @@
           <ScopePage {connection} active={activePage === "analysis"} onSummary={(summary) => scopeSummary = summary} onError={setError} />
         </div>
         {#if errorText}<div class="error-text app-error">{errorText}</div>{/if}
-      </main>
-    </div>
+    </main>
   </div>
 
   <footer class="statusbar">
@@ -400,21 +398,31 @@
 </div>
 
 <style>
-  .workspace {
-    min-width: 0;
-    min-height: 0;
-    display: grid;
-    grid-template-rows: 34px minmax(0, 1fr);
-  }
-
   .global-toolbar {
+    grid-column: 1 / -1;
+    grid-row: 1;
     min-width: 0;
     display: flex;
     align-items: center;
     justify-content: space-between;
     gap: 12px;
-    padding: 0 10px;
+    padding: 0 10px 0 14px;
+    background: #181818;
     border-bottom: 1px solid var(--vscode-panel-border, #2b2b2b);
+  }
+
+  .global-toolbar-left {
+    min-width: 0;
+    display: flex;
+    align-items: center;
+    gap: 12px;
+  }
+
+  .global-toolbar-divider {
+    width: 1px;
+    height: 22px;
+    flex: 0 0 auto;
+    background: var(--vscode-panel-border, #303030);
   }
 
   .global-actions {

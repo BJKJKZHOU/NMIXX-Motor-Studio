@@ -29,7 +29,7 @@ pub struct ScopeSelection {
 #[derive(Debug, Clone, PartialEq)]
 pub struct MixedScopeChannel {
     pub id: u16,
-    pub symbol: String,
+    pub label: String,
     pub unit: Option<String>,
     pub rate: ScopeRate,
     pub sample_rate_hz: u32,
@@ -572,8 +572,8 @@ fn build_config(
         let metadata = schema.parameter_by_id(selection.id);
         channels.push(MixedScopeChannel {
             id: selection.id,
-            symbol: metadata
-                .map(|value| value.symbol.clone())
+            label: metadata
+                .map(|value| value.label.clone())
                 .unwrap_or_else(|| format!("0x{:04X}", selection.id)),
             unit: metadata.and_then(|value| value.unit.clone()),
             rate: selection.rate,

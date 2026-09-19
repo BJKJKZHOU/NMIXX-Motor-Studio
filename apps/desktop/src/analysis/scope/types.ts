@@ -7,7 +7,7 @@ export type ScopeSelection = {
 
 export type ScopeChannel = {
   id: number;
-  symbol: string;
+  label: string;
   unit?: string;
   rate: ScopeRate;
   sampleRateHz: number;

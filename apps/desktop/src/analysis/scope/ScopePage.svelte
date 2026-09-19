@@ -5,7 +5,6 @@
   import type { ConnectionInfo, PlotChannel } from "../../connection/types";
   import { configureScope, readScopeSnapshot, startScope, stopScope } from "./api";
   import type { ScopeConfig, ScopeRate, ScopeSnapshot, ScopeSummary } from "./types";
-  import MotionCompactEditor from "../tuning/MotionCompactEditor.svelte";
 
   export let connection: ConnectionInfo | undefined;
   export let active = false;
@@ -642,7 +641,7 @@
     const series: uPlot.Series[] = [
       {},
       ...plotChannels.map((channel) => ({
-        label: channel.symbol,
+        label: channel.label,
         stroke: traceColor(channel),
         width: 1.25,
         show: selectedIds.has(channel.id),
@@ -718,10 +717,13 @@
 <section class="page-toolbar">
   <div class="page-title">ANALYSIS / SCOPE</div>
   <div class="toolbar-actions">
+    <!-- svelte-ignore a11y_click_events_have_key_events a11y_no_static_element_interactions -->
     <vscode-button disabled={!connection || selectedIds.size === 0 || commandBusy} onclick={toggleRunStop}>
       <i class={`codicon ${isRunning ? "codicon-debug-stop" : "codicon-play"}`}></i>&nbsp;{isRunning ? "Stop" : "Run"}
     </vscode-button>
+    <!-- svelte-ignore a11y_click_events_have_key_events a11y_no_static_element_interactions -->
     <vscode-button secondary disabled={!scopeConfig || commandBusy} onclick={autoSet}>Auto Set</vscode-button>
+    <!-- svelte-ignore a11y_click_events_have_key_events a11y_no_static_element_interactions -->
     <vscode-button secondary class:scope-tool-active={cursorEnabled} disabled={!scopeConfig} onclick={toggleCursor}>Cursor</vscode-button>
   </div>
 </section>
@@ -741,7 +743,7 @@
                 checked={selectedIds.has(channel.id)}
                 onchange={() => toggleChannel(channel.id)}
               />
-              <button class="channel-name channel-select" onclick={() => selectActiveChannel(channel.id)}>{channel.symbol}</button>
+              <button class="channel-name channel-select" onclick={() => selectActiveChannel(channel.id)}>{channel.label}</button>
               <span class="channel-unit">{channel.unit ?? ""}</span>
               <select
                 class="channel-rate"
@@ -773,10 +775,10 @@
             {/each}
           </select>
         </label>
-        <label>
+        <div class="scope-readout">
           <span>Position</span>
           <strong>{horizontalOffset === 0 ? "Latest" : `-${formatTime(horizontalOffset)}`}</strong>
-        </label>
+        </div>
       </div>
       <input
         class="scope-position-slider"
@@ -797,7 +799,7 @@
         {#if activeChannel}
           <div class="scope-active-channel">
             <span class="trace-mark" style={`background:${traceColor(activeChannel)}`}></span>
-            <strong>{activeChannel.symbol}</strong>
+            <strong>{activeChannel.label}</strong>
             <span>{activeChannel.unit ?? ""}</span>
           </div>
           <div class="scope-control-grid">
@@ -857,7 +859,6 @@
       </div>
     </section>
 
-    <MotionCompactEditor capabilities={connection?.motion} {onError} />
   </aside>
 
   <section id="scope-workspace" class="scope-workspace">
@@ -867,7 +868,7 @@
         {#each visibleChannels as channel, index}
           <button class="trace-key trace-key-button" onclick={() => selectActiveChannel(channel.id)}>
             <span class="trace-mark" style={`background:${traceColor(channel)}`}></span>
-            {channel.symbol}
+            {channel.label}
             <span class="value">{latestValues[index] ?? "—"}</span>
           </button>
         {/each}
@@ -876,6 +877,7 @@
       {/if}
       <div class="plot-meta">{snapshot?.sampleCount ?? 0} samples · loss {snapshot?.lostFrames ?? 0}</div>
     </div>
+    <!-- svelte-ignore a11y_click_events_have_key_events a11y_no_static_element_interactions -->
     <div bind:this={plotHost} class="plot-host scope-plot-interactive" onclick={setCursorFromPlot}></div>
   </section>
 </div>

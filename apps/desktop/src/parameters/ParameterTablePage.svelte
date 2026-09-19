@@ -52,7 +52,7 @@
   const columns: Array<ColumnDef<typeof features, ParameterRow>> = [
     { id: "id", accessorFn: (row) => row.meta.id, header: "ID" },
     { id: "symbol", accessorFn: (row) => row.meta.symbol, header: "Symbol" },
-    { id: "name", accessorFn: (row) => row.meta.name ?? "", header: "Name" },
+    { id: "label", accessorFn: (row) => row.meta.label, header: "Label" },
     { id: "value", accessorFn: (row) => row.pending ? "…" : valueText(row.value), header: "Value" },
     { id: "unit", accessorFn: (row) => row.meta.unit ?? "", header: "Unit" },
     { id: "access", accessorFn: (row) => row.meta.access, header: "Access" },
@@ -95,7 +95,7 @@
       loadingRegistry = false;
       readingValues = false;
       search = "";
-      table.setGlobalFilter("");
+      untrack(() => table.setGlobalFilter(""));
       return;
     }
 
@@ -304,8 +304,8 @@
                       <span class="mono parameter-id">0x{row.meta.id.toString(16).toUpperCase().padStart(4, "0")}</span>
                     {:else if cell.column.id === "symbol"}
                       <span class="mono parameter-symbol">{row.meta.symbol}</span>
-                    {:else if cell.column.id === "name"}
-                      <span>{row.meta.name ?? "—"}</span>
+                    {:else if cell.column.id === "label"}
+                      <span>{row.meta.label}</span>
                     {:else if cell.column.id === "value"}
                       {#if row.pending}
                         <span class="pending-value"><i class="codicon codicon-loading codicon-modifier-spin"></i></span>

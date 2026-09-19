@@ -29,7 +29,7 @@ export type MotionCapabilities = {
 
 export type PlotChannel = {
   id: number;
-  symbol: string;
+  label: string;
   unit?: string;
   supportsFast: boolean;
   supportsNormal: boolean;
