@@ -11,6 +11,7 @@
   } from "../parameters/api";
   import type { ParameterMetadata, ParameterValue } from "../parameters/types";
   import { modifiedParameterIds } from "../parameters/persistence";
+  import { parameterMetadataSnapshot, parameterValueSnapshot } from "../parameters/sessionState";
   import {
     initializeMotion,
     motionState,
@@ -83,8 +84,8 @@
 
   let { connection, motorState, onError = () => undefined }: Props = $props();
 
-  let metadata = $state<Record<string, ParameterMetadata>>({});
-  let values = $state<Record<string, ParameterValue | null>>({});
+  let metadata = $state<Record<string, ParameterMetadata>>(parameterMetadataSnapshot(SYMBOLS));
+  let values = $state<Record<string, ParameterValue | null>>(parameterValueSnapshot(SYMBOLS));
   let drafts = $state<Record<string, string>>({});
   let writing = $state<Set<string>>(new Set());
   let loading = $state(false);
@@ -122,6 +123,11 @@
   $effect(() => {
     const activeConnection = connection;
     const token = ++generation;
+
+    if (activeConnection) {
+      metadata = parameterMetadataSnapshot(SYMBOLS);
+      values = parameterValueSnapshot(SYMBOLS);
+    }
 
     if (!activeConnection) {
       metadata = {};
