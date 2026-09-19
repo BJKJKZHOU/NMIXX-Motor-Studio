@@ -1,7 +1,7 @@
 <script lang="ts">
   import { untrack } from "svelte";
   import type { ConnectionInfo } from "../connection/types";
-  import { listParameters, readParameter, readParameters, writeParameter } from "../parameters/api";
+  import { listParameters, readParameters, writeParameter } from "../parameters/api";
   import type { ParameterMetadata, ParameterValue } from "../parameters/types";
   import { modifiedParameterIds } from "../parameters/persistence";
   import { listActions, onActionCompleted } from "../actions/api";
@@ -88,7 +88,6 @@
     let disposed = false;
     let actionUnlisten: (() => void) | undefined;
 
-    onParametersRefreshed(() => void refreshValues()).catch(onError);
     onActionCompleted((completion) => handleActionCompleted(completion))
       .then((stop) => {
         if (disposed) stop();
@@ -251,16 +250,10 @@
     if (!meta || meta.typeName !== "u8" || !isWritable(symbol) || writing.has(symbol)) return;
 
     const previous = values[symbol] ?? null;
+    values = { ...values, [symbol]: { type: "u8", value } };
     writing = new Set(writing).add(symbol);
     try {
       await writeParameter(meta.id, { type: "u8", value });
-      const readback = await readParameter(meta.id);
-      values = { ...values, [symbol]: readback.value };
-      if (symbol === ENCODER_PROTOCOL_SYMBOL && readback.value.type === "u8") {
-        encoderProtocolValue = Number(readback.value.value);
-      } else if (symbol === ENCODER_SPI_TYPE_SYMBOL && readback.value.type === "u8") {
-        encoderSpiTypeValue = Number(readback.value.value);
-      }
     } catch (error) {
       values = { ...values, [symbol]: previous };
       if (symbol === ENCODER_PROTOCOL_SYMBOL) {
@@ -282,12 +275,10 @@
 
     const previous = values[MOTOR_DIR_SYMBOL] ?? null;
     const nextValue = direction === "normal" ? 1 : -1;
+    values = { ...values, [MOTOR_DIR_SYMBOL]: { type: "i8", value: nextValue } };
     writing = new Set(writing).add(MOTOR_DIR_SYMBOL);
     try {
       await writeParameter(meta.id, { type: "i8", value: nextValue });
-      const readback = await readParameter(meta.id);
-      values = { ...values, [MOTOR_DIR_SYMBOL]: readback.value };
-      motorDirectionValue = readback.value.type === "i8" && Number(readback.value.value) === -1 ? "reversed" : "normal";
     } catch (error) {
       values = { ...values, [MOTOR_DIR_SYMBOL]: previous };
       motorDirectionValue = previous?.type === "i8" && Number(previous.value) === -1 ? "reversed" : "normal";

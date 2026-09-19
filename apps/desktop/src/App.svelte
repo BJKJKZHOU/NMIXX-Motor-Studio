@@ -14,7 +14,7 @@
   import MotionPage from "./motion/MotionPage.svelte";
   import { canSaveParameters, disableMotor, enableMotor, saveParameters, stopMotor } from "./actions/api";
   import type { ActionHandle } from "./actions/types";
-  import { initializePersistenceBaseline, listParameters, readParameters, refreshAllParameters as refreshParameterCache } from "./parameters/api";
+  import { initializePersistenceBaseline, listParameters, readParameter, refreshAllParameters as refreshParameterCache } from "./parameters/api";
   import { clearParameterPersistence, commitParameterPersistence } from "./parameters/persistence";
   import type { ParameterMetadata, ParameterValue } from "./parameters/types";
 
@@ -28,6 +28,8 @@
   let activePage: Page = "connection";
   let activeControlLoop: ControlLoopPage = "current";
   let controlArchitectureExpanded = true;
+  let connectionPort = "";
+  let connectionSchemaPath = "../../../AxDr_L_Motor/build/host/axdr-host-schema.toml";
   let connection: ConnectionInfo | undefined;
   let errorText = "";
   let scopeSummary: ScopeSummary = { state: "STOPPED", selectedChannels: 0, lostFrames: 0 };
@@ -42,6 +44,7 @@
   let saveFeedback: "idle" | "saved" = "idle";
   let saveFeedbackTimer: ReturnType<typeof setTimeout> | undefined;
   let readingParameters = false;
+  let refreshingGlobalStatus = false;
   let globalRefreshTimer: ReturnType<typeof setInterval> | undefined;
 
   const workflowPages: Array<{ id: Page; title: string; icon: string }> = [
@@ -109,6 +112,7 @@
     if (saveFeedbackTimer) clearTimeout(saveFeedbackTimer);
     saveFeedbackTimer = undefined;
     readingParameters = false;
+    refreshingGlobalStatus = false;
   }
 
   function pageTitle(page: Page): string {
@@ -126,18 +130,26 @@
   }
 
   async function refreshGlobalStatus() {
-    if (!connection) return;
+    if (!connection || refreshingGlobalStatus) return;
     const symbols = GLOBAL_SYMBOLS.filter((symbol) => globalIds[symbol] !== undefined);
     if (symbols.length === 0) return;
+    refreshingGlobalStatus = true;
     try {
-      const results = await readParameters(symbols.map((symbol) => globalIds[symbol]));
-      const values = new Map(results.map((result) => [result.id, result.value]));
+      const values = new Map<number, ParameterValue>();
+      for (const symbol of symbols) {
+        const result = await readParameter(globalIds[symbol]);
+        values.set(result.id, result.value);
+      }
       motorState = numeric(values.get(globalIds.PARAM_MOTOR_STATE) ?? null);
       currentIq = numeric(values.get(globalIds.PARAM_RUN_IQ) ?? null);
       speedWm = numeric(values.get(globalIds.PARAM_RUN_WM) ?? null);
       positionText = position(values.get(globalIds.PARAM_RUN_POSITION) ?? null);
     } catch (error) {
+      if (globalRefreshTimer) clearInterval(globalRefreshTimer);
+      globalRefreshTimer = undefined;
       setError(error);
+    } finally {
+      refreshingGlobalStatus = false;
     }
   }
 
@@ -274,7 +286,7 @@
 
     <main class="main-area">
         {#if activePage === "connection"}
-          <ConnectionPage {connection} onConnected={(next) => void setConnection(next)} onDisconnected={() => void setConnection(undefined)} onError={setError} />
+          <ConnectionPage {connection} bind:port={connectionPort} bind:schemaPath={connectionSchemaPath} onConnected={(next) => void setConnection(next)} onDisconnected={() => void setConnection(undefined)} onError={setError} />
         {:else if activePage === "motor"}
           <div class="domain-page-container">
             <MotorPage {connection} onError={setError} />

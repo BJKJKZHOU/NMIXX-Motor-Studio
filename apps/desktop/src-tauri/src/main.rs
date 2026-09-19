@@ -401,7 +401,7 @@ fn device_list() -> Result<Vec<String>, String> {
 }
 
 #[tauri::command]
-fn device_connect(
+async fn device_connect(
     state: State<'_, Mutex<DesktopState>>,
     port: String,
     schema_path: String,
@@ -428,7 +428,16 @@ fn device_connect(
     )
     .map_err(|error| error.to_string())?;
 
-    let _ = app.parameter_refresh_all().map_err(|error| error.to_string())?;
+    let readable_parameters = app
+        .parameter_metadata()
+        .iter()
+        .filter(|parameter| parameter.access.contains('r'))
+        .map(|parameter| (parameter.id, parameter.symbol.clone()))
+        .collect::<Vec<_>>();
+    for (id, symbol) in readable_parameters {
+        app.parameter_read(id)
+            .map_err(|error| format!("initial read of {symbol} (0x{id:04X}) failed: {error}"))?;
+    }
     let capabilities = app.plot_capabilities().map_err(|error| error.to_string())?;
     let channels = capabilities
         .with_schema(app.schema())
@@ -463,7 +472,7 @@ fn device_connect(
 }
 
 #[tauri::command]
-fn device_disconnect(state: State<'_, Mutex<DesktopState>>) -> Result<(), String> {
+async fn device_disconnect(state: State<'_, Mutex<DesktopState>>) -> Result<(), String> {
     let app = {
         let mut guard = state.lock().map_err(|_| "desktop state is poisoned".to_owned())?;
         guard.port = None;
@@ -480,14 +489,14 @@ fn parameter_list(state: State<'_, Mutex<DesktopState>>) -> Result<Vec<Parameter
 }
 
 #[tauri::command]
-fn parameter_read(state: State<'_, Mutex<DesktopState>>, id: u16) -> Result<ParameterReadDto, String> {
+async fn parameter_read(state: State<'_, Mutex<DesktopState>>, id: u16) -> Result<ParameterReadDto, String> {
     let app = application(&state)?;
     let value = app.parameter_read(id).map_err(|error| error.to_string())?;
     Ok(ParameterReadDto { id, value: value.into() })
 }
 
 #[tauri::command]
-fn parameter_read_many(
+async fn parameter_read_many(
     state: State<'_, Mutex<DesktopState>>,
     ids: Vec<u16>,
 ) -> Result<Vec<ParameterReadResultDto>, String> {
@@ -511,7 +520,7 @@ fn parameter_read_many(
 }
 
 #[tauri::command]
-fn parameter_write(
+async fn parameter_write(
     state: State<'_, Mutex<DesktopState>>,
     id: u16,
     value: ParameterValueDto,
@@ -550,7 +559,7 @@ fn parameter_cached_many(
 }
 
 #[tauri::command]
-fn parameter_refresh_all(
+async fn parameter_refresh_all(
     app_handle: tauri::AppHandle,
     state: State<'_, Mutex<DesktopState>>,
 ) -> Result<Vec<ParameterReadResultDto>, String> {
@@ -565,7 +574,7 @@ fn parameter_refresh_all(
 }
 
 #[tauri::command]
-fn phase_search_preflight(
+async fn phase_search_preflight(
     state: State<'_, Mutex<DesktopState>>,
 ) -> Result<Vec<PreflightIssueDto>, String> {
     let issues = application(&state)?
@@ -582,7 +591,7 @@ fn phase_search_preflight(
 }
 
 #[tauri::command]
-fn identification_preflight(
+async fn identification_preflight(
     state: State<'_, Mutex<DesktopState>>,
     kind: String,
 ) -> Result<Vec<PreflightIssueDto>, String> {
@@ -606,7 +615,7 @@ fn identification_preflight(
 }
 
 #[tauri::command]
-fn identification_start(
+async fn identification_start(
     app_handle: tauri::AppHandle,
     state: State<'_, Mutex<DesktopState>>,
     kind: String,
@@ -650,7 +659,7 @@ fn identification_start(
 }
 
 #[tauri::command]
-fn identification_apply(
+async fn identification_apply(
     state: State<'_, Mutex<DesktopState>>,
 ) -> Result<ActionHandleDto, String> {
     let app = application(&state)?;
@@ -665,7 +674,7 @@ fn action_list(state: State<'_, Mutex<DesktopState>>) -> Result<Vec<ActionMetada
 }
 
 #[tauri::command]
-fn action_start(
+async fn action_start(
     app_handle: tauri::AppHandle,
     state: State<'_, Mutex<DesktopState>>,
     key: String,
@@ -699,7 +708,7 @@ fn start_async_semantic_action(
 }
 
 #[tauri::command]
-fn motor_enable(
+async fn motor_enable(
     state: State<'_, Mutex<DesktopState>>,
 ) -> Result<ActionHandleDto, String> {
     let app = application(&state)?;
@@ -708,7 +717,7 @@ fn motor_enable(
 }
 
 #[tauri::command]
-fn motor_stop(
+async fn motor_stop(
     state: State<'_, Mutex<DesktopState>>,
 ) -> Result<ActionHandleDto, String> {
     let app = application(&state)?;
@@ -717,7 +726,7 @@ fn motor_stop(
 }
 
 #[tauri::command]
-fn motor_disable(
+async fn motor_disable(
     state: State<'_, Mutex<DesktopState>>,
 ) -> Result<ActionHandleDto, String> {
     let app = application(&state)?;
@@ -731,7 +740,7 @@ fn config_save_available(state: State<'_, Mutex<DesktopState>>) -> Result<bool, 
 }
 
 #[tauri::command]
-fn config_save(
+async fn config_save(
     state: State<'_, Mutex<DesktopState>>,
 ) -> Result<ActionHandleDto, String> {
     let app = application(&state)?;
@@ -740,7 +749,7 @@ fn config_save(
 }
 
 #[tauri::command]
-fn phase_search_start(
+async fn phase_search_start(
     app_handle: tauri::AppHandle,
     state: State<'_, Mutex<DesktopState>>,
 ) -> Result<ActionHandleDto, String> {
@@ -763,7 +772,7 @@ fn motion_set(
 }
 
 #[tauri::command]
-fn motion_preview(state: State<'_, Mutex<DesktopState>>) -> Result<MotionPreview, String> {
+async fn motion_preview(state: State<'_, Mutex<DesktopState>>) -> Result<MotionPreview, String> {
     let (app, motion) = {
         let guard = state.lock().map_err(|_| "desktop state is poisoned".to_owned())?;
         (guard.app.clone(), guard.motion.clone())
@@ -776,7 +785,7 @@ fn motion_preview(state: State<'_, Mutex<DesktopState>>) -> Result<MotionPreview
 }
 
 #[tauri::command]
-fn motion_run(state: State<'_, Mutex<DesktopState>>) -> Result<(), String> {
+async fn motion_run(state: State<'_, Mutex<DesktopState>>) -> Result<(), String> {
     application(&state)?
         .motion_run()
         .map(|_| ())
@@ -784,7 +793,7 @@ fn motion_run(state: State<'_, Mutex<DesktopState>>) -> Result<(), String> {
 }
 
 #[tauri::command]
-fn motion_stop(state: State<'_, Mutex<DesktopState>>) -> Result<(), String> {
+async fn motion_stop(state: State<'_, Mutex<DesktopState>>) -> Result<(), String> {
     application(&state)?
         .motion_stop()
         .map(|_| ())
@@ -792,7 +801,7 @@ fn motion_stop(state: State<'_, Mutex<DesktopState>>) -> Result<(), String> {
 }
 
 #[tauri::command]
-fn tuning_experiment_start(
+async fn tuning_experiment_start(
     state: State<'_, Mutex<DesktopState>>,
 ) -> Result<TuningExperimentStatusDto, String> {
     let status = application(&state)?
@@ -805,7 +814,7 @@ fn tuning_experiment_start(
 }
 
 #[tauri::command]
-fn tuning_experiment_stop(
+async fn tuning_experiment_stop(
     state: State<'_, Mutex<DesktopState>>,
 ) -> Result<TuningExperimentStatusDto, String> {
     let status = application(&state)?
@@ -903,7 +912,7 @@ fn tuning_experiment_snapshot(
 }
 
 #[tauri::command]
-fn scope_configure(
+async fn scope_configure(
     state: State<'_, Mutex<DesktopState>>,
     selections: Vec<ScopeSelectionDto>,
     history_seconds: Option<f64>,
@@ -957,17 +966,17 @@ fn scope_configure(
 }
 
 #[tauri::command]
-fn scope_live(state: State<'_, Mutex<DesktopState>>) -> Result<(), String> {
+async fn scope_live(state: State<'_, Mutex<DesktopState>>) -> Result<(), String> {
     application(&state)?.scope_live().map_err(|error| error.to_string())
 }
 
 #[tauri::command]
-fn scope_pause(state: State<'_, Mutex<DesktopState>>) -> Result<(), String> {
+async fn scope_pause(state: State<'_, Mutex<DesktopState>>) -> Result<(), String> {
     application(&state)?.scope_pause().map_err(|error| error.to_string())
 }
 
 #[tauri::command]
-fn scope_stop(state: State<'_, Mutex<DesktopState>>) -> Result<(), String> {
+async fn scope_stop(state: State<'_, Mutex<DesktopState>>) -> Result<(), String> {
     application(&state)?.scope_stop().map_err(|error| error.to_string())
 }
 
