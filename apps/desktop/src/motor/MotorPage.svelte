@@ -4,6 +4,7 @@
   import { listParameters, onParametersRefreshed, readCachedParameters, readCurrentParameters, readParameters, writeParameter } from "../parameters/api";
   import type { ParameterMetadata, ParameterValue } from "../parameters/types";
   import { modifiedParameterIds } from "../parameters/persistence";
+  import { parameterMetadataSnapshot, parameterValueSnapshot } from "../parameters/sessionState";
   import { applyIdentification as applyIdentificationAction, listActions, onActionCompleted, startIdentification as startIdentificationAction } from "../actions/api";
   import type { ActionCompletion, ActionHandle, ActionMetadata } from "../actions/types";
 
@@ -103,9 +104,9 @@
 
   let { connection, onError = () => undefined }: Props = $props();
 
-  let metadata = $state<Record<string, ParameterMetadata>>({});
+  let metadata = $state<Record<string, ParameterMetadata>>(parameterMetadataSnapshot(ALL_PARAMETER_SYMBOLS));
   let actions = $state<Record<string, ActionMetadata>>({});
-  let values = $state<Record<string, ParameterValue | null>>({});
+  let values = $state<Record<string, ParameterValue | null>>(parameterValueSnapshot(ALL_PARAMETER_SYMBOLS));
   let drafts = $state<Record<string, string>>({});
   let loading = $state(false);
   let writing = $state<Set<string>>(new Set());
@@ -144,6 +145,11 @@
     const token = ++generation;
     identStates = initialIdentStates();
     pendingHandles = {};
+
+    if (activeConnection) {
+      metadata = parameterMetadataSnapshot(ALL_PARAMETER_SYMBOLS);
+      values = parameterValueSnapshot(ALL_PARAMETER_SYMBOLS);
+    }
 
     if (!activeConnection) {
       metadata = {};
