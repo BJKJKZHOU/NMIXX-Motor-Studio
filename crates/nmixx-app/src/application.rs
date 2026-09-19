@@ -90,7 +90,7 @@ impl Default for TuningExperimentRuntime {
 }
 
 const TUNING_HISTORY: Duration = Duration::from_secs(15);
-const TUNING_LIVE_WINDOW: Duration = Duration::from_secs(3);
+const TUNING_LIVE_WINDOW: Duration = Duration::from_secs(1);
 const TUNING_PRE_CAPTURE: Duration = Duration::from_millis(500);
 const TUNING_POST_CAPTURE: Duration = Duration::from_millis(750);
 const TUNING_POSITION_SETTLE: Duration = Duration::from_millis(500);
