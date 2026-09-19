@@ -2,7 +2,7 @@ use thiserror::Error;
 
 use crate::{
     ActionHandle, DeviceSession, HostSchema, IdentificationKind, ParameterService,
-    ParameterServiceError, ParameterValue, PreflightError, PreflightService, SchemaNumber,
+    ParameterServiceError, ParameterValue, PreflightError, PreflightIssue, PreflightService, SchemaNumber,
     SessionError,
 };
 
@@ -34,8 +34,6 @@ pub enum MotorActionError {
     InvalidEnumValue { parameter: String, symbol: String },
     #[error("phase-search preflight failed: {0}")]
     PreflightFailed(String),
-    #[error("identification preflight failed: {0}")]
-    IdentificationPreflightFailed(String),
     #[error("parameter '{0}' does not contain a u8 value")]
     InvalidParameterValue(String),
     #[error("motor must be stopped before starting identification")]
@@ -48,8 +46,9 @@ pub enum MotorActionError {
     Session(#[from] SessionError),
 }
 
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+#[derive(Debug, Clone, PartialEq, Eq)]
 pub enum IdentificationStart {
+    Blocked(Vec<PreflightIssue>),
     RequiresEnable,
     Started(ActionHandle),
 }
@@ -101,8 +100,8 @@ impl MotorActionService {
         allow_enable: bool,
     ) -> Result<IdentificationStart, MotorActionError> {
         let issues = PreflightService::new(self.parameters.clone()).check_identification(kind)?;
-        if let Some(issue) = issues.into_iter().next() {
-            return Err(MotorActionError::IdentificationPreflightFailed(issue.reason));
+        if !issues.is_empty() {
+            return Ok(IdentificationStart::Blocked(issues));
         }
 
         let mode = self

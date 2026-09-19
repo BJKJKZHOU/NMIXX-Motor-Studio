@@ -127,11 +127,11 @@
   }
 
   function parameterLabel(symbol: string, fallback?: string): string {
-    return metadata[symbol]?.label ?? fallback ?? symbol;
+    return metadata[symbol]?.label ?? fallback ?? "Unavailable";
   }
 
   function actionLabel(symbol: string, fallback?: string): string {
-    return actions[symbol]?.label ?? fallback ?? symbol;
+    return actions[symbol]?.label ?? fallback ?? "Unavailable";
   }
 
   function isWritable(symbol: string): boolean {
@@ -169,19 +169,19 @@
 
   function parameterValue(meta: ParameterMetadata, text: string): ParameterValue {
     const parsed = Number(text.trim());
-    if (!Number.isFinite(parsed)) throw new Error(`${meta.symbol}: value must be finite.`);
+    if (!Number.isFinite(parsed)) throw new Error(`${meta.label}: value must be finite.`);
 
     if (meta.typeName === "f32") return { type: "f32", value: parsed };
     if (meta.typeName === "i8") {
-      if (!Number.isInteger(parsed) || parsed < -128 || parsed > 127) throw new Error(`${meta.symbol}: expected i8.`);
+      if (!Number.isInteger(parsed) || parsed < -128 || parsed > 127) throw new Error(`${meta.label}: expected i8.`);
       return { type: "i8", value: parsed };
     }
     if (meta.typeName === "u8") {
-      if (!Number.isInteger(parsed) || parsed < 0 || parsed > 255) throw new Error(`${meta.symbol}: expected u8.`);
+      if (!Number.isInteger(parsed) || parsed < 0 || parsed > 255) throw new Error(`${meta.label}: expected u8.`);
       return { type: "u8", value: parsed };
     }
 
-    throw new Error(`${meta.symbol}: Encoder page does not edit ${meta.typeName}.`);
+    throw new Error(`${meta.label}: Encoder page does not edit ${meta.typeName}.`);
   }
 
   function applyValues(entries: ParameterMetadata[], results: Awaited<ReturnType<typeof readParameters>>) {

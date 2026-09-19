@@ -85,6 +85,18 @@ The page deliberately does not reproduce the complete control diagram. Structura
 
 The page does not duplicate Connect/Disconnect controls or motor Enable/Disable/Stop controls inside its own content area.
 
+### Shared Motion model, tuning-specific presentation
+
+The Motion command area is not a separate tuning-only command model. It is a Control Tuning-specific UI projection over the same Application-level Motion model used by the full Motion page.
+
+The Control Tuning page intentionally keeps its compact workflow-oriented presentation: Mode, Position command semantics, Repeat, Position/Speed target fields, Acc/Dec, Copy Accel to Decel, and Run/Stop. It does not have to reuse the full Motion page component or expose every advanced Motion setting.
+
+Changing a field that is shown here updates the same Motion state seen by the full Motion page, and vice versa. Run/Stop call the same Motion Application API; there is no second page-local command copy.
+
+Control Tuning normally operates as a repeated ENABLED-state workflow: tune parameters -> Run -> inspect response -> tune again -> Run. Run does not automatically Enable/Disable the motor and does not require a confirmation dialog. When the motor is not ENABLED, Run is simply unavailable with a concise reason such as "Enable motor first".
+
+The finite experiment waveform/orchestration remains a separate Control Tuning responsibility. Sharing the Motion model does not mean the bounded tuning-capture workflow has been implemented by the GUI itself.
+
 ## Tuning parameter semantics
 
 Bandwidth is a design entry; Kp/Ki are the actual controller parameters. Current and speed loops also expose a tuning source that defines who owns the actual gains when motor-model parameters change.
@@ -210,10 +222,15 @@ Run
 execute motion
         |
         v
-motion complete / settled
+finish condition
         |
+        +-- Position, Repeat off -> trajectory time + settling -> controlled Stop
+        |
+        +-- Speed / Sensorless Speed / Torque / Repeat -> user Stop
+        |
+        +-- persistent global Stop -> same experiment stop path
         v
-return to ENABLED / stop motion
+wait until motor leaves RUN
         |
         v
 post-motion capture
@@ -242,13 +259,17 @@ A Stop should preserve a coherent experiment result/error state and retain the w
 
 This page does not use an endless scrolling Plot session.
 
-A capture is finite and synchronized to one motor experiment. It includes time before and after the commanded movement, for example:
+A capture is bounded by one tuning experiment rather than by a fixed duration for every Motion mode.
+
+The initial lifecycle uses:
 
 - pre-motion capture: 0.5 s;
-- motion: actual duration;
-- post-motion capture: 1.0 s.
+- Position with Repeat disabled: run for the calculated trajectory duration, keep a short settling interval, then issue the normal controlled Stop;
+- Speed / Sensorless Speed / Torque and repeated Position: continue until the user presses local or global Stop;
+- post-stop capture: 0.75 s after the motor leaves RUN;
+- rolling history: 15 s, with a shorter live view while the experiment is running.
 
-The exact durations can become configurable later. The post-motion interval is important because position-loop tuning must show settling and any vibration after the target is reached.
+The post-stop interval is important because position/speed tuning must show the stop transient, residual vibration and settling. A long manually controlled experiment may overwrite the oldest samples in the rolling history; the most recent response through Stop and post-capture is retained.
 
 The waveform remains on screen after capture ends so the user can inspect the complete response before changing the next parameter set.
 
@@ -256,38 +277,43 @@ If the experiment is stopped early, the capture/task layer should still finish t
 
 ## Default waveform groups
 
-The user may add/remove channels later, but each motion mode should start with a useful default set.
+Every Control Tuning experiment always captures the q-axis current command and feedback at the FAST rate:
+
+- **Iq Ref** — FAST, device current-loop rate (20 kHz on the current AxDr_L firmware);
+- **Iq** — FAST, same rate.
+
+These two channels remain present for Position, Speed and Torque tuning so current-loop noise, high-frequency oscillation and the actuator effort demanded by outer loops remain visible.
+
+Motion reference/feedback channels use NORMAL rate (1 kHz on the current AxDr_L firmware). The first default sets are:
 
 ### Position experiment
 
-Recommended defaults:
+- Iq Ref — FAST;
+- Iq — FAST;
+- Position Ref — NORMAL;
+- Position — NORMAL;
+- ωm Ref — NORMAL;
+- ωm — NORMAL.
 
-- Position Ref;
-- Encoder Position;
-- Wm Ref;
-- Mechanical ESO Wm;
-- Iq Ref;
-- actual Iq;
-- Mechanical ESO disturbance torque when available.
+`Position Ref` is the trajectory output actually used by position control, not the final Position Target command.
 
-### Speed experiment
+### Speed / Sensorless Speed experiment
 
-Recommended defaults:
+- Iq Ref — FAST;
+- Iq — FAST;
+- ωm Ref — NORMAL;
+- ωm — NORMAL.
 
-- Wm Ref;
-- Mechanical ESO Wm;
-- encoder difference speed when available;
-- Iq Ref;
-- actual Iq;
-- Mechanical ESO disturbance torque when available.
+`ωm Ref` is the ramp/trajectory reference actually used by speed control, not the raw target speed.
 
-### Current-loop experiment
+### Torque experiment
 
-Recommended defaults:
+- Iq Ref — FAST;
+- Iq — FAST.
 
-- Iq Ref / Iq;
-- Id Ref / Id;
-- Uq / Ud.
+Additional diagnostics such as encoder-difference speed, Mechanical ESO state or disturbance torque may be added later by the user, but they are not part of the minimal default group. Three-phase currents are intentionally left to the general Scope workflow rather than added to Control Tuning defaults.
+
+FAST and NORMAL samples keep their native sample rates. The GUI does not upsample 1 kHz motion signals to 20 kHz; waveform presentation groups signals with the same engineering unit/rate and aligns them on the experiment time axis.
 
 ## Motion Command
 

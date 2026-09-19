@@ -34,6 +34,14 @@ The intended top-toolbar composition is:
 
 The action group is aligned to the left edge of the main content area and must not extend over the left Activity Bar. The Problems indicator is aligned to the far right.
 
+## Human-facing labels
+
+HostSchema `label` is the user-facing name for Parameters and Actions. Business pages, notifications, validation errors and accessibility text must use the label rather than firmware macro/symbol names.
+
+`symbol` remains the stable programmatic key used by Application/GUI code to look up metadata and actions. It may be shown deliberately in expert/debug surfaces such as the generic Parameters table, logs or diagnostics, but it is not a fallback UI label.
+
+If expected metadata is unavailable, normal business UI should show an unavailable/missing state or an explicit human fallback defined by that workflow. It must not expose `PARAM_*`, `ACTION_*` or C variable-style names merely because schema lookup failed.
+
 ## Global motor controls
 
 `Enable / Disable` and `Stop` are separate persistent motor controls in the top toolbar.

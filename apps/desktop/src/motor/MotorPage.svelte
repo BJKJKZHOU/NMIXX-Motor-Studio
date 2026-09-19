@@ -93,7 +93,11 @@
     },
   ];
 
-  const identificationCurrentSymbol = "PARAM_IDENT_IF_CURRENT";
+  const IDENTIFICATION_SETTING_SYMBOLS = [
+    "PARAM_IDENT_IF_CURRENT",
+    "PARAM_IDENT_JB_EXCITE_RATIO",
+    "PARAM_IDENT_JB_EXCITE_HZ",
+  ] as const;
   const failReasonSymbol = "PARAM_IDENT_FAIL_REASON";
   const applyActionSymbol = "ACTION_IDENT_APPLY";
 
@@ -192,11 +196,11 @@
   }
 
   function parameterLabel(symbol: string): string {
-    return metadata[symbol]?.label ?? symbol;
+    return metadata[symbol]?.label ?? "Unavailable";
   }
 
   function actionLabel(symbol: string): string {
-    return actions[symbol]?.label ?? symbol;
+    return actions[symbol]?.label ?? "Unavailable";
   }
 
   function isWritable(symbol: string): boolean {
@@ -205,13 +209,13 @@
 
   function parameterValue(meta: ParameterMetadata, text: string): ParameterValue {
     const parsed = Number(text.trim());
-    if (!Number.isFinite(parsed)) throw new Error(`${meta.symbol}: value must be finite.`);
+    if (!Number.isFinite(parsed)) throw new Error(`${meta.label}: value must be finite.`);
     if (meta.typeName === "u8") {
-      if (!Number.isInteger(parsed) || parsed < 0 || parsed > 255) throw new Error(`${meta.symbol}: expected u8.`);
+      if (!Number.isInteger(parsed) || parsed < 0 || parsed > 255) throw new Error(`${meta.label}: expected u8.`);
       return { type: "u8", value: parsed };
     }
     if (meta.typeName === "f32") return { type: "f32", value: parsed };
-    throw new Error(`${meta.symbol}: Motor page does not edit ${meta.typeName}.`);
+    throw new Error(`${meta.label}: Motor page does not edit ${meta.typeName}.`);
   }
 
   function applyValues(entries: ParameterMetadata[], results: Awaited<ReturnType<typeof readParameters>>) {
@@ -237,7 +241,7 @@
 
       const wanted = new Set([
         ...ROWS.flatMap((row) => [row.activeSymbol, row.identifiedSymbol, row.identifiedValidSymbol].filter(Boolean) as string[]),
-        identificationCurrentSymbol,
+        ...IDENTIFICATION_SETTING_SYMBOLS,
         failReasonSymbol,
       ]);
       const entries = registry.filter((item) => wanted.has(item.symbol));
@@ -381,12 +385,29 @@
       }
 
       let result = await startIdentificationAction(identKey, false);
+      if (result.status === "blocked") {
+        setIdentState(
+          identKey,
+          "failed",
+          result.issues.map((issue) => issue.reason).join("\n"),
+        );
+        return;
+      }
+
       if (result.status === "requires_enable") {
         const confirmed = window.confirm(
           `${actionLabel(config.startAction)} identification requires enabling the motor.\n\nEnable motor and continue?`,
         );
         if (!confirmed) return;
         result = await startIdentificationAction(identKey, true);
+        if (result.status === "blocked") {
+          setIdentState(
+            identKey,
+            "failed",
+            result.issues.map((issue) => issue.reason).join("\n"),
+          );
+          return;
+        }
       }
 
       if (result.status !== "started") return;
@@ -540,26 +561,26 @@
               <div role="columnheader">Parameter</div>
               <div role="columnheader">Value</div>
             </div>
-            <div class="settings-row" role="row">
-              <div class="parameter-name" role="cell">{parameterLabel(identificationCurrentSymbol)}</div>
-              <div role="cell">
-                {#if metadata[identificationCurrentSymbol]}
-                  <span class="inline-editor">
-                    <input
-                      class:ramModified={$modifiedParameterIds.has(metadata[identificationCurrentSymbol].id)}
-                      class="compact-input mono"
-                      value={drafts[identificationCurrentSymbol] ?? ""}
-                      disabled={!isWritable(identificationCurrentSymbol) || writing.has(identificationCurrentSymbol) || identifyBusy()}
-                      oninput={(event) => drafts = { ...drafts, [identificationCurrentSymbol]: (event.currentTarget as HTMLInputElement).value }}
-                      onkeydown={(event) => handleKeydown(event, identificationCurrentSymbol)}
-                    />
-                    <span class="unit">{unitFor(identificationCurrentSymbol)}</span>
-                  </span>
-                {:else}
-                  <span class="muted">—</span>
-                {/if}
-              </div>
-            </div>
+            {#each IDENTIFICATION_SETTING_SYMBOLS as settingSymbol}
+              {#if metadata[settingSymbol]}
+                <div class="settings-row" role="row">
+                  <div class="parameter-name" role="cell">{parameterLabel(settingSymbol)}</div>
+                  <div role="cell">
+                    <span class="inline-editor">
+                      <input
+                        class:ramModified={$modifiedParameterIds.has(metadata[settingSymbol].id)}
+                        class="compact-input mono"
+                        value={drafts[settingSymbol] ?? ""}
+                        disabled={!isWritable(settingSymbol) || writing.has(settingSymbol) || identifyBusy()}
+                        oninput={(event) => drafts = { ...drafts, [settingSymbol]: (event.currentTarget as HTMLInputElement).value }}
+                        onkeydown={(event) => handleKeydown(event, settingSymbol)}
+                      />
+                      <span class="unit">{unitFor(settingSymbol)}</span>
+                    </span>
+                  </div>
+                </div>
+              {/if}
+            {/each}
           </div>
         </section>
       </div>

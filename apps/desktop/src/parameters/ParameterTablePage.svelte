@@ -315,7 +315,7 @@
                           class="parameter-value-input mono"
                           value={drafts[row.meta.id] ?? ""}
                           disabled={writing.has(row.meta.id)}
-                          aria-label={`Value for ${row.meta.symbol}`}
+                          aria-label={`Value for ${row.meta.label}`}
                           oninput={(event) => drafts = { ...drafts, [row.meta.id]: event.currentTarget.value }}
                           onkeydown={(event) => {
                             if (event.key === "Enter") {

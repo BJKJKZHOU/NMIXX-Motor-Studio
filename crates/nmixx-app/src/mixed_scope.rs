@@ -575,7 +575,13 @@ fn build_config(
             label: metadata
                 .map(|value| value.label.clone())
                 .unwrap_or_else(|| format!("0x{:04X}", selection.id)),
-            unit: metadata.and_then(|value| value.unit.clone()),
+            unit: metadata.and_then(|value| {
+                if value.type_name == "position" {
+                    Some("turn".to_owned())
+                } else {
+                    value.unit.clone()
+                }
+            }),
             rate: selection.rate,
             sample_rate_hz: match selection.rate {
                 ScopeRate::Fast => capabilities.fast_rate_hz,
