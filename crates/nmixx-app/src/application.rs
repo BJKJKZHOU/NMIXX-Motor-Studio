@@ -696,7 +696,31 @@ impl ApplicationSession {
         if auto_position {
             let run_window =
                 Duration::from_secs_f64(preview_duration) + TUNING_POSITION_SETTLE;
-            let completed_window = self.wait_tuning(generation, run_window, true);
+            let mut elapsed = Duration::ZERO;
+            let mut completed_window = true;
+
+            while elapsed < run_window {
+                if self.tuning_stop_requested(generation) {
+                    completed_window = false;
+                    break;
+                }
+                match self.read_motor_state() {
+                    Ok(2) => {}
+                    Ok(_) => {
+                        completed_window = false;
+                        break;
+                    }
+                    Err(error) => {
+                        self.fail_tuning_experiment(generation, error);
+                        return;
+                    }
+                }
+
+                let step = TUNING_POLL.min(run_window.saturating_sub(elapsed));
+                thread::sleep(step);
+                elapsed += step;
+            }
+
             if completed_window && self.read_motor_state().ok() == Some(2) {
                 if let Err(error) = self.motion_stop() {
                     self.fail_tuning_experiment(generation, error);
