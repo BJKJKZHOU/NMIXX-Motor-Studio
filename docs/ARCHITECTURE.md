@@ -251,6 +251,10 @@ Parameter service
 
 A value such as motor resistance must not have separate storage or write paths in the generic table and the Motor page. Both views call the same Application API entry.
 
+The desktop frontend also maintains one session-wide cache of committed Parameter metadata and values. Every Parameter API read/write/refresh updates this cache. Recreated business pages seed their controls from the cache immediately, then let Application/Device reads correct the value asynchronously. This prevents committed dropdowns and values from disappearing during page navigation without turning page-local editing drafts into persistent state.
+
+Uncommitted text drafts remain page-local by design. Typing without Enter does not update the session cache and may be discarded when navigating away. A committed selection or value is never owned by a page component.
+
 The Parameters page uses TanStack Table for table behavior. TanStack owns sorting/filtering/table state; NMIXX owns markup, styling, device reads/writes and value editing semantics. Table code must not bypass `ParameterService`.
 
 ## Control Architecture and Control Tuning are different workflows
