@@ -48,6 +48,24 @@ export function parameterValueById(id: number): ParameterValue | undefined {
   return valuesById.get(id);
 }
 
+export function parameterValueText(value: ParameterValue | null | undefined): string {
+  if (!value) return "";
+  if (value.type === "position") return `${value.value.turns}, ${value.value.theta}`;
+  if (value.type === "f32") {
+    return Number(value.value).toPrecision(7).replace(/(?:\.0+|(\.\d+?)0+)$/, "$1");
+  }
+  return String(value.value);
+}
+
+export function parameterDraftSnapshot(symbols: Iterable<string>): Record<string, string> {
+  const values = parameterValueSnapshot(symbols);
+  return Object.fromEntries(
+    Object.entries(values)
+      .filter(([, value]) => value !== null)
+      .map(([symbol, value]) => [symbol, parameterValueText(value)]),
+  );
+}
+
 export function clearParameterSession(): void {
   metadataById.clear();
   metadataBySymbol.clear();
