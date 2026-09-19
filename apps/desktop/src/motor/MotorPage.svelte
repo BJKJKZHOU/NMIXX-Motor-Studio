@@ -93,7 +93,11 @@
     },
   ];
 
-  const identificationCurrentSymbol = "PARAM_IDENT_IF_CURRENT";
+  const IDENTIFICATION_SETTING_SYMBOLS = [
+    "PARAM_IDENT_IF_CURRENT",
+    "PARAM_IDENT_JB_EXCITE_RATIO",
+    "PARAM_IDENT_JB_EXCITE_HZ",
+  ] as const;
   const failReasonSymbol = "PARAM_IDENT_FAIL_REASON";
   const applyActionSymbol = "ACTION_IDENT_APPLY";
 
@@ -237,7 +241,7 @@
 
       const wanted = new Set([
         ...ROWS.flatMap((row) => [row.activeSymbol, row.identifiedSymbol, row.identifiedValidSymbol].filter(Boolean) as string[]),
-        identificationCurrentSymbol,
+        ...IDENTIFICATION_SETTING_SYMBOLS,
         failReasonSymbol,
       ]);
       const entries = registry.filter((item) => wanted.has(item.symbol));
@@ -557,26 +561,26 @@
               <div role="columnheader">Parameter</div>
               <div role="columnheader">Value</div>
             </div>
-            <div class="settings-row" role="row">
-              <div class="parameter-name" role="cell">{parameterLabel(identificationCurrentSymbol)}</div>
-              <div role="cell">
-                {#if metadata[identificationCurrentSymbol]}
-                  <span class="inline-editor">
-                    <input
-                      class:ramModified={$modifiedParameterIds.has(metadata[identificationCurrentSymbol].id)}
-                      class="compact-input mono"
-                      value={drafts[identificationCurrentSymbol] ?? ""}
-                      disabled={!isWritable(identificationCurrentSymbol) || writing.has(identificationCurrentSymbol) || identifyBusy()}
-                      oninput={(event) => drafts = { ...drafts, [identificationCurrentSymbol]: (event.currentTarget as HTMLInputElement).value }}
-                      onkeydown={(event) => handleKeydown(event, identificationCurrentSymbol)}
-                    />
-                    <span class="unit">{unitFor(identificationCurrentSymbol)}</span>
-                  </span>
-                {:else}
-                  <span class="muted">—</span>
-                {/if}
-              </div>
-            </div>
+            {#each IDENTIFICATION_SETTING_SYMBOLS as settingSymbol}
+              {#if metadata[settingSymbol]}
+                <div class="settings-row" role="row">
+                  <div class="parameter-name" role="cell">{parameterLabel(settingSymbol)}</div>
+                  <div role="cell">
+                    <span class="inline-editor">
+                      <input
+                        class:ramModified={$modifiedParameterIds.has(metadata[settingSymbol].id)}
+                        class="compact-input mono"
+                        value={drafts[settingSymbol] ?? ""}
+                        disabled={!isWritable(settingSymbol) || writing.has(settingSymbol) || identifyBusy()}
+                        oninput={(event) => drafts = { ...drafts, [settingSymbol]: (event.currentTarget as HTMLInputElement).value }}
+                        onkeydown={(event) => handleKeydown(event, settingSymbol)}
+                      />
+                      <span class="unit">{unitFor(settingSymbol)}</span>
+                    </span>
+                  </div>
+                </div>
+              {/if}
+            {/each}
           </div>
         </section>
       </div>

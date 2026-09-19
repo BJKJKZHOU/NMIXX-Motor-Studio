@@ -114,9 +114,13 @@ Transient `Running`, `Applying` and immediate failure feedback remain runtime UI
 
 Identification startup/configuration values that have a clear user-facing role may be shown below the motor-parameter table instead of being mixed into the parameter/result rows.
 
-The current GUI exposes the shared I/F forced-start current when the connected firmware exposes `PARAM_IDENT_IF_CURRENT`.
+The current GUI exposes the user-facing identification setup Parameters required by the Application preflight when the connected firmware provides them:
 
-This parameter is not a Flux-only setting. It is the common current used by identification workflows that require I/F forced startup before observer-based motion. The UI should therefore present it as a shared identification startup parameter rather than maintaining a `Used by: Flux startup` label.
+- the shared I/F forced-start current, `PARAM_IDENT_IF_CURRENT`;
+- J/B excitation ratio, `PARAM_IDENT_JB_EXCITE_RATIO`;
+- J/B excitation frequency, `PARAM_IDENT_JB_EXCITE_HZ`.
+
+The I/F current is not a Flux-only setting. It is shared by identification workflows that require forced startup before observer-based motion. The J/B excitation controls belong here because they are intentional host-visible inputs required to start J/B identification; they are not internal fitting thresholds or observer gates.
 
 Preferred presentation:
 
@@ -126,6 +130,8 @@ Identification Settings
 Parameter                 Value
 -------------------------------------
 I/F startup current       [ 0.500 ] A
+J/B excitation ratio      [ 0.100 ]
+J/B excitation frequency  [ 2.000 ] Hz
 ```
 
 Do not add internal thresholds, observer gates, fitting constants or other algorithm details merely because they exist in firmware. A setting belongs on this page only when it is an intentional host-visible control for the identification workflow.
@@ -180,7 +186,8 @@ The current GUI implements:
 - latest valid Rs/Ls, Flux and J/B results;
 - Rs/Ls, Flux and J/B Action start/completion state;
 - explicit Apply after a valid result;
-- shared I/F startup current when exposed by the Host schema.
+- shared I/F startup current when exposed by the Host schema;
+- J/B excitation ratio and frequency when exposed by the Host schema.
 
 Current limitations that must remain explicit rather than simulated:
 
