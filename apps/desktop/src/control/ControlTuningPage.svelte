@@ -11,7 +11,6 @@
   } from "../parameters/api";
   import type { ParameterMetadata, ParameterValue } from "../parameters/types";
   import { modifiedParameterIds } from "../parameters/persistence";
-  import { parameterDraftSnapshot, parameterMetadataSnapshot, parameterValueSnapshot } from "../parameters/sessionState";
   import {
     initializeMotion,
     motionState,
@@ -84,9 +83,9 @@
 
   let { connection, motorState, onError = () => undefined }: Props = $props();
 
-  let metadata = $state<Record<string, ParameterMetadata>>(parameterMetadataSnapshot(SYMBOLS));
-  let values = $state<Record<string, ParameterValue | null>>(parameterValueSnapshot(SYMBOLS));
-  let drafts = $state<Record<string, string>>(parameterDraftSnapshot(SYMBOLS));
+  let metadata = $state<Record<string, ParameterMetadata>>({});
+  let values = $state<Record<string, ParameterValue | null>>({});
+  let drafts = $state<Record<string, string>>({});
   let writing = $state<Set<string>>(new Set());
   let loading = $state(false);
   let motionActionBusy = $state(false);
@@ -123,12 +122,6 @@
   $effect(() => {
     const activeConnection = connection;
     const token = ++generation;
-
-    if (activeConnection) {
-      metadata = parameterMetadataSnapshot(SYMBOLS);
-      values = parameterValueSnapshot(SYMBOLS);
-      drafts = parameterDraftSnapshot(SYMBOLS);
-    }
 
     if (!activeConnection) {
       metadata = {};
@@ -723,6 +716,7 @@
                     class:ramModified={$modifiedParameterIds.has(metadata[spec.source].id)}
                     class="compact-select"
                     disabled={locked(spec.source)}
+                    value={sourceText(spec.source)}
                     onchange={(event) => {
                       const next = (event.currentTarget as HTMLSelectElement).value;
                       void setSource(
@@ -732,8 +726,8 @@
                       );
                     }}
                   >
-                    <option value="Bandwidth" selected={sourceText(spec.source) === "Bandwidth"}>Bandwidth</option>
-                    <option value="Manual" selected={sourceText(spec.source) === "Manual"}>Manual</option>
+                    <option value="Bandwidth">Bandwidth</option>
+                    <option value="Manual">Manual</option>
                   </select>
                 {:else}
                   <span class="unavailable">Firmware unavailable</span>
