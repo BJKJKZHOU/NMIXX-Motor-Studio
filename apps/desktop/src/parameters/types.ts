@@ -26,7 +26,7 @@ export type ParameterRange = {
 export type ParameterMetadata = {
   id: number;
   symbol: string;
-  name: string | null;
+  label: string;
   typeName: ParameterTypeName;
   access: string;
   unit: string | null;

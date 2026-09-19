@@ -2,20 +2,18 @@ use std::sync::Mutex;
 use std::time::Duration;
 
 use nmixx_app::{
-    DEFAULT_USB_BAUD, DevicePlotCapabilities, DeviceSession, HostSchema, ParameterMetadata,
-    ParameterService, ParameterValue, PositionValue, RangeMetadata, SchemaNumber, ScopeSession,
-    StreamState,
+    ActionHandle, ActionMetadata, ApplicationSession, AxdrStatus, DEFAULT_USB_BAUD, HostSchema,
+    IdentificationKind, IdentificationStart, MotionCapabilities, MotionConfig, MotionPreview, MotionService,
+    ParameterMetadata, ParameterValue, PositionValue, PreflightDomain, RangeMetadata,
+    SchemaNumber, ScopeRate, ScopeSelection, StreamState, TuningExperimentState,
 };
 use serde::{Deserialize, Serialize};
-use tauri::State;
+use tauri::{Emitter, State};
 
 #[derive(Default)]
 struct DesktopState {
-    session: Option<DeviceSession>,
-    schema: Option<HostSchema>,
-    parameters: Option<ParameterService>,
-    capabilities: Option<DevicePlotCapabilities>,
-    scope: Option<ScopeSession>,
+    app: Option<ApplicationSession>,
+    motion: MotionService,
     port: Option<String>,
 }
 
@@ -23,7 +21,7 @@ struct DesktopState {
 #[serde(rename_all = "camelCase")]
 struct PlotChannelDto {
     id: u16,
-    symbol: String,
+    label: String,
     unit: Option<String>,
     supports_fast: bool,
     supports_normal: bool,
@@ -40,6 +38,7 @@ struct ConnectionDto {
     fast_rate_hz: u32,
     normal_rate_hz: u32,
     channels: Vec<PlotChannelDto>,
+    motion: MotionCapabilities,
 }
 
 #[derive(Debug, Clone, Copy, Serialize)]
@@ -89,7 +88,7 @@ impl From<&RangeMetadata> for ParameterRangeDto {
 struct ParameterMetadataDto {
     id: u16,
     symbol: String,
-    name: Option<String>,
+    label: String,
     type_name: String,
     access: String,
     unit: Option<String>,
@@ -105,7 +104,7 @@ impl From<&ParameterMetadata> for ParameterMetadataDto {
         Self {
             id: value.id,
             symbol: value.symbol.clone(),
-            name: value.name.clone(),
+            label: value.label.clone(),
             type_name: value.type_name.clone(),
             access: value.access.clone(),
             unit: value.unit.clone(),
@@ -115,6 +114,69 @@ impl From<&ParameterMetadata> for ParameterMetadataDto {
             allowed: value.allowed.iter().copied().map(Into::into).collect(),
             allowed_symbols: value.allowed_symbols.clone(),
         }
+    }
+}
+
+#[derive(Debug, Serialize)]
+#[serde(rename_all = "camelCase")]
+struct ActionMetadataDto {
+    id: u16,
+    symbol: String,
+    label: String,
+    description: String,
+}
+
+impl From<&ActionMetadata> for ActionMetadataDto {
+    fn from(value: &ActionMetadata) -> Self {
+        Self {
+            id: value.id,
+            symbol: value.symbol.clone(),
+            label: value.label.clone(),
+            description: value.description.clone(),
+        }
+    }
+}
+
+#[derive(Debug, Serialize)]
+#[serde(tag = "status", rename_all = "snake_case")]
+enum IdentificationStartDto {
+    Blocked { issues: Vec<PreflightIssueDto> },
+    RequiresEnable,
+    Started { handle: ActionHandleDto },
+}
+
+#[derive(Debug, Clone, Serialize)]
+#[serde(rename_all = "camelCase")]
+struct ActionHandleDto {
+    txn: u8,
+    action_id: u16,
+    symbol: String,
+}
+
+#[derive(Debug, Clone, Serialize)]
+#[serde(rename_all = "camelCase")]
+struct ActionCompletionDto {
+    txn: u8,
+    action_id: u16,
+    symbol: String,
+    status: String,
+    ok: bool,
+}
+
+#[derive(Debug, Serialize)]
+#[serde(rename_all = "camelCase")]
+struct PreflightIssueDto {
+    parameter_id: Option<u16>,
+    reason: String,
+    suggested_domain: &'static str,
+}
+
+fn preflight_domain_name(domain: PreflightDomain) -> &'static str {
+    match domain {
+        PreflightDomain::LimitsSafety => "limits",
+        PreflightDomain::Motor => "motor",
+        PreflightDomain::Encoder => "encoder",
+        PreflightDomain::Identification => "identification",
     }
 }
 
@@ -183,10 +245,16 @@ struct ParameterReadResultDto {
     error: Option<String>,
 }
 
+#[derive(Debug, Clone, Deserialize)]
+#[serde(rename_all = "camelCase")]
+struct ScopeSelectionDto {
+    id: u16,
+    rate: String,
+}
+
 #[derive(Debug, Serialize)]
 #[serde(rename_all = "camelCase")]
 struct ScopeConfigDto {
-    sample_rate_hz: u32,
     history_seconds: f64,
     channels: Vec<ScopeChannelDto>,
 }
@@ -195,8 +263,10 @@ struct ScopeConfigDto {
 #[serde(rename_all = "camelCase")]
 struct ScopeChannelDto {
     id: u16,
-    symbol: String,
+    label: String,
     unit: Option<String>,
+    rate: &'static str,
+    sample_rate_hz: u32,
 }
 
 #[derive(Debug, Serialize)]
@@ -210,13 +280,35 @@ struct ScopeStatusDto {
 
 #[derive(Debug, Serialize)]
 #[serde(rename_all = "camelCase")]
-struct ScopeSnapshotDto {
+struct ScopeSeriesDto {
+    id: u16,
     sample_rate_hz: u32,
+    times: Vec<f64>,
+    values: Vec<f32>,
+}
+
+#[derive(Debug, Serialize)]
+#[serde(rename_all = "camelCase")]
+struct ScopeSnapshotDto {
     sample_count: usize,
     lost_frames: u64,
     state: &'static str,
-    times: Vec<f64>,
-    series: Vec<Vec<f32>>,
+    series: Vec<ScopeSeriesDto>,
+}
+
+#[derive(Debug, Serialize)]
+#[serde(rename_all = "camelCase")]
+struct TuningExperimentStatusDto {
+    state: &'static str,
+    message: Option<String>,
+}
+
+#[derive(Debug, Serialize)]
+#[serde(rename_all = "camelCase")]
+struct TuningExperimentSnapshotDto {
+    status: TuningExperimentStatusDto,
+    config: ScopeConfigDto,
+    snapshot: ScopeSnapshotDto,
 }
 
 fn stream_state_name(state: StreamState) -> &'static str {
@@ -228,54 +320,132 @@ fn stream_state_name(state: StreamState) -> &'static str {
     }
 }
 
-fn parameter_service(state: &State<'_, Mutex<DesktopState>>) -> Result<ParameterService, String> {
+fn tuning_experiment_state_name(state: TuningExperimentState) -> &'static str {
+    match state {
+        TuningExperimentState::Idle => "IDLE",
+        TuningExperimentState::Preparing => "PREPARING",
+        TuningExperimentState::Running => "RUNNING",
+        TuningExperimentState::Stopping => "STOPPING",
+        TuningExperimentState::Completed => "COMPLETED",
+        TuningExperimentState::Failed => "FAILED",
+    }
+}
+
+fn application(state: &State<'_, Mutex<DesktopState>>) -> Result<ApplicationSession, String> {
     state
         .lock()
         .map_err(|_| "desktop state is poisoned".to_owned())?
-        .parameters
+        .app
         .clone()
         .ok_or_else(|| "device is not connected".to_owned())
 }
 
-#[tauri::command]
-fn device_list() -> Result<Vec<String>, String> {
-    DeviceSession::available_usb_ports().map_err(|error| error.to_string())
+fn parameter_result(id: u16, result: Result<ParameterValue, impl ToString>) -> ParameterReadResultDto {
+    match result {
+        Ok(value) => ParameterReadResultDto {
+            id,
+            value: Some(value.into()),
+            error: None,
+        },
+        Err(error) => ParameterReadResultDto {
+            id,
+            value: None,
+            error: Some(error.to_string()),
+        },
+    }
+}
+
+fn spawn_action_completion(
+    app: tauri::AppHandle,
+    events: std::sync::mpsc::Receiver<nmixx_app::SessionEvent>,
+    handle: ActionHandle,
+    symbol: String,
+) {
+    std::thread::spawn(move || {
+        while let Ok(event) = events.recv() {
+            let nmixx_app::SessionEvent::ActionCompleted {
+                handle: completed,
+                status,
+            } = event
+            else {
+                continue;
+            };
+            if completed != handle {
+                continue;
+            }
+
+            let payload = ActionCompletionDto {
+                txn: completed.txn.get(),
+                action_id: completed.action_id,
+                symbol,
+                status: format!("{status:?}"),
+                ok: status == AxdrStatus::Ok,
+            };
+            let _ = app.emit("action-completed", payload);
+            break;
+        }
+    });
+}
+
+fn action_handle_dto(handle: ActionHandle, symbol: String) -> ActionHandleDto {
+    ActionHandleDto {
+        txn: handle.txn.get(),
+        action_id: handle.action_id,
+        symbol,
+    }
 }
 
 #[tauri::command]
-fn device_connect(
+fn device_list() -> Result<Vec<String>, String> {
+    ApplicationSession::available_usb_ports().map_err(|error| error.to_string())
+}
+
+#[tauri::command]
+async fn device_connect(
     state: State<'_, Mutex<DesktopState>>,
     port: String,
     schema_path: String,
     baud: Option<u32>,
 ) -> Result<ConnectionDto, String> {
-    let (old_scope, old_session) = {
+    let old_app = {
         let mut guard = state.lock().map_err(|_| "desktop state is poisoned".to_owned())?;
-        let scope = guard.scope.take();
-        let session = guard.session.take();
-        guard.schema = None;
-        guard.parameters = None;
-        guard.capabilities = None;
         guard.port = None;
-        (scope, session)
+        guard.app.take()
     };
-    drop(old_scope);
-    drop(old_session);
+    drop(old_app);
 
     let schema = HostSchema::load(&schema_path).map_err(|error| error.to_string())?;
-    let session = DeviceSession::open_usb(&port, baud.unwrap_or(DEFAULT_USB_BAUD))
-        .map_err(|error| error.to_string())?;
-    let capabilities = DevicePlotCapabilities::discover(&session).map_err(|error| error.to_string())?;
-    let parameters = ParameterService::new(session.clone(), schema.clone());
+    let motion = state
+        .lock()
+        .map_err(|_| "desktop state is poisoned".to_owned())?
+        .motion
+        .clone();
+    let app = ApplicationSession::open_usb_with_motion(
+        &port,
+        baud.unwrap_or(DEFAULT_USB_BAUD),
+        schema,
+        motion,
+    )
+    .map_err(|error| error.to_string())?;
 
+    let readable_parameters = app
+        .parameter_metadata()
+        .iter()
+        .filter(|parameter| parameter.access.contains('r'))
+        .map(|parameter| (parameter.id, parameter.symbol.clone()))
+        .collect::<Vec<_>>();
+    for (id, symbol) in readable_parameters {
+        app.parameter_read(id)
+            .map_err(|error| format!("initial read of {symbol} (0x{id:04X}) failed: {error}"))?;
+    }
+    let capabilities = app.plot_capabilities().map_err(|error| error.to_string())?;
     let channels = capabilities
-        .with_schema(&schema)
+        .with_schema(app.schema())
         .into_iter()
         .map(|channel| PlotChannelDto {
             id: channel.id,
-            symbol: channel
-                .name
-                .or(channel.symbol)
+            label: channel
+                .label
                 .unwrap_or_else(|| format!("0x{:04X}", channel.id)),
             unit: channel.unit,
             supports_fast: channel.supports_fast,
@@ -292,54 +462,46 @@ fn device_connect(
         fast_rate_hz: capabilities.fast_rate_hz,
         normal_rate_hz: capabilities.normal_rate_hz,
         channels,
+        motion: app.motion_capabilities().clone(),
     };
 
     let mut guard = state.lock().map_err(|_| "desktop state is poisoned".to_owned())?;
-    guard.session = Some(session);
-    guard.schema = Some(schema);
-    guard.parameters = Some(parameters);
-    guard.capabilities = Some(capabilities);
+    guard.app = Some(app);
     guard.port = Some(port);
     Ok(result)
 }
 
 #[tauri::command]
-fn device_disconnect(state: State<'_, Mutex<DesktopState>>) -> Result<(), String> {
-    let (scope, session) = {
+async fn device_disconnect(state: State<'_, Mutex<DesktopState>>) -> Result<(), String> {
+    let app = {
         let mut guard = state.lock().map_err(|_| "desktop state is poisoned".to_owned())?;
-        let scope = guard.scope.take();
-        let session = guard.session.take();
-        guard.schema = None;
-        guard.parameters = None;
-        guard.capabilities = None;
         guard.port = None;
-        (scope, session)
+        guard.app.take()
     };
-    drop(scope);
-    drop(session);
+    drop(app);
     Ok(())
 }
 
 #[tauri::command]
 fn parameter_list(state: State<'_, Mutex<DesktopState>>) -> Result<Vec<ParameterMetadataDto>, String> {
-    let service = parameter_service(&state)?;
-    Ok(service.parameters().iter().map(Into::into).collect())
+    let app = application(&state)?;
+    Ok(app.parameter_metadata().iter().map(Into::into).collect())
 }
 
 #[tauri::command]
-fn parameter_read(state: State<'_, Mutex<DesktopState>>, id: u16) -> Result<ParameterReadDto, String> {
-    let service = parameter_service(&state)?;
-    let value = service.read(id).map_err(|error| error.to_string())?;
+async fn parameter_read(state: State<'_, Mutex<DesktopState>>, id: u16) -> Result<ParameterReadDto, String> {
+    let app = application(&state)?;
+    let value = app.parameter_read(id).map_err(|error| error.to_string())?;
     Ok(ParameterReadDto { id, value: value.into() })
 }
 
 #[tauri::command]
-fn parameter_read_many(
+async fn parameter_read_many(
     state: State<'_, Mutex<DesktopState>>,
     ids: Vec<u16>,
 ) -> Result<Vec<ParameterReadResultDto>, String> {
-    let service = parameter_service(&state)?;
-    let values = service.read_many(&ids).map_err(|error| error.to_string())?;
+    let app = application(&state)?;
+    let values = app.parameter_read_many(&ids).map_err(|error| error.to_string())?;
     Ok(values
         .into_iter()
         .map(|(id, result)| match result {
@@ -358,19 +520,401 @@ fn parameter_read_many(
 }
 
 #[tauri::command]
-fn parameter_write(
+async fn parameter_write(
     state: State<'_, Mutex<DesktopState>>,
     id: u16,
     value: ParameterValueDto,
 ) -> Result<(), String> {
-    let service = parameter_service(&state)?;
-    service.write(id, value.into()).map_err(|error| error.to_string())
+    application(&state)?
+        .parameter_write(id, value.into())
+        .map_err(|error| error.to_string())
 }
 
 #[tauri::command]
-fn scope_configure(
+fn parameter_cached_many(
     state: State<'_, Mutex<DesktopState>>,
-    parameter_ids: Vec<u16>,
+    ids: Vec<u16>,
+) -> Result<Vec<ParameterReadResultDto>, String> {
+    let app = application(&state)?;
+    Ok(ids
+        .into_iter()
+        .map(|id| match app.parameter_cached(id) {
+            Ok(Some(value)) => ParameterReadResultDto {
+                id,
+                value: Some(value.into()),
+                error: None,
+            },
+            Ok(None) => ParameterReadResultDto {
+                id,
+                value: None,
+                error: Some("parameter has not been read into the shared cache".to_owned()),
+            },
+            Err(error) => ParameterReadResultDto {
+                id,
+                value: None,
+                error: Some(error.to_string()),
+            },
+        })
+        .collect())
+}
+
+#[tauri::command]
+async fn parameter_refresh_all(
+    app_handle: tauri::AppHandle,
+    state: State<'_, Mutex<DesktopState>>,
+) -> Result<Vec<ParameterReadResultDto>, String> {
+    let app = application(&state)?;
+    let values = app.parameter_refresh_all().map_err(|error| error.to_string())?;
+    let result = values
+        .into_iter()
+        .map(|(id, result)| parameter_result(id, result))
+        .collect::<Vec<_>>();
+    let _ = app_handle.emit("parameters-refreshed", ());
+    Ok(result)
+}
+
+#[tauri::command]
+async fn phase_search_preflight(
+    state: State<'_, Mutex<DesktopState>>,
+) -> Result<Vec<PreflightIssueDto>, String> {
+    let issues = application(&state)?
+        .preflight_phase_search()
+        .map_err(|error| error.to_string())?;
+    Ok(issues
+        .into_iter()
+        .map(|issue| PreflightIssueDto {
+            parameter_id: issue.parameter_id,
+            reason: issue.reason,
+            suggested_domain: preflight_domain_name(issue.suggested_domain),
+        })
+        .collect())
+}
+
+#[tauri::command]
+async fn identification_preflight(
+    state: State<'_, Mutex<DesktopState>>,
+    kind: String,
+) -> Result<Vec<PreflightIssueDto>, String> {
+    let kind = match kind.as_str() {
+        "rs_ls" => IdentificationKind::RsLs,
+        "flux" => IdentificationKind::Flux,
+        "jb" => IdentificationKind::Jb,
+        other => return Err(format!("unknown identification preflight kind '{other}'")),
+    };
+    let issues = application(&state)?
+        .preflight_identification(kind)
+        .map_err(|error| error.to_string())?;
+    Ok(issues
+        .into_iter()
+        .map(|issue| PreflightIssueDto {
+            parameter_id: issue.parameter_id,
+            reason: issue.reason,
+            suggested_domain: preflight_domain_name(issue.suggested_domain),
+        })
+        .collect())
+}
+
+#[tauri::command]
+async fn identification_start(
+    app_handle: tauri::AppHandle,
+    state: State<'_, Mutex<DesktopState>>,
+    kind: String,
+    allow_enable: bool,
+) -> Result<IdentificationStartDto, String> {
+    let kind_value = match kind.as_str() {
+        "rs_ls" => IdentificationKind::RsLs,
+        "flux" => IdentificationKind::Flux,
+        "jb" => IdentificationKind::Jb,
+        other => return Err(format!("unknown identification kind '{other}'")),
+    };
+    let symbol = match kind_value {
+        IdentificationKind::RsLs => "ACTION_IDENT_RS_LS_START",
+        IdentificationKind::Flux => "ACTION_IDENT_FLUX_START",
+        IdentificationKind::Jb => "ACTION_IDENT_JB_START",
+    };
+
+    let app = application(&state)?;
+    let events = app.subscribe().map_err(|error| error.to_string())?;
+    match app
+        .identification_start(kind_value, allow_enable)
+        .map_err(|error| error.to_string())?
+    {
+        IdentificationStart::Blocked(issues) => Ok(IdentificationStartDto::Blocked {
+            issues: issues
+                .into_iter()
+                .map(|issue| PreflightIssueDto {
+                    parameter_id: issue.parameter_id,
+                    reason: issue.reason,
+                    suggested_domain: preflight_domain_name(issue.suggested_domain),
+                })
+                .collect(),
+        }),
+        IdentificationStart::RequiresEnable => Ok(IdentificationStartDto::RequiresEnable),
+        IdentificationStart::Started(handle) => {
+            let dto = action_handle_dto(handle, symbol.to_owned());
+            spawn_action_completion(app_handle, events, handle, symbol.to_owned());
+            Ok(IdentificationStartDto::Started { handle: dto })
+        }
+    }
+}
+
+#[tauri::command]
+async fn identification_apply(
+    state: State<'_, Mutex<DesktopState>>,
+) -> Result<ActionHandleDto, String> {
+    let app = application(&state)?;
+    let handle = app.identification_apply().map_err(|error| error.to_string())?;
+    Ok(action_handle_dto(handle, "ACTION_IDENT_APPLY".to_owned()))
+}
+
+#[tauri::command]
+fn action_list(state: State<'_, Mutex<DesktopState>>) -> Result<Vec<ActionMetadataDto>, String> {
+    let app = application(&state)?;
+    Ok(app.schema().actions.iter().map(Into::into).collect())
+}
+
+#[tauri::command]
+async fn action_start(
+    app_handle: tauri::AppHandle,
+    state: State<'_, Mutex<DesktopState>>,
+    key: String,
+) -> Result<ActionHandleDto, String> {
+    let app = application(&state)?;
+    let symbol = app
+        .schema()
+        .action_by_key(&key)
+        .ok_or_else(|| format!("Action '{key}' is not exposed by the HostSchema"))?
+        .symbol
+        .clone();
+    let events = app.subscribe().map_err(|error| error.to_string())?;
+    let handle = app.action_start(&key).map_err(|error| error.to_string())?;
+    let result = action_handle_dto(handle, symbol.clone());
+    spawn_action_completion(app_handle, events, handle, symbol);
+    Ok(result)
+}
+
+fn start_async_semantic_action(
+    app_handle: tauri::AppHandle,
+    app: ApplicationSession,
+    symbol: &str,
+    start: impl FnOnce(&ApplicationSession) -> Result<ActionHandle, nmixx_app::ApplicationError>,
+) -> Result<ActionHandleDto, String> {
+    let events = app.subscribe().map_err(|error| error.to_string())?;
+    let handle = start(&app).map_err(|error| error.to_string())?;
+    let symbol = symbol.to_owned();
+    let result = action_handle_dto(handle, symbol.clone());
+    spawn_action_completion(app_handle, events, handle, symbol);
+    Ok(result)
+}
+
+#[tauri::command]
+async fn motor_enable(
+    state: State<'_, Mutex<DesktopState>>,
+) -> Result<ActionHandleDto, String> {
+    let app = application(&state)?;
+    let handle = app.motor_enable().map_err(|error| error.to_string())?;
+    Ok(action_handle_dto(handle, "ACTION_MOTOR_ENABLE".to_owned()))
+}
+
+#[tauri::command]
+async fn motor_stop(
+    state: State<'_, Mutex<DesktopState>>,
+) -> Result<ActionHandleDto, String> {
+    let app = application(&state)?;
+    let handle = app.motor_stop().map_err(|error| error.to_string())?;
+    Ok(action_handle_dto(handle, "ACTION_MOTOR_STOP".to_owned()))
+}
+
+#[tauri::command]
+async fn motor_disable(
+    state: State<'_, Mutex<DesktopState>>,
+) -> Result<ActionHandleDto, String> {
+    let app = application(&state)?;
+    let handle = app.motor_disable().map_err(|error| error.to_string())?;
+    Ok(action_handle_dto(handle, "ACTION_MOTOR_DISABLE".to_owned()))
+}
+
+#[tauri::command]
+fn config_save_available(state: State<'_, Mutex<DesktopState>>) -> Result<bool, String> {
+    Ok(application(&state)?.config_save_available())
+}
+
+#[tauri::command]
+async fn config_save(
+    state: State<'_, Mutex<DesktopState>>,
+) -> Result<ActionHandleDto, String> {
+    let app = application(&state)?;
+    let handle = app.config_save().map_err(|error| error.to_string())?;
+    Ok(action_handle_dto(handle, "ACTION_PARAMETER_SAVE".to_owned()))
+}
+
+#[tauri::command]
+async fn phase_search_start(
+    app_handle: tauri::AppHandle,
+    state: State<'_, Mutex<DesktopState>>,
+) -> Result<ActionHandleDto, String> {
+    start_async_semantic_action(app_handle, application(&state)?, "ACTION_PHASE_SEARCH_START", |app| app.phase_search_start())
+}
+
+#[tauri::command]
+fn motion_get(state: State<'_, Mutex<DesktopState>>) -> Result<MotionConfig, String> {
+    let guard = state.lock().map_err(|_| "desktop state is poisoned".to_owned())?;
+    Ok(guard.motion.get())
+}
+
+#[tauri::command]
+fn motion_set(
+    state: State<'_, Mutex<DesktopState>>,
+    config: MotionConfig,
+) -> Result<MotionConfig, String> {
+    let guard = state.lock().map_err(|_| "desktop state is poisoned".to_owned())?;
+    guard.motion.set(config)
+}
+
+#[tauri::command]
+async fn motion_preview(state: State<'_, Mutex<DesktopState>>) -> Result<MotionPreview, String> {
+    let (app, motion) = {
+        let guard = state.lock().map_err(|_| "desktop state is poisoned".to_owned())?;
+        (guard.app.clone(), guard.motion.clone())
+    };
+
+    match app {
+        Some(app) => app.motion_preview().map_err(|error| error.to_string()),
+        None => motion.preview(),
+    }
+}
+
+#[tauri::command]
+async fn motion_run(state: State<'_, Mutex<DesktopState>>) -> Result<(), String> {
+    application(&state)?
+        .motion_run()
+        .map(|_| ())
+        .map_err(|error| error.to_string())
+}
+
+#[tauri::command]
+async fn motion_stop(state: State<'_, Mutex<DesktopState>>) -> Result<(), String> {
+    application(&state)?
+        .motion_stop()
+        .map(|_| ())
+        .map_err(|error| error.to_string())
+}
+
+#[tauri::command]
+async fn tuning_experiment_start(
+    state: State<'_, Mutex<DesktopState>>,
+) -> Result<TuningExperimentStatusDto, String> {
+    let status = application(&state)?
+        .tuning_experiment_start()
+        .map_err(|error| error.to_string())?;
+    Ok(TuningExperimentStatusDto {
+        state: tuning_experiment_state_name(status.state),
+        message: status.message,
+    })
+}
+
+#[tauri::command]
+async fn tuning_experiment_stop(
+    state: State<'_, Mutex<DesktopState>>,
+) -> Result<TuningExperimentStatusDto, String> {
+    let status = application(&state)?
+        .tuning_experiment_stop()
+        .map_err(|error| error.to_string())?;
+    Ok(TuningExperimentStatusDto {
+        state: tuning_experiment_state_name(status.state),
+        message: status.message,
+    })
+}
+
+#[tauri::command]
+fn tuning_experiment_status(
+    state: State<'_, Mutex<DesktopState>>,
+) -> Result<TuningExperimentStatusDto, String> {
+    let status = application(&state)?
+        .tuning_experiment_status()
+        .map_err(|error| error.to_string())?;
+    Ok(TuningExperimentStatusDto {
+        state: tuning_experiment_state_name(status.state),
+        message: status.message,
+    })
+}
+
+#[tauri::command]
+fn tuning_experiment_snapshot(
+    state: State<'_, Mutex<DesktopState>>,
+    max_points: Option<usize>,
+) -> Result<TuningExperimentSnapshotDto, String> {
+    let app = application(&state)?;
+    let result = app
+        .tuning_experiment_snapshot()
+        .map_err(|error| error.to_string())?;
+    let scope_status = app.scope_status().map_err(|error| error.to_string())?;
+    let max_points = max_points.unwrap_or(5000).clamp(200, 20_000);
+
+    let config = ScopeConfigDto {
+        history_seconds: result.config.history.as_secs_f64(),
+        channels: result
+            .config
+            .channels
+            .iter()
+            .map(|channel| ScopeChannelDto {
+                id: channel.id,
+                label: channel.label.clone(),
+                unit: channel.unit.clone(),
+                rate: match channel.rate {
+                    ScopeRate::Fast => "fast",
+                    ScopeRate::Normal => "normal",
+                },
+                sample_rate_hz: channel.sample_rate_hz,
+            })
+            .collect(),
+    };
+
+    let series = result
+        .snapshot
+        .series
+        .into_iter()
+        .map(|series| {
+            let sample_count = series.values.len();
+            let stride = sample_count.div_ceil(max_points).max(1);
+            let mut times = Vec::with_capacity(sample_count.div_ceil(stride));
+            let mut values = Vec::with_capacity(sample_count.div_ceil(stride));
+
+            for index in (0..sample_count).step_by(stride) {
+                let t = (index as f64 - sample_count.saturating_sub(1) as f64)
+                    / f64::from(series.sample_rate_hz);
+                times.push(t);
+                values.push(series.values[index]);
+            }
+
+            ScopeSeriesDto {
+                id: series.id,
+                sample_rate_hz: series.sample_rate_hz,
+                times,
+                values,
+            }
+        })
+        .collect();
+
+    Ok(TuningExperimentSnapshotDto {
+        status: TuningExperimentStatusDto {
+            state: tuning_experiment_state_name(result.status.state),
+            message: result.status.message,
+        },
+        config,
+        snapshot: ScopeSnapshotDto {
+            sample_count: scope_status.samples,
+            lost_frames: result.snapshot.lost_frames,
+            state: stream_state_name(result.snapshot.state),
+            series,
+        },
+    })
+}
+
+#[tauri::command]
+async fn scope_configure(
+    state: State<'_, Mutex<DesktopState>>,
+    selections: Vec<ScopeSelectionDto>,
     history_seconds: Option<f64>,
 ) -> Result<ScopeConfigDto, String> {
     let history_seconds = history_seconds.unwrap_or(10.0);
@@ -378,70 +922,72 @@ fn scope_configure(
         return Err("historySeconds must be positive and finite".to_owned());
     }
 
-    let (old_scope, session, schema, capabilities) = {
-        let mut guard = state.lock().map_err(|_| "desktop state is poisoned".to_owned())?;
-        let old_scope = guard.scope.take();
-        let session = guard.session.clone().ok_or("device is not connected")?;
-        let schema = guard.schema.clone().ok_or("HostSchema is not loaded")?;
-        let capabilities = guard.capabilities.clone().ok_or("Plot capabilities are not loaded")?;
-        (old_scope, session, schema, capabilities)
-    };
-    drop(old_scope);
+    let selections = selections
+        .into_iter()
+        .map(|selection| {
+            let rate = match selection.rate.as_str() {
+                "fast" => Ok(ScopeRate::Fast),
+                "normal" => Ok(ScopeRate::Normal),
+                other => Err(format!("unknown Scope rate '{other}'")),
+            }?;
+            Ok(ScopeSelection {
+                id: selection.id,
+                rate,
+            })
+        })
+        .collect::<Result<Vec<_>, String>>()?;
 
-    let scope = ScopeSession::from_fast_capabilities(
-        session,
-        &capabilities,
-        &schema,
-        &parameter_ids,
-        Duration::from_secs_f64(history_seconds),
-        1,
-    )
-    .map_err(|error| error.to_string())?;
+    let app = application(&state)?;
+    let config = app
+        .scope_configure(
+            &selections,
+            Duration::from_secs_f64(history_seconds),
+            1,
+        )
+        .map_err(|error| error.to_string())?;
 
-    let result = ScopeConfigDto {
-        sample_rate_hz: scope.config().sample_rate_hz,
-        history_seconds: scope.config().history.as_secs_f64(),
-        channels: scope
-            .config()
+    Ok(ScopeConfigDto {
+        history_seconds: config.history.as_secs_f64(),
+        channels: config
             .channels
             .iter()
             .map(|channel| ScopeChannelDto {
                 id: channel.id,
-                symbol: channel.symbol.clone(),
+                label: channel.label.clone(),
                 unit: channel.unit.clone(),
+                rate: match channel.rate {
+                    ScopeRate::Fast => "fast",
+                    ScopeRate::Normal => "normal",
+                },
+                sample_rate_hz: channel.sample_rate_hz,
             })
             .collect(),
-    };
-
-    state
-        .lock()
-        .map_err(|_| "desktop state is poisoned".to_owned())?
-        .scope = Some(scope);
-    Ok(result)
+    })
 }
 
 #[tauri::command]
-fn scope_live(state: State<'_, Mutex<DesktopState>>) -> Result<(), String> {
-    let guard = state.lock().map_err(|_| "desktop state is poisoned".to_owned())?;
-    guard.scope.as_ref().ok_or("Scope is not configured")?.live().map_err(|error| error.to_string())
+async fn scope_live(state: State<'_, Mutex<DesktopState>>) -> Result<(), String> {
+    application(&state)?.scope_live().map_err(|error| error.to_string())
 }
 
 #[tauri::command]
-fn scope_pause(state: State<'_, Mutex<DesktopState>>) -> Result<(), String> {
-    let guard = state.lock().map_err(|_| "desktop state is poisoned".to_owned())?;
-    guard.scope.as_ref().ok_or("Scope is not configured")?.pause().map_err(|error| error.to_string())
+async fn scope_pause(state: State<'_, Mutex<DesktopState>>) -> Result<(), String> {
+    application(&state)?.scope_pause().map_err(|error| error.to_string())
+}
+
+#[tauri::command]
+async fn scope_stop(state: State<'_, Mutex<DesktopState>>) -> Result<(), String> {
+    application(&state)?.scope_stop().map_err(|error| error.to_string())
 }
 
 #[tauri::command]
 fn scope_clear(state: State<'_, Mutex<DesktopState>>) -> Result<(), String> {
-    let guard = state.lock().map_err(|_| "desktop state is poisoned".to_owned())?;
-    guard.scope.as_ref().ok_or("Scope is not configured")?.clear().map_err(|error| error.to_string())
+    application(&state)?.scope_clear().map_err(|error| error.to_string())
 }
 
 #[tauri::command]
 fn scope_status(state: State<'_, Mutex<DesktopState>>) -> Result<ScopeStatusDto, String> {
-    let guard = state.lock().map_err(|_| "desktop state is poisoned".to_owned())?;
-    let status = guard.scope.as_ref().ok_or("Scope is not configured")?.status().map_err(|error| error.to_string())?;
+    let status = application(&state)?.scope_status().map_err(|error| error.to_string())?;
     Ok(ScopeStatusDto {
         state: stream_state_name(status.state),
         samples: status.samples,
@@ -454,40 +1000,53 @@ fn scope_status(state: State<'_, Mutex<DesktopState>>) -> Result<ScopeStatusDto,
 fn scope_snapshot(
     state: State<'_, Mutex<DesktopState>>,
     window_seconds: Option<f64>,
+    end_offset_seconds: Option<f64>,
     max_points: Option<usize>,
 ) -> Result<ScopeSnapshotDto, String> {
-    let guard = state.lock().map_err(|_| "desktop state is poisoned".to_owned())?;
-    let scope = guard.scope.as_ref().ok_or("Scope is not configured")?;
-    let status = scope.status().map_err(|error| error.to_string())?;
-    let rate = scope.config().sample_rate_hz;
-    let window = window_seconds.unwrap_or(0.5).clamp(0.01, scope.config().history.as_secs_f64());
-    let wanted = (window * f64::from(rate)).ceil() as usize;
-    let snapshot = scope.snapshot_tail(wanted).map_err(|error| error.to_string())?;
-    let sample_count = snapshot.sample_count();
-    let channel_count = snapshot.config.channel_count;
+    let app = application(&state)?;
+    let status = app.scope_status().map_err(|error| error.to_string())?;
+    let config = app.scope_config().map_err(|error| error.to_string())?;
+    let window = window_seconds.unwrap_or(0.5).clamp(0.0005, config.history.as_secs_f64());
+    let max_offset = (config.history.as_secs_f64() - window).max(0.0);
+    let end_offset = end_offset_seconds.unwrap_or(0.0).clamp(0.0, max_offset);
+    let snapshot = app
+        .scope_snapshot_window(
+            Duration::from_secs_f64(window),
+            Duration::from_secs_f64(end_offset),
+        )
+        .map_err(|error| error.to_string())?;
     let max_points = max_points.unwrap_or(2500).clamp(100, 10_000);
-    let stride = sample_count.div_ceil(max_points).max(1);
 
-    let mut times = Vec::with_capacity(sample_count.div_ceil(stride));
-    let mut series = (0..channel_count)
-        .map(|_| Vec::with_capacity(sample_count.div_ceil(stride)))
-        .collect::<Vec<_>>();
+    let series = snapshot
+        .series
+        .into_iter()
+        .map(|series| {
+            let sample_count = series.values.len();
+            let stride = sample_count.div_ceil(max_points).max(1);
+            let mut times = Vec::with_capacity(sample_count.div_ceil(stride));
+            let mut values = Vec::with_capacity(sample_count.div_ceil(stride));
 
-    for sample_index in (0..sample_count).step_by(stride) {
-        let sample = snapshot.sample(sample_index).ok_or("snapshot indexing failed")?;
-        let t = (sample_index as f64 - sample_count.saturating_sub(1) as f64) / f64::from(rate);
-        times.push(t);
-        for (channel, value) in sample.iter().enumerate() {
-            series[channel].push(*value);
-        }
-    }
+            for index in (0..sample_count).step_by(stride) {
+                let t = (index as f64 - sample_count.saturating_sub(1) as f64)
+                    / f64::from(series.sample_rate_hz)
+                    - end_offset;
+                times.push(t);
+                values.push(series.values[index]);
+            }
+
+            ScopeSeriesDto {
+                id: series.id,
+                sample_rate_hz: series.sample_rate_hz,
+                times,
+                values,
+            }
+        })
+        .collect();
 
     Ok(ScopeSnapshotDto {
-        sample_rate_hz: rate,
         sample_count: status.samples,
-        lost_frames: status.lost_frames,
-        state: stream_state_name(status.state),
-        times,
+        lost_frames: snapshot.lost_frames,
+        state: stream_state_name(snapshot.state),
         series,
     })
 }
@@ -502,10 +1061,34 @@ fn main() {
             parameter_list,
             parameter_read,
             parameter_read_many,
+            parameter_cached_many,
+            parameter_refresh_all,
             parameter_write,
+            phase_search_preflight,
+            identification_preflight,
+            identification_start,
+            identification_apply,
+            action_list,
+            action_start,
+            motor_enable,
+            motor_stop,
+            motor_disable,
+            config_save_available,
+            config_save,
+            phase_search_start,
+            motion_get,
+            motion_set,
+            motion_preview,
+            motion_run,
+            motion_stop,
+            tuning_experiment_start,
+            tuning_experiment_stop,
+            tuning_experiment_status,
+            tuning_experiment_snapshot,
             scope_configure,
             scope_live,
             scope_pause,
+            scope_stop,
             scope_clear,
             scope_status,
             scope_snapshot,

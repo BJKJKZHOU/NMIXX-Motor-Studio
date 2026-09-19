@@ -4,13 +4,13 @@
   import type { ConnectionInfo } from "./types";
 
   export let connection: ConnectionInfo | undefined;
+  export let port: string;
+  export let schemaPath: string;
   export let onConnected: (connection: ConnectionInfo) => void = () => undefined;
   export let onDisconnected: () => void = () => undefined;
   export let onError: (error: unknown) => void = () => undefined;
 
   let ports: string[] = [];
-  let port = "";
-  let schemaPath = "../../../AxDr_L_Motor/build/host/axdr-host-schema.toml";
   let busy = false;
 
   function preferredPort(candidates: string[], current: string): string {

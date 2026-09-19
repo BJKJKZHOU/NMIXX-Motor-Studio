@@ -1,5 +1,5 @@
 <script lang="ts">
-  import { untrack } from "svelte";
+  import { onMount, untrack } from "svelte";
   import {
     FlexRender,
     columnFilteringFeature,
@@ -13,8 +13,9 @@
   } from "@tanstack/svelte-table";
   import type { ColumnDef } from "@tanstack/svelte-table";
   import type { ConnectionInfo } from "../connection/types";
-  import { listParameters, readParameter, readParameters, writeParameter } from "./api";
+  import { listParameters, onParametersRefreshed, readCachedParameters, readCurrentParameters, readParameter, writeParameter } from "./api";
   import type { ParameterMetadata, ParameterValue } from "./types";
+  import { modifiedParameterIds } from "./persistence";
 
   type Props = {
     connection: ConnectionInfo | undefined;
@@ -51,7 +52,7 @@
   const columns: Array<ColumnDef<typeof features, ParameterRow>> = [
     { id: "id", accessorFn: (row) => row.meta.id, header: "ID" },
     { id: "symbol", accessorFn: (row) => row.meta.symbol, header: "Symbol" },
-    { id: "name", accessorFn: (row) => row.meta.name ?? "", header: "Name" },
+    { id: "label", accessorFn: (row) => row.meta.label, header: "Label" },
     { id: "value", accessorFn: (row) => row.pending ? "…" : valueText(row.value), header: "Value" },
     { id: "unit", accessorFn: (row) => row.meta.unit ?? "", header: "Unit" },
     { id: "access", accessorFn: (row) => row.meta.access, header: "Access" },
@@ -69,6 +70,21 @@
 
   const loadedValues = $derived(rows.filter((row) => !row.pending).length);
 
+  onMount(() => {
+    let disposed = false;
+    let refreshUnlisten: (() => void) | undefined;
+    onParametersRefreshed(() => void refreshFromCache())
+      .then((stop) => {
+        if (disposed) stop();
+        else refreshUnlisten = stop;
+      })
+      .catch(onError);
+    return () => {
+      disposed = true;
+      refreshUnlisten?.();
+    };
+  });
+
   $effect(() => {
     const activeConnection = connection;
     const generation = ++loadGeneration;
@@ -79,7 +95,7 @@
       loadingRegistry = false;
       readingValues = false;
       search = "";
-      table.setGlobalFilter("");
+      untrack(() => table.setGlobalFilter(""));
       return;
     }
 
@@ -137,7 +153,7 @@
     }
   }
 
-  function applyReadResults(results: Awaited<ReturnType<typeof readParameters>>) {
+  function applyReadResults(results: Awaited<ReturnType<typeof readCurrentParameters>>) {
     const byId = new Map(results.map((result) => [result.id, result]));
     const draftPatch: Record<number, string> = {};
     rows = rows.map((row) => {
@@ -167,7 +183,7 @@
         if (generation !== loadGeneration || connection !== activeConnection) return;
         const batch = readable.slice(offset, offset + READ_BATCH_SIZE);
         try {
-          const results = await readParameters(batch.map((item) => item.id));
+          const results = await readCurrentParameters(batch.map((item) => item.id));
           if (generation !== loadGeneration || connection !== activeConnection) return;
           applyReadResults(results);
         } catch (error) {
@@ -186,11 +202,16 @@
     }
   }
 
-  function refreshAll() {
-    const activeConnection = connection;
-    if (!activeConnection || loadingRegistry || readingValues) return;
-    const generation = ++loadGeneration;
-    void loadRegistry(activeConnection, generation);
+  async function refreshFromCache() {
+    if (!connection || rows.length === 0) return;
+    const readable = rows.filter((row) => isReadable(row.meta)).map((row) => row.meta.id);
+    if (readable.length === 0) return;
+    try {
+      const results = await readCachedParameters(readable);
+      applyReadResults(results);
+    } catch (error) {
+      onError(error);
+    }
   }
 
   async function refreshOne(row: ParameterRow) {
@@ -246,10 +267,6 @@
           {table.getRowModel().rows.length} / {rows.length}
         {/if}
       </span>
-      <button class="tool-button" disabled={!connection || loadingRegistry || readingValues} onclick={refreshAll} title="Refresh all parameters">
-        <i class={`codicon ${loadingRegistry || readingValues ? "codicon-loading codicon-modifier-spin" : "codicon-refresh"}`}></i>
-        Refresh
-      </button>
     </div>
   </section>
 
@@ -287,21 +304,30 @@
                       <span class="mono parameter-id">0x{row.meta.id.toString(16).toUpperCase().padStart(4, "0")}</span>
                     {:else if cell.column.id === "symbol"}
                       <span class="mono parameter-symbol">{row.meta.symbol}</span>
-                    {:else if cell.column.id === "name"}
-                      <span>{row.meta.name ?? "—"}</span>
+                    {:else if cell.column.id === "label"}
+                      <span>{row.meta.label}</span>
                     {:else if cell.column.id === "value"}
                       {#if row.pending}
                         <span class="pending-value"><i class="codicon codicon-loading codicon-modifier-spin"></i></span>
                       {:else if isWritable(row.meta)}
-                        <div class="parameter-value-editor">
-                          <input class="parameter-value-input mono" value={drafts[row.meta.id] ?? ""} disabled={writing.has(row.meta.id)} aria-label={`Value for ${row.meta.symbol}`} oninput={(event) => drafts = { ...drafts, [row.meta.id]: event.currentTarget.value }} onkeydown={(event) => {
-                            if (event.key === "Enter") { event.preventDefault(); void commitValue(row); }
-                            else if (event.key === "Escape") { drafts = { ...drafts, [row.meta.id]: row.value ? valueText(row.value) : "" }; event.currentTarget.blur(); }
-                          }} />
-                          <button class="cell-action" disabled={writing.has(row.meta.id)} onclick={() => void commitValue(row)} title="Write value (Enter)" aria-label={`Write ${row.meta.symbol}`}>
-                            <i class={`codicon ${writing.has(row.meta.id) ? "codicon-loading codicon-modifier-spin" : "codicon-check"}`}></i>
-                          </button>
-                        </div>
+                        <input
+                          class:ramModified={$modifiedParameterIds.has(row.meta.id)}
+                          class="parameter-value-input mono"
+                          value={drafts[row.meta.id] ?? ""}
+                          disabled={writing.has(row.meta.id)}
+                          aria-label={`Value for ${row.meta.label}`}
+                          oninput={(event) => drafts = { ...drafts, [row.meta.id]: event.currentTarget.value }}
+                          onkeydown={(event) => {
+                            if (event.key === "Enter") {
+                              event.preventDefault();
+                              void commitValue(row);
+                              event.currentTarget.blur();
+                            } else if (event.key === "Escape") {
+                              drafts = { ...drafts, [row.meta.id]: row.value ? valueText(row.value) : "" };
+                              event.currentTarget.blur();
+                            }
+                          }}
+                        />
                       {:else}
                         <span class="mono">{valueText(row.value)}</span>
                       {/if}
@@ -338,10 +364,8 @@
   .parameter-search .compact-input { border: 0; background: transparent; }
   .parameter-search .compact-input:focus { border: 0; }
   .parameter-count { min-width: 105px; color: #848484; font-size: 11px; text-align: right; }
-  .tool-button, .cell-action, .table-header-button { border: 0; color: #c8c8c8; background: transparent; font: inherit; }
-  .tool-button { height: 27px; display: inline-flex; align-items: center; gap: 6px; padding: 0 9px; border: 1px solid #3a3d42; border-radius: 2px; background: #2a2d32; }
-  .tool-button:not(:disabled):hover, .cell-action:not(:disabled):hover { background: #383c43; }
-  .tool-button:disabled, .cell-action:disabled, .table-header-button:disabled { opacity: .5; }
+  .table-header-button { border: 0; color: #c8c8c8; background: transparent; font: inherit; }
+  .table-header-button:disabled { opacity: .5; }
   .parameter-content { min-height: 0; overflow: hidden; background: #1e1e1e; }
   .parameter-table-shell { width: 100%; height: 100%; overflow: auto; }
   .parameter-table { width: 100%; min-width: 1080px; border-collapse: separate; border-spacing: 0; table-layout: auto; font-size: 12px; }
@@ -357,11 +381,9 @@
   .muted, .parameter-id { color: #8c8c8c; }
   .parameter-symbol { color: #d0d0d0; }
   .pending-value { color: #777; }
-  .parameter-value-editor { display: grid; grid-template-columns: minmax(90px, 1fr) 25px; gap: 4px; }
-  .parameter-value-input { width: 100%; min-width: 0; height: 23px; padding: 1px 5px; border: 1px solid transparent; border-radius: 2px; outline: none; color: #d8d8d8; background: transparent; }
+  .parameter-value-input { width: 100%; min-width: 90px; height: 23px; padding: 1px 5px; border: 1px solid transparent; border-radius: 2px; outline: none; color: #d8d8d8; background: transparent; }
   .parameter-value-input:hover { border-color: #3a4049; background: #25292f; }
   .parameter-value-input:focus { border-color: var(--vscode-focusBorder); background: var(--vscode-input-background); }
-  .cell-action { width: 25px; height: 23px; border-radius: 2px; }
   .access-badge { display: inline-flex; min-width: 28px; justify-content: center; padding: 1px 5px; border: 1px solid #3a3a3a; border-radius: 8px; color: #8d8d8d; font-size: 10px; line-height: 15px; }
   .access-badge.rw { color: #b5c2d4; border-color: #465265; background: #29303b; }
   .empty-state { height: 100%; display: grid; place-content: center; justify-items: center; gap: 10px; color: #777; }

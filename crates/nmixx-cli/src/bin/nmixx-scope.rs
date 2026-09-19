@@ -6,8 +6,8 @@ use std::time::Duration;
 
 use clap::Parser;
 use nmixx_app::{
-    DEFAULT_USB_BAUD, DevicePlotCapabilities, DeviceSession, HostSchema, ScopeConfig, ScopeSession,
-    StreamSnapshot,
+    ApplicationSession, DEFAULT_USB_BAUD, DevicePlotCapabilities, HostSchema, MixedScopeConfig,
+    MixedScopeSnapshot, ScopeRate, ScopeSelection,
 };
 
 #[derive(Debug, Parser)]
@@ -58,11 +58,11 @@ fn run() -> Result<(), Box<dyn Error>> {
     }
 
     let schema = HostSchema::load(&args.schema)?;
-    let session = DeviceSession::open_usb(&args.port, args.baud)?;
-    let capabilities = DevicePlotCapabilities::discover(&session)?;
+    let app = ApplicationSession::open_usb(&args.port, args.baud, schema)?;
 
     if args.list || args.channels.is_empty() {
-        print_capabilities(&capabilities, &schema);
+        let capabilities = app.plot_capabilities()?;
+        print_capabilities(&capabilities, app.schema());
         if args.channels.is_empty() {
             println!();
             println!("select one or more FAST-capable parameters to start Scope");
@@ -70,12 +70,14 @@ fn run() -> Result<(), Box<dyn Error>> {
         return Ok(());
     }
 
-    let parameter_ids = resolve_parameter_ids(&schema, &args.channels)?;
-    let scope = ScopeSession::from_fast_capabilities(
-        session,
-        &capabilities,
-        &schema,
-        &parameter_ids,
+    let parameter_ids = resolve_parameter_ids(app.schema(), &args.channels)?;
+    let selections: Vec<ScopeSelection> = parameter_ids
+        .iter()
+        .copied()
+        .map(|id| ScopeSelection { id, rate: ScopeRate::Fast })
+        .collect();
+    let config = app.scope_configure(
+        &selections,
         Duration::from_secs_f64(args.history),
         args.config_id,
     )?;
@@ -83,25 +85,24 @@ fn run() -> Result<(), Box<dyn Error>> {
     println!("NMIXX Scope");
     println!("port: {} @ {}", args.port, args.baud);
     println!(
-        "FAST: {} channel(s) @ {} Hz, block={}, {:.3} s RAM history",
-        scope.config().channels.len(),
-        scope.config().sample_rate_hz,
-        capabilities.fast_block_samples,
-        scope.config().history.as_secs_f64()
+        "Scope: {} channel(s), FAST block={}, {:.3} s RAM history",
+        config.channels.len(),
+        app.plot_capabilities()?.fast_block_samples,
+        config.history.as_secs_f64()
     );
-    for (index, channel) in scope.config().channels.iter().enumerate() {
+    for (index, channel) in config.channels.iter().enumerate() {
         println!(
-            "  ch{}: {} (0x{:04X}) scale={}{}",
+            "  ch{}: {} (0x{:04X}) {} Hz{}",
             index,
-            channel.symbol,
+            channel.label,
             channel.id,
-            channel.scale,
+            channel.sample_rate_hz,
             channel.unit.as_deref().map(|unit| format!(" {unit}")).unwrap_or_default()
         );
     }
     println!("type 'help' for commands");
 
-    repl(&scope)
+    repl(&app)
 }
 
 fn print_capabilities(capabilities: &DevicePlotCapabilities, schema: &HostSchema) {
@@ -122,10 +123,7 @@ fn print_capabilities(capabilities: &DevicePlotCapabilities, schema: &HostSchema
     println!("---------------------------------------------------------------");
     for channel in capabilities.with_schema(schema) {
         let label = channel
-            .name
-            .as_deref()
-            .or(channel.symbol.as_deref())
-            .map(str::to_owned)
+            .label
             .unwrap_or_else(|| format!("0x{:04X}", channel.id));
         let fast = match channel.fast_scale {
             Some(scale) => format!("yes/{scale}"),
@@ -158,7 +156,7 @@ fn resolve_parameter_ids(schema: &HostSchema, keys: &[String]) -> Result<Vec<u16
     Ok(ids)
 }
 
-fn repl(scope: &ScopeSession) -> Result<(), Box<dyn Error>> {
+fn repl(app: &ApplicationSession) -> Result<(), Box<dyn Error>> {
     let stdin = io::stdin();
     let mut lines = stdin.lock().lines();
 
@@ -173,19 +171,19 @@ fn repl(scope: &ScopeSession) -> Result<(), Box<dyn Error>> {
         match command.to_ascii_lowercase().as_str() {
             "help" | "?" => print_help(),
             "live" | "resume" => {
-                scope.resume()?;
+                app.scope_resume()?;
                 println!("LIVE");
             }
             "pause" => {
-                scope.pause()?;
+                app.scope_pause()?;
                 println!("PAUSED");
             }
             "stop" => {
-                scope.stop()?;
+                app.scope_stop()?;
                 println!("STOPPED");
             }
             "clear" => {
-                scope.clear()?;
+                app.scope_clear()?;
                 println!("buffer cleared");
             }
             "capture" => {
@@ -194,16 +192,16 @@ fn repl(scope: &ScopeSession) -> Result<(), Box<dyn Error>> {
                     return Err("capture accepts exactly one duration".into());
                 }
                 let duration = parse_duration(text)?;
-                scope.capture(duration)?;
+                app.scope_capture(duration)?;
                 println!("CAPTURING {:.3} s", duration.as_secs_f64());
             }
-            "status" => print_status(scope)?,
+            "status" => print_status(app)?,
             "export" => {
                 let path = words.next().ok_or("export requires a file path")?;
                 if words.next().is_some() {
                     return Err("export accepts exactly one file path".into());
                 }
-                export_csv(scope, Path::new(path))?;
+                export_csv(app, Path::new(path))?;
             }
             "quit" | "exit" => break,
             other => println!("unknown command '{other}'; type 'help'"),
@@ -224,45 +222,54 @@ fn print_help() {
     println!("quit | exit         stop Plot and close Scope");
 }
 
-fn print_status(scope: &ScopeSession) -> Result<(), Box<dyn Error>> {
-    let status = scope.status()?;
-    let duration = status.samples as f64 / f64::from(scope.config().sample_rate_hz);
-    let capacity_s = status.capacity_samples as f64 / f64::from(scope.config().sample_rate_hz);
+fn print_status(app: &ApplicationSession) -> Result<(), Box<dyn Error>> {
+    let status = app.scope_status()?;
+    let config = app.scope_config()?;
     println!("state: {:?}", status.state);
-    println!("samples: {} / {}", status.samples, status.capacity_samples);
-    println!("duration: {:.6} / {:.3} s", duration, capacity_s);
+    println!("stored samples: {} / {}", status.samples, status.capacity_samples);
+    println!("history capacity: {:.3} s per active group", config.history.as_secs_f64());
     println!("lost frames: {}", status.lost_frames);
     Ok(())
 }
 
-fn export_csv(scope: &ScopeSession, path: &Path) -> Result<(), Box<dyn Error>> {
-    let snapshot = scope.snapshot()?;
-    write_snapshot_csv(&snapshot, scope.config(), path)?;
-    println!(
-        "exported {} samples ({:.6} s) -> {}",
-        snapshot.sample_count(),
-        snapshot.duration().as_secs_f64(),
-        path.display()
-    );
+fn export_csv(app: &ApplicationSession, path: &Path) -> Result<(), Box<dyn Error>> {
+    let config = app.scope_config()?;
+    let snapshot = app.scope_snapshot_tail(config.history)?;
+    write_snapshot_csv(&snapshot, &config, path)?;
+    let samples: usize = snapshot.series.iter().map(|series| series.values.len()).sum();
+    println!("exported {} mixed-rate samples -> {}", samples, path.display());
     Ok(())
 }
 
-fn write_snapshot_csv(snapshot: &StreamSnapshot, config: &ScopeConfig, path: &Path) -> Result<(), Box<dyn Error>> {
+fn write_snapshot_csv(
+    snapshot: &MixedScopeSnapshot,
+    config: &MixedScopeConfig,
+    path: &Path,
+) -> Result<(), Box<dyn Error>> {
     let mut file = File::create(path)?;
-    write!(file, "time_s")?;
-    for channel in &config.channels {
-        write!(file, ",{}", channel.symbol)?;
-    }
-    writeln!(file)?;
+    writeln!(file, "channel_id,label,sample_rate_hz,time_s,value")?;
 
-    let sample_rate = f64::from(config.sample_rate_hz);
-    for index in 0..snapshot.sample_count() {
-        write!(file, "{:.9}", index as f64 / sample_rate)?;
-        let sample = snapshot.sample(index).ok_or("snapshot sample indexing failed")?;
-        for value in sample {
-            write!(file, ",{value:.9}")?;
+    for series in &snapshot.series {
+        let symbol = config
+            .channels
+            .iter()
+            .find(|channel| channel.id == series.id)
+            .map(|channel| channel.label.as_str())
+            .unwrap_or("unknown");
+        let count = series.values.len();
+        for (index, value) in series.values.iter().enumerate() {
+            let time = (index as f64 - count.saturating_sub(1) as f64)
+                / f64::from(series.sample_rate_hz);
+            writeln!(
+                file,
+                "0x{:04X},{},{},{:.9},{:.9}",
+                series.id,
+                symbol,
+                series.sample_rate_hz,
+                time,
+                value
+            )?;
         }
-        writeln!(file)?;
     }
     Ok(())
 }
