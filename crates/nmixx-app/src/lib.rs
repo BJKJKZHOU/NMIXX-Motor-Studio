@@ -21,7 +21,10 @@ mod session;
 mod stream;
 mod stream_pipeline;
 
-pub use application::{ApplicationError, ApplicationSession};
+pub use application::{
+    ApplicationError, ApplicationSession, TuningExperimentSnapshot, TuningExperimentState,
+    TuningExperimentStatus,
+};
 pub use config_service::{ConfigService, ConfigServiceError};
 pub use connection::DEFAULT_USB_BAUD;
 pub use parameter_service::{ParameterService, ParameterServiceError};

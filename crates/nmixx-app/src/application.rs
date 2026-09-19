@@ -1,5 +1,6 @@
 use std::path::Path;
 use std::sync::{Arc, Mutex, mpsc};
+use std::thread;
 use std::time::Duration;
 
 use thiserror::Error;
@@ -7,10 +8,10 @@ use thiserror::Error;
 use crate::{
     ActionHandle, ConfigService, ConfigServiceError, DevicePlotCapabilities, DeviceSession,
     HostSchema, IdentificationKind, IdentificationStart, MixedScopeConfig, MixedScopeError, MixedScopeSession,
-    MixedScopeSnapshot, MixedScopeStatus, MotionCapabilities, MotionConfig, MotionPreview,
+    MixedScopeSnapshot, MixedScopeStatus, MotionCapabilities, MotionConfig, MotionMode, MotionPreview,
     MotionService, MotorActionError, MotorActionService, ParameterMetadata, ParameterService,
     ParameterServiceError, ParameterValue, PlotCapabilitiesError, PreflightError, PreflightIssue,
-    PreflightService, ScopeSelection, SessionError, SessionEvent,
+    PreflightService, ScopeRate, ScopeSelection, SessionError, SessionEvent,
 };
 
 #[derive(Debug, Error)]
@@ -35,9 +36,64 @@ pub enum ApplicationError {
     UnknownAction(String),
     #[error("Scope is not configured")]
     ScopeNotConfigured,
+    #[error("tuning experiment is already active")]
+    TuningExperimentBusy,
+    #[error("tuning experiment requires motor state ENABLED")]
+    TuningExperimentMotorNotEnabled,
+    #[error("required tuning Plot channel '{0}' is not available at the requested rate")]
+    TuningExperimentChannel(String),
     #[error("{0}")]
     Motion(String),
 }
+
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum TuningExperimentState {
+    Idle,
+    Preparing,
+    Running,
+    Stopping,
+    Completed,
+    Failed,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct TuningExperimentStatus {
+    pub state: TuningExperimentState,
+    pub message: Option<String>,
+}
+
+#[derive(Debug, Clone, PartialEq)]
+pub struct TuningExperimentSnapshot {
+    pub status: TuningExperimentStatus,
+    pub config: MixedScopeConfig,
+    pub snapshot: MixedScopeSnapshot,
+}
+
+#[derive(Debug)]
+struct TuningExperimentRuntime {
+    generation: u64,
+    state: TuningExperimentState,
+    stop_requested: bool,
+    message: Option<String>,
+}
+
+impl Default for TuningExperimentRuntime {
+    fn default() -> Self {
+        Self {
+            generation: 0,
+            state: TuningExperimentState::Idle,
+            stop_requested: false,
+            message: None,
+        }
+    }
+}
+
+const TUNING_HISTORY: Duration = Duration::from_secs(15);
+const TUNING_PRE_CAPTURE: Duration = Duration::from_millis(500);
+const TUNING_POST_CAPTURE: Duration = Duration::from_millis(750);
+const TUNING_POSITION_SETTLE: Duration = Duration::from_millis(500);
+const TUNING_POLL: Duration = Duration::from_millis(20);
 
 struct ApplicationInner {
     session: DeviceSession,
@@ -47,6 +103,7 @@ struct ApplicationInner {
     motion_capabilities: MotionCapabilities,
     motion: MotionService,
     scope: Mutex<Option<MixedScopeSession>>,
+    tuning_experiment: Mutex<TuningExperimentRuntime>,
 }
 
 #[derive(Clone)]
@@ -98,6 +155,7 @@ impl ApplicationSession {
                 motion_capabilities,
                 motion,
                 scope: Mutex::new(None),
+                tuning_experiment: Mutex::new(TuningExperimentRuntime::default()),
             }),
         })
     }
@@ -364,6 +422,306 @@ impl ApplicationSession {
 
     pub fn scope_config(&self) -> Result<MixedScopeConfig, ApplicationError> {
         self.with_scope(|scope| scope.config())
+    }
+
+    pub fn tuning_experiment_start(&self) -> Result<TuningExperimentStatus, ApplicationError> {
+        if self.read_motor_state()? != 1 {
+            return Err(ApplicationError::TuningExperimentMotorNotEnabled);
+        }
+
+        {
+            let runtime = self
+                .inner
+                .tuning_experiment
+                .lock()
+                .map_err(|_| ApplicationError::Poisoned)?;
+            if matches!(
+                runtime.state,
+                TuningExperimentState::Preparing
+                    | TuningExperimentState::Running
+                    | TuningExperimentState::Stopping
+            ) {
+                return Err(ApplicationError::TuningExperimentBusy);
+            }
+        }
+
+        let motion = self.inner.motion.get();
+        let selections = self.tuning_default_selections(motion.mode)?;
+        let preview_duration = if motion.mode == MotionMode::Position && !motion.repeat {
+            self.motion_preview()?
+                .times
+                .last()
+                .copied()
+                .unwrap_or(0.0)
+                .max(0.0)
+        } else {
+            0.0
+        };
+
+        self.scope_configure(&selections, TUNING_HISTORY, 2)?;
+        self.scope_stop()?;
+        self.scope_clear()?;
+        self.scope_live()?;
+
+        let generation = {
+            let mut runtime = self
+                .inner
+                .tuning_experiment
+                .lock()
+                .map_err(|_| ApplicationError::Poisoned)?;
+            runtime.generation = runtime.generation.wrapping_add(1);
+            runtime.state = TuningExperimentState::Preparing;
+            runtime.stop_requested = false;
+            runtime.message = None;
+            runtime.generation
+        };
+
+        let app = self.clone();
+        thread::spawn(move || {
+            app.run_tuning_experiment(generation, motion, preview_duration);
+        });
+
+        self.tuning_experiment_status()
+    }
+
+    pub fn tuning_experiment_stop(&self) -> Result<TuningExperimentStatus, ApplicationError> {
+        let active = {
+            let mut runtime = self
+                .inner
+                .tuning_experiment
+                .lock()
+                .map_err(|_| ApplicationError::Poisoned)?;
+            let active = matches!(
+                runtime.state,
+                TuningExperimentState::Preparing
+                    | TuningExperimentState::Running
+                    | TuningExperimentState::Stopping
+            );
+            if active {
+                runtime.stop_requested = true;
+                if runtime.state == TuningExperimentState::Running {
+                    runtime.state = TuningExperimentState::Stopping;
+                }
+            }
+            active
+        };
+
+        if active && self.read_motor_state()? == 2 {
+            let _ = self.motion_stop();
+        }
+
+        self.tuning_experiment_status()
+    }
+
+    pub fn tuning_experiment_status(&self) -> Result<TuningExperimentStatus, ApplicationError> {
+        let runtime = self
+            .inner
+            .tuning_experiment
+            .lock()
+            .map_err(|_| ApplicationError::Poisoned)?;
+        Ok(TuningExperimentStatus {
+            state: runtime.state,
+            message: runtime.message.clone(),
+        })
+    }
+
+    pub fn tuning_experiment_snapshot(&self) -> Result<TuningExperimentSnapshot, ApplicationError> {
+        let status = self.tuning_experiment_status()?;
+        let config = self.scope_config()?;
+        let snapshot = self.scope_snapshot_tail(config.history)?;
+        Ok(TuningExperimentSnapshot {
+            status,
+            config,
+            snapshot,
+        })
+    }
+
+    fn tuning_default_selections(
+        &self,
+        mode: MotionMode,
+    ) -> Result<Vec<ScopeSelection>, ApplicationError> {
+        let mut selections = vec![
+            self.tuning_selection("PARAM_REF_IQ", ScopeRate::Fast)?,
+            self.tuning_selection("PARAM_RUN_IQ", ScopeRate::Fast)?,
+        ];
+
+        match mode {
+            MotionMode::Position => {
+                selections.push(self.tuning_selection("PARAM_REF_POSITION", ScopeRate::Normal)?);
+                selections.push(self.tuning_selection("PARAM_RUN_POSITION", ScopeRate::Normal)?);
+                selections.push(self.tuning_selection("PARAM_REF_WM", ScopeRate::Normal)?);
+                selections.push(self.tuning_selection("PARAM_RUN_WM", ScopeRate::Normal)?);
+            }
+            MotionMode::Speed | MotionMode::SensorlessSpeed => {
+                selections.push(self.tuning_selection("PARAM_REF_WM", ScopeRate::Normal)?);
+                selections.push(self.tuning_selection("PARAM_RUN_WM", ScopeRate::Normal)?);
+            }
+            MotionMode::Torque | MotionMode::Mit => {}
+        }
+
+        Ok(selections)
+    }
+
+    fn tuning_selection(
+        &self,
+        key: &str,
+        rate: ScopeRate,
+    ) -> Result<ScopeSelection, ApplicationError> {
+        let metadata = self
+            .inner
+            .schema
+            .parameter_by_key(key)
+            .ok_or_else(|| ApplicationError::TuningExperimentChannel(key.to_owned()))?;
+        let capabilities = self.plot_capabilities()?;
+        let channel = capabilities
+            .channel(metadata.id)
+            .ok_or_else(|| ApplicationError::TuningExperimentChannel(metadata.label.clone()))?;
+        let supported = match rate {
+            ScopeRate::Fast => channel.supports_fast(),
+            ScopeRate::Normal => channel.supports_normal(),
+        };
+        if !supported {
+            return Err(ApplicationError::TuningExperimentChannel(metadata.label.clone()));
+        }
+        Ok(ScopeSelection {
+            id: metadata.id,
+            rate,
+        })
+    }
+
+    fn read_motor_state(&self) -> Result<u8, ApplicationError> {
+        let metadata = self
+            .inner
+            .schema
+            .parameter_by_key("PARAM_MOTOR_STATE")
+            .ok_or_else(|| ApplicationError::Motion("Motor state is not exposed".to_owned()))?;
+        match self.inner.parameters.read(metadata.id)? {
+            ParameterValue::U8(value) => Ok(value),
+            _ => Err(ApplicationError::Motion(
+                "Motor state has an unexpected type".to_owned(),
+            )),
+        }
+    }
+
+    fn tuning_stop_requested(&self, generation: u64) -> bool {
+        self.inner
+            .tuning_experiment
+            .lock()
+            .map(|runtime| runtime.generation != generation || runtime.stop_requested)
+            .unwrap_or(true)
+    }
+
+    fn set_tuning_state(&self, generation: u64, state: TuningExperimentState) -> bool {
+        let Ok(mut runtime) = self.inner.tuning_experiment.lock() else {
+            return false;
+        };
+        if runtime.generation != generation {
+            return false;
+        }
+        runtime.state = state;
+        true
+    }
+
+    fn fail_tuning_experiment(&self, generation: u64, error: impl ToString) {
+        let _ = self.scope_stop();
+        if let Ok(mut runtime) = self.inner.tuning_experiment.lock() {
+            if runtime.generation == generation {
+                runtime.state = TuningExperimentState::Failed;
+                runtime.message = Some(error.to_string());
+            }
+        }
+    }
+
+    fn wait_tuning(
+        &self,
+        generation: u64,
+        duration: Duration,
+        stop_sensitive: bool,
+    ) -> bool {
+        let mut elapsed = Duration::ZERO;
+        while elapsed < duration {
+            if stop_sensitive && self.tuning_stop_requested(generation) {
+                return false;
+            }
+            let step = TUNING_POLL.min(duration.saturating_sub(elapsed));
+            thread::sleep(step);
+            elapsed += step;
+        }
+        true
+    }
+
+    fn run_tuning_experiment(
+        &self,
+        generation: u64,
+        motion: MotionConfig,
+        preview_duration: f64,
+    ) {
+        if !self.wait_tuning(generation, TUNING_PRE_CAPTURE, true) {
+            let _ = self.scope_stop();
+            let _ = self.set_tuning_state(generation, TuningExperimentState::Completed);
+            return;
+        }
+
+        if let Err(error) = self.motion_run() {
+            self.fail_tuning_experiment(generation, error);
+            return;
+        }
+        if !self.set_tuning_state(generation, TuningExperimentState::Running) {
+            return;
+        }
+
+        let auto_position = motion.mode == MotionMode::Position && !motion.repeat;
+        let mut stop_sent = false;
+
+        if auto_position {
+            let run_window =
+                Duration::from_secs_f64(preview_duration) + TUNING_POSITION_SETTLE;
+            let completed_window = self.wait_tuning(generation, run_window, true);
+            if completed_window && self.read_motor_state().ok() == Some(2) {
+                if let Err(error) = self.motion_stop() {
+                    self.fail_tuning_experiment(generation, error);
+                    return;
+                }
+                stop_sent = true;
+                let _ = self.set_tuning_state(generation, TuningExperimentState::Stopping);
+            }
+        }
+
+        loop {
+            let stop_requested = self.tuning_stop_requested(generation);
+            let motor_state = match self.read_motor_state() {
+                Ok(state) => state,
+                Err(error) => {
+                    self.fail_tuning_experiment(generation, error);
+                    return;
+                }
+            };
+
+            if motor_state != 2 {
+                break;
+            }
+
+            if stop_requested && !stop_sent {
+                if let Err(error) = self.motion_stop() {
+                    self.fail_tuning_experiment(generation, error);
+                    return;
+                }
+                stop_sent = true;
+                let _ = self.set_tuning_state(generation, TuningExperimentState::Stopping);
+            }
+
+            thread::sleep(TUNING_POLL);
+        }
+
+        let _ = self.set_tuning_state(generation, TuningExperimentState::Stopping);
+        self.wait_tuning(generation, TUNING_POST_CAPTURE, false);
+
+        if let Err(error) = self.scope_stop() {
+            self.fail_tuning_experiment(generation, error);
+            return;
+        }
+
+        let _ = self.set_tuning_state(generation, TuningExperimentState::Completed);
     }
 
     fn with_scope<T>(
