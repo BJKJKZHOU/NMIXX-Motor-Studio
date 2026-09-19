@@ -2,26 +2,32 @@ import { invoke } from "@tauri-apps/api/core";
 import { listen, type UnlistenFn } from "@tauri-apps/api/event";
 import type { ParameterMetadata, ParameterRead, ParameterReadResult, ParameterValue } from "./types";
 import { initializeParameterPersistence, observeParameterResults, observeParameterValue } from "./persistence";
+import { observeParameterMetadata, observeSessionParameterResults, observeSessionParameterValue } from "./sessionState";
 
-export function listParameters(): Promise<ParameterMetadata[]> {
-  return invoke<ParameterMetadata[]>("parameter_list");
+export async function listParameters(): Promise<ParameterMetadata[]> {
+  const metadata = await invoke<ParameterMetadata[]>("parameter_list");
+  observeParameterMetadata(metadata);
+  return metadata;
 }
 
 export async function readParameter(id: number): Promise<ParameterRead> {
   const result = await invoke<ParameterRead>("parameter_read", { id });
   observeParameterValue(result.id, result.value);
+  observeSessionParameterValue(result.id, result.value);
   return result;
 }
 
 export async function readParameters(ids: number[]): Promise<ParameterReadResult[]> {
   const results = await invoke<ParameterReadResult[]>("parameter_read_many", { ids });
   observeParameterResults(results);
+  observeSessionParameterResults(results);
   return results;
 }
 
 export async function readCachedParameters(ids: number[]): Promise<ParameterReadResult[]> {
   const results = await invoke<ParameterReadResult[]>("parameter_cached_many", { ids });
   observeParameterResults(results);
+  observeSessionParameterResults(results);
   return results;
 }
 
@@ -38,6 +44,7 @@ export async function readCurrentParameters(ids: number[]): Promise<ParameterRea
 export async function refreshAllParameters(): Promise<ParameterReadResult[]> {
   const results = await invoke<ParameterReadResult[]>("parameter_refresh_all");
   observeParameterResults(results);
+  observeSessionParameterResults(results);
   return results;
 }
 
@@ -48,9 +55,11 @@ export function onParametersRefreshed(handler: () => void): Promise<UnlistenFn> 
 export async function writeParameter(id: number, value: ParameterValue): Promise<void> {
   await invoke<void>("parameter_write", { id, value });
   observeParameterValue(id, value);
+  observeSessionParameterValue(id, value);
 }
 
 export async function initializePersistenceBaseline(ids: number[]): Promise<void> {
   const results = await invoke<ParameterReadResult[]>("parameter_cached_many", { ids });
   initializeParameterPersistence(results);
+  observeSessionParameterResults(results);
 }
