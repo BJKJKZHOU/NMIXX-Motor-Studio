@@ -128,7 +128,13 @@ impl DevicePlotCapabilities {
                     id: channel.id,
                     symbol: metadata.map(|value| value.symbol.clone()),
                     label: metadata.map(|value| value.label.clone()),
-                    unit: metadata.and_then(|value| value.unit.clone()),
+                    unit: metadata.and_then(|value| {
+                        if value.type_name == "position" {
+                            Some("turn".to_owned())
+                        } else {
+                            value.unit.clone()
+                        }
+                    }),
                     description: metadata.map(|value| value.description.clone()),
                     supports_fast: channel.supports_fast(),
                     supports_normal: channel.supports_normal(),
