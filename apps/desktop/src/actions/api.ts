@@ -2,6 +2,11 @@ import { invoke } from "@tauri-apps/api/core";
 import { listen, type UnlistenFn } from "@tauri-apps/api/event";
 import type { ActionCompletion, ActionHandle, ActionMetadata } from "./types";
 
+export type IdentificationKind = "rsLs" | "flux" | "jb";
+export type IdentificationStartResult =
+  | { status: "requires_enable" }
+  | { status: "started"; handle: ActionHandle };
+
 export function listActions(): Promise<ActionMetadata[]> {
   return invoke<ActionMetadata[]>("action_list");
 }
@@ -32,4 +37,19 @@ export function saveParameters(): Promise<ActionHandle> {
 
 export function onActionCompleted(handler: (completion: ActionCompletion) => void): Promise<UnlistenFn> {
   return listen<ActionCompletion>("action-completed", (event) => handler(event.payload));
+}
+
+export function startIdentification(
+  kind: IdentificationKind,
+  allowEnable: boolean,
+): Promise<IdentificationStartResult> {
+  const wireKind = kind === "rsLs" ? "rs_ls" : kind;
+  return invoke<IdentificationStartResult>("identification_start", {
+    kind: wireKind,
+    allowEnable,
+  });
+}
+
+export function applyIdentification(): Promise<ActionHandle> {
+  return invoke<ActionHandle>("identification_apply");
 }
