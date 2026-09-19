@@ -1,5 +1,6 @@
 <script lang="ts">
   import { untrack } from "svelte";
+  import { get } from "svelte/store";
   import type { ConnectionInfo } from "../connection/types";
   import { listParameters, onParametersRefreshed, readCachedParameters, readCurrentParameters, readParameters, writeParameter } from "../parameters/api";
   import type { ParameterMetadata, ParameterValue } from "../parameters/types";
@@ -7,6 +8,7 @@
   import { listActions, onActionCompleted } from "../actions/api";
   import type { ActionCompletion, ActionHandle, ActionMetadata } from "../actions/types";
   import { startPhaseSearch as startPhaseSearchAction } from "./api";
+  import { encoderViewState } from "./viewState";
 
   type Props = {
     connection: ConnectionInfo | undefined;
@@ -48,9 +50,20 @@
 
   let { connection, onError = () => undefined }: Props = $props();
 
+  function initialCommittedValues(): Record<string, ParameterValue | null> {
+    const cached = get(encoderViewState);
+    const initial: Record<string, ParameterValue | null> = {};
+    if (cached.protocol !== undefined) initial[ENCODER_PROTOCOL_SYMBOL] = { type: "u8", value: cached.protocol };
+    if (cached.spiType !== undefined) initial[ENCODER_SPI_TYPE_SYMBOL] = { type: "u8", value: cached.spiType };
+    if (cached.motorDirection !== undefined) {
+      initial[MOTOR_DIR_SYMBOL] = { type: "i8", value: cached.motorDirection === "reversed" ? -1 : 1 };
+    }
+    return initial;
+  }
+
   let metadata = $state<Record<string, ParameterMetadata>>({});
   let actions = $state<Record<string, ActionMetadata>>({});
-  let values = $state<Record<string, ParameterValue | null>>({});
+  let values = $state<Record<string, ParameterValue | null>>(initialCommittedValues());
   let drafts = $state<Record<string, string>>({});
   let loading = $state(false);
   let writing = $state<Set<string>>(new Set());
@@ -69,7 +82,7 @@
     if (!activeConnection) {
       metadata = {};
       actions = {};
-      values = {};
+      values = initialCommittedValues();
       drafts = {};
       loading = false;
       return;
@@ -195,6 +208,18 @@
     }
     values = nextValues;
     drafts = nextDrafts;
+
+    const protocol = nextValues[ENCODER_PROTOCOL_SYMBOL];
+    const spiType = nextValues[ENCODER_SPI_TYPE_SYMBOL];
+    const motorDir = nextValues[MOTOR_DIR_SYMBOL];
+    encoderViewState.update((state) => ({
+      ...state,
+      ...(protocol && protocol.type === "u8" ? { protocol: Number(protocol.value) } : {}),
+      ...(spiType && spiType.type === "u8" ? { spiType: Number(spiType.value) } : {}),
+      ...(motorDir && motorDir.type === "i8"
+        ? { motorDirection: Number(motorDir.value) === -1 ? "reversed" : "normal" }
+        : {}),
+    }));
   }
 
   async function loadEncoder(activeConnection: ConnectionInfo, token: number) {
