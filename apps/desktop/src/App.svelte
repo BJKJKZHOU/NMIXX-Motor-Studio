@@ -16,6 +16,7 @@
   import type { ActionHandle } from "./actions/types";
   import { initializePersistenceBaseline, listParameters, readParameters, refreshAllParameters as refreshParameterCache } from "./parameters/api";
   import { clearParameterPersistence, commitParameterPersistence } from "./parameters/persistence";
+  import { clearParameterSession } from "./parameters/sessionState";
   import type { ParameterMetadata, ParameterValue } from "./parameters/types";
 
   type Page = "connection" | "motor" | "encoder" | "limits" | "control" | "tuning" | "motion" | "analysis" | "parameters" | "events" | "automation";
@@ -71,11 +72,13 @@
     clearGlobalStatus();
     if (!next) {
       clearParameterPersistence();
+      clearParameterSession();
       scopeSummary = { state: "STOPPED", selectedChannels: 0, lostFrames: 0 };
       return;
     }
 
     clearParameterPersistence();
+    clearParameterSession();
 
     try {
       const [registry, saveAvailable] = await Promise.all([listParameters(), canSaveParameters()]);
