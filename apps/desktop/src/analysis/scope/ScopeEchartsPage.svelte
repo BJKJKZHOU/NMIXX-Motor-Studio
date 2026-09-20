@@ -23,7 +23,7 @@
   use([LineChart, DataZoomComponent, GridComponent, LegendComponent, TooltipComponent, CanvasRenderer]);
 
   const refreshIntervalMs = 100;
-  const snapshotWindowSeconds = 0.5;
+  const defaultLatestSpanSeconds = 0.5;
   const maxGraphPoints = 2500;
   const verticalDivisions = 8;
   const traceColors = [
@@ -48,7 +48,7 @@
   let configured = false;
   let configurationDirty = false;
   let followingLatest = true;
-  let viewRange: [number, number] = [-snapshotWindowSeconds, 0];
+  let viewRange: [number, number] = [-defaultLatestSpanSeconds, 0];
   let viewRevision = 0;
   let applyingChartOption = false;
   let activeConnection: ConnectionInfo | undefined;
@@ -108,7 +108,7 @@
     channelNotice = "";
     snapshot = undefined;
     followingLatest = true;
-    viewRange = [-snapshotWindowSeconds, 0];
+    viewRange = [-defaultLatestSpanSeconds, 0];
     viewRevision += 1;
     const availableChannels = connection?.channels.filter(
       (channel) => channel.supportsFast || channel.supportsNormal,
@@ -245,6 +245,9 @@
       } else {
         if (!(await ensureConfigured())) return;
         await startScope();
+        followingLatest = true;
+        viewRange = defaultRunRange();
+        viewRevision += 1;
       }
       await refreshSnapshot(true);
     } catch (error) {
@@ -297,17 +300,28 @@
     if (snapshot) updateChart(snapshot, displayRange(snapshot.recordedSeconds));
   }
 
-  function availableSeconds(recordedSeconds = snapshot?.recordedSeconds ?? snapshotWindowSeconds): number {
+  function availableSeconds(recordedSeconds = snapshot?.recordedSeconds ?? defaultLatestSpanSeconds): number {
     return Math.max(recordedSeconds, 0.0005);
   }
 
-  function latestRange(recordedSeconds = snapshot?.recordedSeconds ?? snapshotWindowSeconds): [number, number] {
-    return [-Math.min(snapshotWindowSeconds, availableSeconds(recordedSeconds)), 0];
+  function viewSpan(range: [number, number] = viewRange): number {
+    return Math.max(range[1] - range[0], 0.0005);
+  }
+
+  function latestRange(
+    recordedSeconds = snapshot?.recordedSeconds ?? defaultLatestSpanSeconds,
+    span = viewSpan(),
+  ): [number, number] {
+    return [-Math.min(span, availableSeconds(recordedSeconds)), 0];
+  }
+
+  function defaultRunRange(recordedSeconds = snapshot?.recordedSeconds ?? defaultLatestSpanSeconds): [number, number] {
+    return [-Math.min(defaultLatestSpanSeconds, availableSeconds(recordedSeconds)), 0];
   }
 
   function clampViewRange(
     range: [number, number],
-    recordedSeconds = snapshot?.recordedSeconds ?? snapshotWindowSeconds,
+    recordedSeconds = snapshot?.recordedSeconds ?? defaultLatestSpanSeconds,
   ): [number, number] {
     const available = availableSeconds(recordedSeconds);
     const width = Math.min(Math.max(range[1] - range[0], 0.0005), available);
@@ -320,8 +334,10 @@
     return [min, max];
   }
 
-  function displayRange(recordedSeconds = snapshot?.recordedSeconds ?? snapshotWindowSeconds): [number, number] {
-    return followingLatest ? latestRange(recordedSeconds) : clampViewRange(viewRange, recordedSeconds);
+  function displayRange(recordedSeconds = snapshot?.recordedSeconds ?? defaultLatestSpanSeconds): [number, number] {
+    return followingLatest
+      ? latestRange(recordedSeconds, viewSpan(viewRange))
+      : clampViewRange(viewRange, recordedSeconds);
   }
 
   function makeOption(next: ScopeSnapshot, visibleRange: [number, number]): EChartsOption {
@@ -360,7 +376,7 @@
         yAxisIndex: index,
         showSymbol: false,
         symbol: "none",
-        sampling: "lttb",
+        sampling: "none",
         animation: false,
         lineStyle: { color, width: channel.id === visibleAxisChannel?.id ? 1.5 : 1.1 },
         itemStyle: { color },
@@ -419,9 +435,9 @@
     try {
       chart.setOption({
         animation: false,
-        xAxis: { type: "value", min: -snapshotWindowSeconds, max: 0 },
+        xAxis: { type: "value", min: -defaultLatestSpanSeconds, max: 0 },
         yAxis: [{ type: "value" }],
-        dataZoom: [{ type: "inside", xAxisIndex: 0, startValue: -snapshotWindowSeconds, endValue: 0 }],
+        dataZoom: [{ type: "inside", xAxisIndex: 0, startValue: -defaultLatestSpanSeconds, endValue: 0 }],
         series: [],
       }, { notMerge: true, lazyUpdate: false });
     } finally {
@@ -448,17 +464,17 @@
     snapshotBusy = true;
     const revision = viewRevision;
     const requestedFollowingLatest = followingLatest;
-    const requestedRange = requestedFollowingLatest ? latestRange() : clampViewRange(viewRange);
-    const windowSeconds = requestedFollowingLatest
-      ? snapshotWindowSeconds
-      : requestedRange[1] - requestedRange[0];
+    const requestedRange = requestedFollowingLatest
+      ? latestRange(undefined, viewSpan(viewRange))
+      : clampViewRange(viewRange);
+    const windowSeconds = requestedRange[1] - requestedRange[0];
     const endOffsetSeconds = requestedFollowingLatest ? 0 : Math.max(0, -requestedRange[1]);
     try {
       const next = await readScopeSnapshot(windowSeconds, endOffsetSeconds, maxGraphPoints);
       if (revision !== viewRevision || requestedFollowingLatest !== followingLatest) return;
       snapshot = next;
       const nextRange = requestedFollowingLatest
-        ? latestRange(next.recordedSeconds)
+        ? latestRange(next.recordedSeconds, viewSpan(requestedRange))
         : clampViewRange(requestedRange, next.recordedSeconds);
       viewRange = nextRange;
       updateChart(next, nextRange);
@@ -489,8 +505,9 @@
   }
 
   function returnToLatest() {
+    const span = viewSpan(viewRange);
     followingLatest = true;
-    viewRange = latestRange();
+    viewRange = latestRange(undefined, span);
     viewRevision += 1;
     if (snapshot) updateChart(snapshot, viewRange);
     scheduleViewRefresh(0);
@@ -639,13 +656,13 @@
     {/each}
     <div class="scope-spike-note">
       Click a channel name to make its Y axis active. Scale/div and Y Pos control each trace independently.
-      Wheel or drag inspects history; double-click returns to the latest 0.5 s window.
+      Horizontal zoom and pan are continuous ECharts dataZoom interactions; double-click returns the current span to Latest.
     </div>
   </aside>
 
   <section class="scope-spike-workspace">
     <div class="scope-spike-meta">
-      <span>{followingLatest ? "latest 0.500 s" : `history ${(viewRange[1] - viewRange[0]).toFixed(3)} s`}</span>
+      <span>{followingLatest ? `latest ${viewSpan(viewRange).toFixed(3)} s` : `history ${viewSpan(viewRange).toFixed(3)} s`}</span>
       {#if !followingLatest}<button class="latest-button" onclick={returnToLatest}>Latest</button>{/if}
       <span>{snapshot?.recordedSeconds?.toFixed(3) ?? "0.000"} s recorded</span>
       <span>loss {snapshot?.lostFrames ?? 0}</span>
