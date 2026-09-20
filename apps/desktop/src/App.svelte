@@ -361,7 +361,7 @@
           </section>
         {/if}
         <div class:inactive={activePage !== "analysis"} class="scope-page-container">
-          <ScopePage {connection} active={activePage === "analysis"} onSummary={(summary) => scopeSummary = summary} onError={setError} />
+          <ScopePage {connection} active={activePage === "analysis"} onSummary={(summary) => scopeSummary = summary} onError={setError} onClearError={() => errorText = ""} />
         </div>
         {#if errorText}<div class="error-text app-error">{errorText}</div>{/if}
     </main>
