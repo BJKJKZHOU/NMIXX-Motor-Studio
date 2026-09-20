@@ -320,6 +320,20 @@ mod tests {
     }
 
     #[test]
+    fn window_snapshot_reads_offset_range_without_full_copy_semantics() {
+        let mut stream = StreamSession::new(config()).unwrap();
+        stream.live();
+        for n in 0..6 {
+            stream.push_sample(&[n as f32, -(n as f32)]).unwrap();
+        }
+
+        let snapshot = stream.snapshot_window(2, 1);
+        assert_eq!(snapshot.sample_count(), 2);
+        assert_eq!(snapshot.sample(0).unwrap(), &[3.0, -3.0]);
+        assert_eq!(snapshot.sample(1).unwrap(), &[4.0, -4.0]);
+    }
+
+    #[test]
     fn pause_freezes_current_buffer() {
         let mut stream = StreamSession::new(config()).unwrap();
         stream.live();
