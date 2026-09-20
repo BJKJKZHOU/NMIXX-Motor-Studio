@@ -46,14 +46,23 @@ Mouse interaction, numeric fields and plot rendering all edit these same values.
 
 ## Channel controls
 
-Every selected channel exposes its vertical controls directly beneath the channel row:
+Every selected channel exposes its color identity and vertical controls directly in the channel selector:
 
 ```text
-[x] Iq                                      20K
+[x] ━ Iq                                    20K
     Scale/div [ 0.5 ] A/div       Y Pos [ 0.0 ] A
 ```
 
-Unselected channels remain one row high.
+Unselected channels remain one row high and do not own an active waveform color.
+
+A channel receives a waveform color when it is selected. Color assignment is stable for the current device session:
+
+- adding or removing another channel must not recolor channels that remain selected;
+- if a previously selected channel is enabled again and its previous color is still free, that color is reused;
+- if the previous color is occupied, the first free palette color is assigned;
+- the channel selector color mark, waveform and Y-position marker always use the same color.
+
+The plot header does not duplicate channel legend entries or per-channel latest values. It is reserved for Scope-level information such as sample count and loss state.
 
 Each visible waveform has an identically colored Y-position marker on the left edge of the plot. Dragging that marker changes only that channel's `verticalOffset`. The numeric `Y Pos` field and marker are two views over the same value.
 
@@ -140,7 +149,8 @@ No new transport path, Plot protocol message or device-side state is introduced 
 
 ## Visual rules
 
-- Channel Y markers use the waveform color.
+- Channel selector marks, waveforms and Y markers share one per-channel color identity.
+- Channel colors are allocated only to selected channels and remain stable while other channels are added or removed.
 - X1 top/bottom markers use one consistent cursor color; X2 uses a second consistent cursor color.
 - Cursor colors are not channel colors and do not imply a channel association.
 - Markers are small but have a larger invisible hit tolerance than their painted size.
