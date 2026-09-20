@@ -758,25 +758,13 @@
 
 
   function alignedPlotData(next: ScopeSnapshot): uPlot.AlignedData {
-    const timeKeys = new Map<string, number>();
-    for (const series of next.series) {
-      for (const time of series.times) timeKeys.set(time.toFixed(7), time);
-    }
-    const times = Array.from(timeKeys.values()).sort((a, b) => a - b);
-    const indexByKey = new Map(times.map((time, index) => [time.toFixed(7), index]));
-
-    const values = plotChannels.map((channel) => {
-      const output: Array<number | null> = times.map(() => null);
+    const tables = plotChannels.map((channel) => {
       const source = next.series.find((series) => series.id === channel.id);
-      if (!source) return output;
-      for (let index = 0; index < source.times.length; index += 1) {
-        const target = indexByKey.get(source.times[index].toFixed(7));
-        if (target !== undefined) output[target] = source.values[index];
-      }
-      return output;
+      return source
+        ? [source.times, source.values] as uPlot.AlignedData
+        : [[], []] as uPlot.AlignedData;
     });
-
-    return [times, ...values] as uPlot.AlignedData;
+    return uPlot.join(tables);
   }
 
   async function refreshSnapshot() {
