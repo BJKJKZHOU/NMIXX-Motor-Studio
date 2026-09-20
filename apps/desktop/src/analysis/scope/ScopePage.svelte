@@ -271,6 +271,10 @@
     return value !== undefined && Number.isFinite(value) && timeDivOptions.includes(value);
   }
 
+  function validVerticalScale(value: number | undefined): value is number {
+    return value !== undefined && Number.isFinite(value) && value > 0;
+  }
+
   function restoreScopeView(): boolean {
     const saved = loadScopeViewSettings(plotChannels);
     if (!saved) return false;
@@ -292,7 +296,7 @@
       if (setting.color !== undefined && Number.isInteger(setting.color) && setting.color >= 0) {
         colors.set(setting.id, setting.color % traceColors.length);
       }
-      if (validTimePerDiv(setting.scalePerDiv)) scales.set(setting.id, setting.scalePerDiv);
+      if (validVerticalScale(setting.scalePerDiv)) scales.set(setting.id, setting.scalePerDiv);
       if (setting.yPosition !== undefined && Number.isFinite(setting.yPosition)) offsets.set(setting.id, setting.yPosition);
     }
 
@@ -346,7 +350,8 @@
     verticalOffset = new Map(plotChannels.map((channel) => [channel.id, 0]));
     channelColors = new Map(defaults.map((channel, index) => [channel.id, index % traceColors.length]));
     activeChannelId = defaults[0]?.id;
-    restoreScopeView();
+    const restoredView = restoreScopeView();
+    initialVerticalFit = !restoredView;
     initializeCursorPositions();
     rebuildPlot();
   }
@@ -454,6 +459,16 @@
     horizontalOffset = 0;
     applyHorizontalScale();
     scheduleViewRefresh();
+  }
+
+  function displayCacheWindowSeconds(): number {
+    return Math.min(historySeconds(), Math.max(windowSeconds() * 4, 1));
+  }
+
+  function displayCacheEndOffsetSeconds(cacheWindow: number): number {
+    const margin = Math.max(0, cacheWindow - windowSeconds()) / 2;
+    const requested = Math.max(0, horizontalOffset - margin);
+    return Math.min(requested, Math.max(0, historySeconds() - cacheWindow));
   }
 
   function scheduleViewRefresh(delay = 80) {
@@ -774,7 +789,9 @@
     snapshotBusy = true;
     const revision = snapshotRevision;
     try {
-      const next = await readScopeSnapshot(windowSeconds(), horizontalOffset);
+      const cacheWindow = displayCacheWindowSeconds();
+      const cacheEndOffset = displayCacheEndOffsetSeconds(cacheWindow);
+      const next = await readScopeSnapshot(cacheWindow, cacheEndOffset);
       if (revision !== snapshotRevision) return;
       snapshot = next;
       if (active) {
@@ -1140,7 +1157,7 @@
     if (currentIndex < 0) return;
     const nextIndex = Math.min(
       timeDivOptions.length - 1,
-      Math.max(0, currentIndex + (event.deltaY > 0 ? 1 : -1)),
+      Math.max(0, currentIndex + (event.deltaY > 0 ? -1 : 1)),
     );
     if (nextIndex === currentIndex) return;
 
