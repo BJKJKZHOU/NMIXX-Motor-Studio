@@ -18,6 +18,9 @@ export type TuningExperimentSnapshot = {
   status: TuningExperimentStatus;
   config: ScopeConfig;
   snapshot: ScopeSnapshot;
+  recordedSeconds: number;
+  windowSeconds: number;
+  endOffsetSeconds: number;
 };
 
 export type TuningExperimentSelection = {
@@ -41,6 +44,14 @@ export function tuningExperimentStatus(): Promise<TuningExperimentStatus> {
   return invoke<TuningExperimentStatus>("tuning_experiment_status");
 }
 
-export function readTuningExperimentSnapshot(maxPoints = 5000): Promise<TuningExperimentSnapshot> {
-  return invoke<TuningExperimentSnapshot>("tuning_experiment_snapshot", { maxPoints });
+export function readTuningExperimentSnapshot(
+  windowSeconds?: number,
+  endOffsetSeconds = 0,
+  maxPoints = 3000,
+): Promise<TuningExperimentSnapshot> {
+  return invoke<TuningExperimentSnapshot>("tuning_experiment_snapshot", {
+    windowSeconds,
+    endOffsetSeconds,
+    maxPoints,
+  });
 }
