@@ -1126,7 +1126,6 @@ fn scope_snapshot(
     max_points: Option<usize>,
 ) -> Result<ScopeSnapshotDto, String> {
     let app = application(&state)?;
-    let app = application(&state)?;
     let recorded_seconds = app
         .scope_recorded_duration()
         .map_err(|error| error.to_string())?
