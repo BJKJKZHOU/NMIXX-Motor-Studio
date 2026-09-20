@@ -4,6 +4,7 @@
   import uPlot from "uplot";
   import type { ConnectionInfo, PlotChannel } from "../../connection/types";
   import { configureScope, readScopeSnapshot, startScope, stopScope } from "./api";
+  import { loadScopeViewSettings, saveScopeViewSettings, type ScopeViewSettings } from "./viewSettings";
   import type { ScopeConfig, ScopeRate, ScopeSnapshot, ScopeSummary } from "./types";
 
   export let connection: ConnectionInfo | undefined;
@@ -33,6 +34,7 @@
   let refreshTimer: ReturnType<typeof setInterval> | undefined;
   let reconfigureTimer: ReturnType<typeof setTimeout> | undefined;
   let interactionRefreshTimer: ReturnType<typeof setTimeout> | undefined;
+  let scopeViewSaveTimer: ReturnType<typeof setTimeout> | undefined;
 
   let snapshotBusy = false;
   let commandBusy = false;
@@ -62,11 +64,15 @@
   let cursorB: number | undefined;
   let isRunning = false;
   let viewNavigationActive = false;
+  let followLatest = true;
+  let hoverTime: number | undefined;
+  let cursorGroupHit: { left: number; right: number; top: number; bottom: number } | undefined;
 
   type DragState =
     | { kind: "pan"; pointerId: number; startClientX: number; startOffset: number }
     | { kind: "vertical"; pointerId: number; id: number; startClientY: number; startOffset: number }
-    | { kind: "cursor"; pointerId: number; cursor: "a" | "b" };
+    | { kind: "cursor"; pointerId: number; cursor: "a" | "b" }
+    | { kind: "cursor-group"; pointerId: number; startClientX: number; startA: number; startB: number };
 
   type CursorReadout = {
     id: number;
@@ -90,6 +96,7 @@
   $: fastSelected = Array.from(selectedIds).filter((id) => channelRates.get(id) === "fast").length;
   $: normalSelected = Array.from(selectedIds).filter((id) => channelRates.get(id) === "normal").length;
   $: isRunning = snapshot?.state === "LIVE";
+  $: followLatest = horizontalOffset <= 1e-12;
   $: cursorReadouts = cursorEnabled
     ? visibleChannels.map((channel) => {
         const a = cursorA === undefined ? undefined : sampleAtTime(channel.id, cursorA);
@@ -107,6 +114,18 @@
     : [];
   $: if (activeChannelId !== undefined && !selectedIds.has(activeChannelId)) {
     activeChannelId = visibleChannels[0]?.id;
+  }
+
+  $: if (connection && plotChannels.length > 0) {
+    selectedIds;
+    channelRates;
+    channelColors;
+    verticalScale;
+    verticalOffset;
+    timePerDiv;
+    cursorEnabled;
+    activeChannelId;
+    scheduleScopeViewSave();
   }
 
   function windowSeconds(): number {
