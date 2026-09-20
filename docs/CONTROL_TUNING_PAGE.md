@@ -339,7 +339,7 @@ It supports:
 - stable per-channel color identity within the capture;
 - one positive display multiplier per selected channel.
 
-The Scale tab edits the multiplier directly as `×N`. It is a display-only transform: raw capture values, exports and future measurements continue to use the original physical values. The tuning waveform does not expose Y offset, Y-position markers, cursors, trigger controls, Follow Latest, or the full Scope acquisition controls.
+The Scale tab edits the multiplier directly as `×N`. The rendering rule is exactly `display_y = raw_sample × multiplier`. With `×1`, the plotted curve is the original floating-point sample value without per-channel normalization or per-channel auto-ranging. All tuning curves share one display Y scale, so relative numeric magnitude is preserved unless the user explicitly changes a multiplier. The multiplier is display-only: raw capture values, exports and future measurements continue to use the original physical values. The tuning waveform does not expose Y offset, Y-position markers, cursors, trigger controls, Follow Latest, or the full Scope acquisition controls.
 
 The intended workflow is to configure channels and display multipliers infrequently, then repeatedly change tuning parameters, Run the same motion, inspect the waveform, and tune again.
 
