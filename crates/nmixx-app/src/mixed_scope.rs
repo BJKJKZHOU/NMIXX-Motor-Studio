@@ -1,4 +1,4 @@
-use std::collections::HashMap;
+use std::collections::{HashMap, VecDeque};
 use std::sync::{Arc, Mutex, mpsc};
 use std::thread::{self, JoinHandle};
 use std::time::Duration;
@@ -81,8 +81,6 @@ pub enum MixedScopeError {
     NotNormalCapable(u16),
     #[error("FAST channel 0x{0:04X} has invalid plot scale")]
     InvalidFastScale(u16),
-    #[error("Scope group already has a pending hot reconfiguration")]
-    ReconfigurePending,
     #[error("Scope received unknown Config_ID {0}")]
     UnknownConfig(u8),
     #[error("Scope runtime failed: {0}")]
@@ -107,7 +105,6 @@ struct GroupLayout {
 struct GroupRuntime {
     active: GroupLayout,
     pending: Option<GroupLayout>,
-    previous_config_id: Option<u8>,
     sequence: SequenceTracker,
     lost_frames: u64,
 }
@@ -120,6 +117,8 @@ struct ChannelHistory {
 struct SharedState {
     fast: Option<GroupRuntime>,
     normal: Option<GroupRuntime>,
+    retired_fast_config_ids: VecDeque<u8>,
+    retired_normal_config_ids: VecDeque<u8>,
     histories: HashMap<u16, ChannelHistory>,
     state: StreamState,
     runtime_error: Option<String>,
@@ -187,6 +186,8 @@ impl MixedScopeSession {
         let shared = Arc::new(Mutex::new(SharedState {
             fast: fast_layout.map(group_runtime),
             normal: normal_layout.map(group_runtime),
+            retired_fast_config_ids: VecDeque::new(),
+            retired_normal_config_ids: VecDeque::new(),
             histories,
             state: StreamState::Stopped,
             runtime_error: None,
@@ -225,7 +226,10 @@ impl MixedScopeSession {
             .map(|config| config.clone())
     }
 
-    pub fn reconfigure(&self, selections: &[ScopeSelection]) -> Result<MixedScopeConfig, MixedScopeError> {
+    pub fn reconfigure(
+        &self,
+        selections: &[ScopeSelection],
+    ) -> Result<MixedScopeConfig, MixedScopeError> {
         let old_config = self.config()?;
         let mut new_config = build_config(
             &self.capabilities,
@@ -238,24 +242,18 @@ impl MixedScopeSession {
         let new_fast_ids = ids_for_rate(&new_config, ScopeRate::Fast);
         let new_normal_ids = ids_for_rate(&new_config, ScopeRate::Normal);
 
-        let (state, old_fast_ids, old_normal_ids, fast_pending, normal_pending) = {
+        let (state, old_fast_ids, old_normal_ids) = {
             let shared = self.shared.lock().map_err(|_| MixedScopeError::Closed)?;
             ensure_runtime_ok(&shared)?;
             (
                 shared.state,
-                shared.fast.as_ref().map(|group| group.active.ids.clone()).unwrap_or_default(),
-                shared.normal.as_ref().map(|group| group.active.ids.clone()).unwrap_or_default(),
-                shared.fast.as_ref().is_some_and(|group| group.pending.is_some()),
-                shared.normal.as_ref().is_some_and(|group| group.pending.is_some()),
+                target_ids(shared.fast.as_ref()),
+                target_ids(shared.normal.as_ref()),
             )
         };
 
         let fast_changed = old_fast_ids != new_fast_ids;
         let normal_changed = old_normal_ids != new_normal_ids;
-
-        if (fast_changed && fast_pending) || (normal_changed && normal_pending) {
-            return Err(MixedScopeError::ReconfigurePending);
-        }
 
         prepare_histories(&self.shared, &new_config)?;
 
@@ -290,7 +288,9 @@ impl MixedScopeSession {
                 self.session.plot_stop(mask)?;
             }
             let mut shared = self.shared.lock().map_err(|_| MixedScopeError::Closed)?;
-            *group_mut(&mut shared, rate) = None;
+            if let Some(removed) = group_mut(&mut shared, rate).take() {
+                retire_group(retired_config_ids_mut(&mut shared, rate), removed);
+            }
             return Ok(());
         }
 
@@ -306,17 +306,40 @@ impl MixedScopeSession {
         };
 
         if had_group && matches!(state, StreamState::Live | StreamState::Capturing) {
-            {
+            let previous_pending = {
                 let mut shared = self.shared.lock().map_err(|_| MixedScopeError::Closed)?;
-                let runtime = group_mut(&mut shared, rate)
-                    .as_mut()
-                    .ok_or(MixedScopeError::Closed)?;
-                runtime.pending = Some(layout.clone());
-            }
-            if let Err(error) = self.session.plot_config(group, layout.config_id, &layout.ids) {
+                let (runtime, retired) = group_and_retired_mut(&mut shared, rate);
+                retired.retain(|config_id| *config_id != layout.config_id);
+                let runtime = runtime.as_mut().ok_or(MixedScopeError::Closed)?;
+                let previous = runtime.pending.replace(layout.clone());
+                if let Some(previous) = &previous {
+                    retire_config_id(retired, previous.config_id);
+                }
+                previous
+            };
+            if let Err(error) = self
+                .session
+                .plot_config(group, layout.config_id, &layout.ids)
+            {
                 if let Ok(mut shared) = self.shared.lock() {
-                    if let Some(runtime) = group_mut(&mut shared, rate).as_mut() {
-                        runtime.pending = None;
+                    let (runtime, retired) = group_and_retired_mut(&mut shared, rate);
+                    if runtime
+                        .as_ref()
+                        .is_some_and(|runtime| runtime.active.config_id == layout.config_id)
+                    {
+                        return Ok(());
+                    }
+                    if let Some(runtime) = runtime.as_mut()
+                        && runtime
+                            .pending
+                            .as_ref()
+                            .is_some_and(|pending| pending.config_id == layout.config_id)
+                    {
+                        runtime.pending = previous_pending;
+                        retire_config_id(retired, layout.config_id);
+                        if let Some(pending) = &runtime.pending {
+                            retired.retain(|config_id| *config_id != pending.config_id);
+                        }
                     }
                 }
                 return Err(error.into());
@@ -324,10 +347,16 @@ impl MixedScopeSession {
             return Ok(());
         }
 
-        self.session.plot_config(group, layout.config_id, &layout.ids)?;
+        self.session
+            .plot_config(group, layout.config_id, &layout.ids)?;
 
         {
             let mut shared = self.shared.lock().map_err(|_| MixedScopeError::Closed)?;
+            if let Some(replaced) = group_mut(&mut shared, rate).take() {
+                retire_group(retired_config_ids_mut(&mut shared, rate), replaced);
+            }
+            retired_config_ids_mut(&mut shared, rate)
+                .retain(|config_id| *config_id != layout.config_id);
             *group_mut(&mut shared, rate) = Some(group_runtime(layout));
         }
 
@@ -339,14 +368,20 @@ impl MixedScopeSession {
     }
 
     fn allocate_config_id(&self) -> Result<u8, MixedScopeError> {
-        let mut next = self.next_config_id.lock().map_err(|_| MixedScopeError::Closed)?;
+        let mut next = self
+            .next_config_id
+            .lock()
+            .map_err(|_| MixedScopeError::Closed)?;
         let value = *next;
         *next = if value == u8::MAX { 1 } else { value + 1 };
         Ok(value)
     }
 
     fn current_config_marker(&self) -> Result<u8, MixedScopeError> {
-        let next = self.next_config_id.lock().map_err(|_| MixedScopeError::Closed)?;
+        let next = self
+            .next_config_id
+            .lock()
+            .map_err(|_| MixedScopeError::Closed)?;
         Ok(next.wrapping_sub(1).max(1))
     }
 
@@ -443,7 +478,8 @@ impl MixedScopeSession {
         for channel in &config.channels {
             if let Some(history) = shared.histories.get(&channel.id) {
                 samples = samples.saturating_add(history.stream.len());
-                capacity_samples = capacity_samples.saturating_add(history.stream.capacity_samples());
+                capacity_samples =
+                    capacity_samples.saturating_add(history.stream.capacity_samples());
             }
         }
 
@@ -546,8 +582,14 @@ fn build_config(
         return Err(MixedScopeError::EmptyChannels);
     }
 
-    let fast_count = selections.iter().filter(|item| item.rate == ScopeRate::Fast).count();
-    let normal_count = selections.iter().filter(|item| item.rate == ScopeRate::Normal).count();
+    let fast_count = selections
+        .iter()
+        .filter(|item| item.rate == ScopeRate::Fast)
+        .count();
+    let normal_count = selections
+        .iter()
+        .filter(|item| item.rate == ScopeRate::Normal)
+        .count();
     if fast_count > capabilities.fast_max_channels as usize {
         return Err(MixedScopeError::TooManyFastChannels {
             actual: fast_count,
@@ -631,7 +673,6 @@ fn group_runtime(layout: GroupLayout) -> GroupRuntime {
     GroupRuntime {
         active: layout,
         pending: None,
-        previous_config_id: None,
         sequence: SequenceTracker::default(),
         lost_frames: 0,
     }
@@ -683,6 +724,46 @@ fn group_mut(shared: &mut SharedState, rate: ScopeRate) -> &mut Option<GroupRunt
     }
 }
 
+fn group_and_retired_mut(
+    shared: &mut SharedState,
+    rate: ScopeRate,
+) -> (&mut Option<GroupRuntime>, &mut VecDeque<u8>) {
+    match rate {
+        ScopeRate::Fast => (&mut shared.fast, &mut shared.retired_fast_config_ids),
+        ScopeRate::Normal => (&mut shared.normal, &mut shared.retired_normal_config_ids),
+    }
+}
+
+fn target_ids(group: Option<&GroupRuntime>) -> Vec<u16> {
+    group
+        .map(|group| group.pending.as_ref().unwrap_or(&group.active).ids.clone())
+        .unwrap_or_default()
+}
+
+const RETIRED_CONFIG_HISTORY: usize = 16;
+
+fn retired_config_ids_mut(shared: &mut SharedState, rate: ScopeRate) -> &mut VecDeque<u8> {
+    match rate {
+        ScopeRate::Fast => &mut shared.retired_fast_config_ids,
+        ScopeRate::Normal => &mut shared.retired_normal_config_ids,
+    }
+}
+
+fn retire_config_id(retired: &mut VecDeque<u8>, config_id: u8) {
+    retired.retain(|retired_id| *retired_id != config_id);
+    retired.push_back(config_id);
+    while retired.len() > RETIRED_CONFIG_HISTORY {
+        retired.pop_front();
+    }
+}
+
+fn retire_group(retired: &mut VecDeque<u8>, group: GroupRuntime) {
+    retire_config_id(retired, group.active.config_id);
+    if let Some(pending) = group.pending {
+        retire_config_id(retired, pending.config_id);
+    }
+}
+
 fn group_mask(shared: &SharedState) -> u8 {
     let mut mask = 0u8;
     if shared.fast.is_some() {
@@ -695,8 +776,16 @@ fn group_mask(shared: &SharedState) -> u8 {
 }
 
 fn group_lost_frames(shared: &SharedState) -> u64 {
-    shared.fast.as_ref().map(|group| group.lost_frames).unwrap_or(0)
-        + shared.normal.as_ref().map(|group| group.lost_frames).unwrap_or(0)
+    shared
+        .fast
+        .as_ref()
+        .map(|group| group.lost_frames)
+        .unwrap_or(0)
+        + shared
+            .normal
+            .as_ref()
+            .map(|group| group.lost_frames)
+            .unwrap_or(0)
 }
 
 fn prepare_histories(
@@ -712,9 +801,9 @@ fn prepare_histories(
         .map(|channel| (channel.id, channel.rate))
         .collect();
 
-    state.histories.retain(|id, history| {
-        selected.get(id).is_some_and(|rate| *rate == history.rate)
-    });
+    state
+        .histories
+        .retain(|id, history| selected.get(id).is_some_and(|rate| *rate == history.rate));
 
     for channel in &config.channels {
         if state.histories.contains_key(&channel.id) {
@@ -777,7 +866,11 @@ fn scope_worker(
             if let Ok(mut state) = shared.lock() {
                 state.runtime_error = Some(error.to_string());
             }
-            let mask = shared.lock().ok().map(|state| group_mask(&state)).unwrap_or(0);
+            let mask = shared
+                .lock()
+                .ok()
+                .map(|state| group_mask(&state))
+                .unwrap_or(0);
             if mask != 0 {
                 let _ = session.plot_stop(mask);
             }
@@ -786,20 +879,28 @@ fn scope_worker(
     }
 }
 
-fn accept_config_frame(group: &mut GroupRuntime, config_id: u8) -> Result<bool, MixedScopeError> {
+fn accept_config_frame(
+    group: &mut GroupRuntime,
+    retired_config_ids: &mut VecDeque<u8>,
+    config_id: u8,
+) -> Result<bool, MixedScopeError> {
     if group.active.config_id == config_id {
         return Ok(true);
     }
 
-    if group.pending.as_ref().is_some_and(|pending| pending.config_id == config_id) {
+    if group
+        .pending
+        .as_ref()
+        .is_some_and(|pending| pending.config_id == config_id)
+    {
         let previous = group.active.config_id;
         group.active = group.pending.take().expect("pending config checked");
-        group.previous_config_id = Some(previous);
+        retire_config_id(retired_config_ids, previous);
         group.sequence.reset();
         return Ok(true);
     }
 
-    if group.previous_config_id == Some(config_id) {
+    if retired_config_ids.contains(&config_id) {
         return Ok(false);
     }
 
@@ -810,13 +911,22 @@ fn ingest_fast(
     shared: &Arc<Mutex<SharedState>>,
     frame: &nmixx_core::wire::CanFdFrame,
 ) -> Result<(), MixedScopeError> {
-    let config_id = frame.data().get(2).copied().ok_or(MixedScopeError::UnknownConfig(0))?;
+    let config_id = frame
+        .data()
+        .get(2)
+        .copied()
+        .ok_or(MixedScopeError::UnknownConfig(0))?;
     let mut state = shared.lock().map_err(|_| MixedScopeError::Closed)?;
     let (ids, scales) = {
-        let Some(group) = state.fast.as_mut() else {
+        let SharedState {
+            fast,
+            retired_fast_config_ids,
+            ..
+        } = &mut *state;
+        let Some(group) = fast.as_mut() else {
             return Ok(());
         };
-        if !accept_config_frame(group, config_id)? {
+        if !accept_config_frame(group, retired_fast_config_ids, config_id)? {
             return Ok(());
         }
         let ids = group.active.ids.clone();
@@ -829,9 +939,9 @@ fn ingest_fast(
     };
 
     let (scales, decoded) = scales;
-    let values = decoded
-        .dequantize(&scales)
-        .ok_or(MixedScopeError::Runtime("FAST scale count mismatch".to_owned()))?;
+    let values = decoded.dequantize(&scales).ok_or(MixedScopeError::Runtime(
+        "FAST scale count mismatch".to_owned(),
+    ))?;
 
     let channel_count = ids.len();
     for sample in values.chunks_exact(channel_count) {
@@ -851,15 +961,22 @@ fn ingest_normal(
     let decoded = decode_normal_data(frame)?;
     let mut state = shared.lock().map_err(|_| MixedScopeError::Closed)?;
     let ids = {
-        let Some(group) = state.normal.as_mut() else {
+        let SharedState {
+            normal,
+            retired_normal_config_ids,
+            ..
+        } = &mut *state;
+        let Some(group) = normal.as_mut() else {
             return Ok(());
         };
-        if !accept_config_frame(group, decoded.config_id)? {
+        if !accept_config_frame(group, retired_normal_config_ids, decoded.config_id)? {
             return Ok(());
         }
 
         if decoded.values.len() != group.active.ids.len() {
-            return Err(MixedScopeError::Runtime("NORMAL channel count mismatch".to_owned()));
+            return Err(MixedScopeError::Runtime(
+                "NORMAL channel count mismatch".to_owned(),
+            ));
         }
 
         group.sequence.observe(decoded.sequence);
@@ -873,4 +990,82 @@ fn ingest_normal(
         }
     }
     Ok(())
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    fn layout(config_id: u8) -> GroupLayout {
+        GroupLayout {
+            config_id,
+            ids: vec![1],
+            scales: vec![1.0],
+        }
+    }
+
+    #[test]
+    fn accepts_active_and_pending_frames_and_ignores_multiple_retired_generations() {
+        let mut group = group_runtime(layout(1));
+        let mut retired = VecDeque::new();
+
+        for config_id in 2..=4 {
+            group.pending = Some(layout(config_id));
+            assert!(accept_config_frame(&mut group, &mut retired, config_id).unwrap());
+        }
+
+        assert_eq!(group.active.config_id, 4);
+        assert_eq!(retired, VecDeque::from([1, 2, 3]));
+        for config_id in 1..=3 {
+            assert!(!accept_config_frame(&mut group, &mut retired, config_id).unwrap());
+        }
+        assert!(accept_config_frame(&mut group, &mut retired, 4).unwrap());
+        assert!(matches!(
+            accept_config_frame(&mut group, &mut retired, 99),
+            Err(MixedScopeError::UnknownConfig(99))
+        ));
+    }
+
+    #[test]
+    fn retired_config_history_is_unique_and_bounded() {
+        let mut retired = VecDeque::new();
+        for config_id in 1..=(RETIRED_CONFIG_HISTORY as u8 + 4) {
+            retire_config_id(&mut retired, config_id);
+        }
+
+        assert_eq!(retired.len(), RETIRED_CONFIG_HISTORY);
+        assert_eq!(retired.front().copied(), Some(5));
+        retire_config_id(&mut retired, 10);
+        assert_eq!(retired.len(), RETIRED_CONFIG_HISTORY);
+        assert_eq!(retired.back().copied(), Some(10));
+        assert_eq!(
+            retired.iter().filter(|config_id| **config_id == 10).count(),
+            1
+        );
+    }
+
+    #[test]
+    fn pending_target_can_be_superseded_without_accepting_its_late_frames() {
+        let mut group = group_runtime(layout(1));
+        let mut retired = VecDeque::new();
+
+        group.pending = Some(GroupLayout {
+            config_id: 2,
+            ids: vec![2],
+            scales: vec![1.0],
+        });
+        assert_eq!(target_ids(Some(&group)), vec![2]);
+
+        let superseded = group.pending.replace(GroupLayout {
+            config_id: 3,
+            ids: vec![3],
+            scales: vec![1.0],
+        });
+        retire_config_id(&mut retired, superseded.unwrap().config_id);
+
+        assert!(!accept_config_frame(&mut group, &mut retired, 2).unwrap());
+        assert!(accept_config_frame(&mut group, &mut retired, 3).unwrap());
+        assert_eq!(group.active.ids, vec![3]);
+        assert!(!accept_config_frame(&mut group, &mut retired, 1).unwrap());
+    }
 }
