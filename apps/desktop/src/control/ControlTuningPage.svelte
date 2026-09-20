@@ -129,8 +129,11 @@
   $effect(() => {
     const activeConnection = connection;
     const token = ++generation;
+    tuningSelectionMode = undefined;
 
     if (!activeConnection) {
+      tuningSelections = {};
+      displayMultipliers = {};
       metadata = {};
       values = {};
       drafts = {};
