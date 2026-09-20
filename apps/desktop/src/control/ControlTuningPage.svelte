@@ -1,6 +1,7 @@
 <script lang="ts">
   import { onMount, untrack } from "svelte";
   import type { ConnectionInfo } from "../connection/types";
+  import { subscribeRefresh } from "../refreshScheduler";
   import {
     listParameters,
     onParametersRefreshed,
@@ -96,7 +97,7 @@
   let experimentMessage = $state("");
   let experimentSnapshot = $state<TuningExperimentSnapshot | undefined>(undefined);
   let experimentRefreshBusy = false;
-  let experimentTimer: ReturnType<typeof setInterval> | undefined;
+  let experimentRefreshUnsubscribe: (() => void) | undefined;
   let generation = 0;
   let waveformTab = $state<"waveform" | "channels" | "scale">("waveform");
   let tuningSelections = $state<Record<number, "fast" | "normal">>({});
@@ -108,7 +109,7 @@
     void initializeMotion().catch(onError);
     void refreshExperiment();
 
-    experimentTimer = setInterval(() => void refreshExperiment(), 100);
+    experimentRefreshUnsubscribe = subscribeRefresh(50, () => void refreshExperiment());
 
     let disposed = false;
     let unlisten: (() => void) | undefined;
@@ -121,8 +122,8 @@
     return () => {
       disposed = true;
       unlisten?.();
-      if (experimentTimer) clearInterval(experimentTimer);
-      experimentTimer = undefined;
+      experimentRefreshUnsubscribe?.();
+      experimentRefreshUnsubscribe = undefined;
     };
   });
 
