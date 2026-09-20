@@ -859,10 +859,27 @@ async fn motion_preview(state: State<'_, Mutex<DesktopState>>) -> Result<MotionP
 
 #[tauri::command]
 async fn motion_run(state: State<'_, Mutex<DesktopState>>) -> Result<(), String> {
-    application(&state)?
-        .motion_run()
-        .map(|_| ())
-        .map_err(|error| error.to_string())
+    let app = application(&state)?;
+    let events = app.subscribe().map_err(|error| error.to_string())?;
+    let handle = app.motion_run().map_err(|error| error.to_string())?;
+    let completion_app = app.clone();
+    std::thread::spawn(move || {
+        while let Ok(event) = events.recv() {
+            let nmixx_app::SessionEvent::ActionCompleted {
+                handle: completed,
+                status,
+            } = event
+            else {
+                continue;
+            };
+            if completed != handle {
+                continue;
+            }
+            let _ = completion_app.motion_run_completed(status);
+            break;
+        }
+    });
+    Ok(())
 }
 
 #[tauri::command]
