@@ -179,6 +179,92 @@
     return 1;
   }
 
+  function scopeViewSettings(): ScopeViewSettings {
+    return {
+      version: 1,
+      timePerDiv,
+      cursorEnabled,
+      activeChannelId,
+      channels: plotChannels.map((channel) => ({
+        id: channel.id,
+        selected: selectedIds.has(channel.id),
+        rate: channelRates.get(channel.id),
+        color: channelColors.get(channel.id),
+        scalePerDiv: verticalScale.get(channel.id),
+        yPosition: verticalOffset.get(channel.id),
+      })),
+    };
+  }
+
+  function scheduleScopeViewSave() {
+    if (!connection || plotChannels.length === 0) return;
+    if (scopeViewSaveTimer) clearTimeout(scopeViewSaveTimer);
+    scopeViewSaveTimer = setTimeout(() => {
+      scopeViewSaveTimer = undefined;
+      saveScopeViewSettings(plotChannels, scopeViewSettings());
+    }, 250);
+  }
+
+  function validTimePerDiv(value: number | undefined): value is number {
+    return value !== undefined && Number.isFinite(value) && value > 0;
+  }
+
+  function restoreScopeView(): boolean {
+    const saved = loadScopeViewSettings(plotChannels);
+    if (!saved) return false;
+
+    const knownIds = new Set(plotChannels.map((channel) => channel.id));
+    const selected = new Set<number>();
+    const rates = new Map<number, ScopeRate>();
+    const colors = new Map<number, number>();
+    const scales = new Map(verticalScale);
+    const offsets = new Map(verticalOffset);
+
+    for (const setting of saved.channels) {
+      if (!knownIds.has(setting.id)) continue;
+      const channel = plotChannels.find((candidate) => candidate.id === setting.id);
+      if (!channel) continue;
+
+      if (setting.selected) selected.add(setting.id);
+      if (setting.rate && rateAllowed(channel, setting.rate)) rates.set(setting.id, setting.rate);
+      if (setting.color !== undefined && Number.isInteger(setting.color) && setting.color >= 0) {
+        colors.set(setting.id, setting.color % traceColors.length);
+      }
+      if (validTimePerDiv(setting.scalePerDiv)) scales.set(setting.id, setting.scalePerDiv);
+      if (setting.yPosition !== undefined && Number.isFinite(setting.yPosition)) offsets.set(setting.id, setting.yPosition);
+    }
+
+    if (selected.size === 0) return false;
+
+    for (const id of selected) {
+      const channel = plotChannels.find((candidate) => candidate.id === id);
+      if (!channel) continue;
+      if (!rates.has(id)) rates.set(id, defaultRate(channel));
+    }
+
+    selectedIds = selected;
+    channelRates = rates;
+    channelColors = colors;
+    verticalScale = scales;
+    verticalOffset = offsets;
+    timePerDiv = validTimePerDiv(saved.timePerDiv) ? saved.timePerDiv : timePerDiv;
+    cursorEnabled = Boolean(saved.cursorEnabled);
+    activeChannelId = saved.activeChannelId !== undefined && selected.has(saved.activeChannelId)
+      ? saved.activeChannelId
+      : plotChannels.find((channel) => selected.has(channel.id))?.id;
+
+    for (const id of selected) ensureChannelColor(id, selected);
+    return true;
+  }
+
+  function initializeCursorPositions() {
+    if (!cursorEnabled) return;
+    const end = -horizontalOffset;
+    const start = end - windowSeconds();
+    cursorA = start + windowSeconds() * 0.3;
+    cursorB = start + windowSeconds() * 0.7;
+  }
+
   function resetScope() {
     snapshotRevision += 1;
     configurationDirty = false;
@@ -198,6 +284,8 @@
     verticalOffset = new Map(plotChannels.map((channel) => [channel.id, 0]));
     channelColors = new Map(defaults.map((channel, index) => [channel.id, index % traceColors.length]));
     activeChannelId = defaults[0]?.id;
+    restoreScopeView();
+    initializeCursorPositions();
     rebuildPlot();
   }
 
@@ -1034,6 +1122,7 @@
       if (refreshTimer) clearInterval(refreshTimer);
       if (reconfigureTimer) clearTimeout(reconfigureTimer);
       if (interactionRefreshTimer) clearTimeout(interactionRefreshTimer);
+      if (scopeViewSaveTimer) clearTimeout(scopeViewSaveTimer);
       resizeObserver?.disconnect();
       unbindPlotInteractions();
       plot?.destroy();
