@@ -33,16 +33,13 @@ const defaultMotion: MotionState = {
 export const motionState = writable<MotionState>(defaultMotion);
 export const motionPreview = writable<MotionPreview | undefined>(undefined);
 
-let initialized = false;
 let revision = 0;
 let writeChain: Promise<void> = Promise.resolve();
 
 export async function initializeMotion(): Promise<void> {
-  if (initialized) return;
   const config = await getMotion();
   motionState.set(config);
   motionPreview.set(await getMotionPreview());
-  initialized = true;
 }
 
 export async function updateMotion<K extends keyof MotionState>(
