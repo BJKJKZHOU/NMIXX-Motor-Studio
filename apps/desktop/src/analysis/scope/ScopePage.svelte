@@ -179,6 +179,66 @@
     return 1;
   }
 
+  type EngineeringScale = { value: number; unit: string; factor: number };
+
+  function engineeringScale(value: number, unit: string): EngineeringScale {
+    const abs = Math.abs(value);
+    const prefixes = [
+      { factor: 1e-6, prefix: "µ" },
+      { factor: 1e-3, prefix: "m" },
+      { factor: 1, prefix: "" },
+      { factor: 1e3, prefix: "k" },
+    ];
+
+    let selected = prefixes[2];
+    if (abs > 0 && abs < 1e-3) selected = prefixes[0];
+    else if (abs > 0 && abs < 1) selected = prefixes[1];
+    else if (abs >= 1e3) selected = prefixes[3];
+
+    return {
+      value: value / selected.factor,
+      unit: `${selected.prefix}${unit}`,
+      factor: selected.factor,
+    };
+  }
+
+  function scaleCandidates(value: number): number[] {
+    const safe = Math.max(Math.abs(value), 1e-15);
+    const exponent = Math.floor(Math.log10(safe));
+    const values: number[] = [];
+    for (let power = exponent - 2; power <= exponent + 2; power += 1) {
+      const decade = 10 ** power;
+      values.push(decade, 2 * decade, 5 * decade);
+    }
+    return values.sort((a, b) => a - b);
+  }
+
+  function step125(value: number, direction: -1 | 1): number {
+    const candidates = scaleCandidates(value);
+    const epsilon = Math.max(Math.abs(value) * 1e-9, 1e-15);
+    if (direction > 0) {
+      return candidates.find((candidate) => candidate > value + epsilon) ?? value * 2;
+    }
+    return [...candidates].reverse().find((candidate) => candidate < value - epsilon) ?? value / 2;
+  }
+
+  function ceil125(value: number): number {
+    if (!Number.isFinite(value) || value <= 0) return 1;
+    const candidates = scaleCandidates(value);
+    return candidates.find((candidate) => candidate >= value * (1 - 1e-12)) ?? value;
+  }
+
+  function stepVerticalScale(id: number, direction: -1 | 1) {
+    const current = verticalScale.get(id) ?? 1;
+    updateVerticalScale(id, step125(current, direction));
+  }
+
+  function commitEngineeringScale(id: number, displayed: string, factor: number) {
+    const value = Number(displayed);
+    if (!Number.isFinite(value) || value <= 0) return;
+    updateVerticalScale(id, value * factor);
+  }
+
   function scopeViewSettings(): ScopeViewSettings {
     return {
       version: 1,
@@ -580,7 +640,7 @@
       const center = (min + max) / 2;
       const span = Math.max(max - min, Math.abs(center) * 0.1, 1e-6);
       offsets.set(channel.id, center);
-      scales.set(channel.id, span / (verticalDivisions * 0.75));
+      scales.set(channel.id, ceil125(span / (verticalDivisions * 0.75)));
     }
 
     verticalScale = scales;
@@ -973,6 +1033,13 @@
     const point = plotPointerPosition(event);
     if (!chart || !point || event.deltaY === 0) return;
 
+    const verticalChannel = hitVerticalMarker(point.x, point.y);
+    if (verticalChannel !== undefined) {
+      event.preventDefault();
+      stepVerticalScale(verticalChannel, event.deltaY > 0 ? 1 : -1);
+      return;
+    }
+
     const currentIndex = timeDivOptions.findIndex((value) => value === timePerDiv);
     if (currentIndex < 0) return;
     const nextIndex = Math.min(
@@ -1181,6 +1248,7 @@
                 </select>
               </div>
               {#if selectedIds.has(channel.id)}
+                {@const scaleDisplay = engineeringScale(verticalScale.get(channel.id) ?? 1, channel.unit ?? "")}
                 <div class="channel-y-controls">
                   <label class="channel-y-field">
                     <span>Scale/div</span>
@@ -1188,11 +1256,11 @@
                       type="number"
                       min="0.000001"
                       step="any"
-                      value={verticalScale.get(channel.id) ?? 1}
+                      value={scaleDisplay.value}
                       onfocus={() => selectActiveChannel(channel.id)}
-                      oninput={(event) => updateVerticalScale(channel.id, Number((event.currentTarget as HTMLInputElement).value))}
+                      onchange={(event) => commitEngineeringScale(channel.id, (event.currentTarget as HTMLInputElement).value, scaleDisplay.factor)}
                     />
-                    <em>{channel.unit ?? ""}/div</em>
+                    <em>{scaleDisplay.unit}/div</em>
                   </label>
                   <label class="channel-y-field">
                     <span>Y Pos</span>
