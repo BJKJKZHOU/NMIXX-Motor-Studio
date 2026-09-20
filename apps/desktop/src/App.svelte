@@ -331,7 +331,7 @@
           </div>
         {:else if activePage === "motion"}
           <div class="domain-page-container">
-            <MotionPage capabilities={connection?.motion} {motorState} onError={setError} />
+            <MotionPage capabilities={connection?.motion} onError={setError} />
           </div>
         {:else if activePage === "parameters"}
           <div class="domain-page-container">
