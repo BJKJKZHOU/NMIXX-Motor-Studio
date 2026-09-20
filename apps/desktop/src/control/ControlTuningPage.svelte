@@ -455,11 +455,18 @@
     if (!connection || experimentRefreshBusy) return;
     experimentRefreshBusy = true;
     try {
+      const previousState = experimentState;
       const status = await tuningExperimentStatus();
       experimentState = status.state;
       experimentMessage = status.message ?? "";
 
-      if (status.state !== "IDLE") {
+      const active = status.state === "PREPARING"
+        || status.state === "RUNNING"
+        || status.state === "STOPPING";
+      const finalTransition = (status.state === "COMPLETED" || status.state === "FAILED")
+        && (previousState !== status.state || !experimentSnapshot);
+
+      if (active || finalTransition) {
         experimentSnapshot = await readTuningExperimentSnapshot();
       }
     } catch (error) {
