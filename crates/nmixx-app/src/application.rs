@@ -313,12 +313,61 @@ impl ApplicationSession {
         ).save()?)
     }
 
-    pub fn motion_get(&self) -> MotionConfig {
-        self.inner.motion.get()
+    pub fn motion_get(&self) -> Result<MotionConfig, ApplicationError> {
+        let mut config = self.inner.motion.get();
+        let mode_meta = self
+            .inner
+            .schema
+            .parameter_by_key("PARAM_MOTOR_MODE")
+            .ok_or_else(|| ApplicationError::Motion("connected device does not expose PARAM_MOTOR_MODE".to_owned()))?;
+        let mode = match self.inner.parameters.read(mode_meta.id)? {
+            ParameterValue::U8(value) => crate::motion::mode_from_wire_value(value)
+                .map_err(ApplicationError::Motion)?,
+            _ => return Err(ApplicationError::Motion("PARAM_MOTOR_MODE is not a u8 parameter".to_owned())),
+        };
+        config.mode = mode;
+        self.inner.motion.set(config.clone()).map_err(ApplicationError::Motion)?;
+        Ok(config)
     }
 
     pub fn motion_set(&self, config: MotionConfig) -> Result<MotionConfig, ApplicationError> {
-        self.inner.motion.set(config).map_err(ApplicationError::Motion)
+        let current = self.motion_get()?;
+        if current.mode != config.mode {
+            let state_meta = self
+                .inner
+                .schema
+                .parameter_by_key("PARAM_MOTOR_STATE")
+                .ok_or_else(|| ApplicationError::Motion("connected device does not expose PARAM_MOTOR_STATE".to_owned()))?;
+            let state = match self.inner.parameters.read(state_meta.id)? {
+                ParameterValue::U8(value) => value,
+                _ => return Err(ApplicationError::Motion("PARAM_MOTOR_STATE is not a u8 parameter".to_owned())),
+            };
+            if state != 0 {
+                return Err(ApplicationError::Motion(
+                    "changing Motion mode requires the motor to be DISABLED".to_owned(),
+                ));
+            }
+
+            let mode_meta = self
+                .inner
+                .schema
+                .parameter_by_key("PARAM_MOTOR_MODE")
+                .ok_or_else(|| ApplicationError::Motion("connected device does not expose PARAM_MOTOR_MODE".to_owned()))?;
+            let wire = crate::motion::mode_wire_value(config.mode).map_err(ApplicationError::Motion)?;
+            self.inner.parameters.write(mode_meta.id, ParameterValue::U8(wire))?;
+
+            let confirmed = match self.inner.parameters.read(mode_meta.id)? {
+                ParameterValue::U8(value) => crate::motion::mode_from_wire_value(value)
+                    .map_err(ApplicationError::Motion)?,
+                _ => return Err(ApplicationError::Motion("PARAM_MOTOR_MODE is not a u8 parameter".to_owned())),
+            };
+            if confirmed != config.mode {
+                return Err(ApplicationError::Motion("motor mode write did not take effect".to_owned()));
+            }
+        }
+
+        self.inner.motion.set(config).map_err(ApplicationError::Motion)?;
+        self.motion_get()
     }
 
     pub fn motion_preview(&self) -> Result<MotionPreview, ApplicationError> {
