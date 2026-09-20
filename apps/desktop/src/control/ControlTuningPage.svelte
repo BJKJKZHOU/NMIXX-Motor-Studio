@@ -467,7 +467,7 @@
         && (previousState !== status.state || !experimentSnapshot);
 
       if (active || finalTransition) {
-        experimentSnapshot = await readTuningExperimentSnapshot();
+        experimentSnapshot = await readTuningExperimentSnapshot(tuningTimePerDiv * 10, 0);
       }
     } catch (error) {
       if (experimentState !== "IDLE") onError(error);
@@ -509,6 +509,22 @@
       onError(error);
     } finally {
       motionActionBusy = false;
+    }
+  }
+
+  async function requestExperimentWindow(
+    windowSeconds: number,
+    endOffsetSeconds: number,
+    maxPoints = 3000,
+  ) {
+    if (!connection || experimentRefreshBusy) return;
+    experimentRefreshBusy = true;
+    try {
+      experimentSnapshot = await readTuningExperimentSnapshot(windowSeconds, endOffsetSeconds, maxPoints);
+    } catch (error) {
+      onError(error);
+    } finally {
+      experimentRefreshBusy = false;
     }
   }
 
@@ -574,6 +590,8 @@
                   result={experimentSnapshot}
                   multipliers={displayMultipliers}
                   bind:timePerDiv={tuningTimePerDiv}
+                  onViewRequest={(windowSeconds, endOffsetSeconds, maxPoints) =>
+                    void requestExperimentWindow(windowSeconds, endOffsetSeconds, maxPoints)}
                 />
               {:else if waveformTab === "channels"}
                 <div class="tuning-channel-list">
