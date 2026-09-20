@@ -735,25 +735,54 @@
       <div class="channel-list">
         {#if connection}
           {#each plotChannels as channel}
-            <div class:active-channel={activeChannelId === channel.id} class="channel-row">
-              <input
-                id={`scope-channel-${channel.id}`}
-                class="scope-channel-checkbox"
-                type="checkbox"
-                checked={selectedIds.has(channel.id)}
-                onchange={() => toggleChannel(channel.id)}
-              />
-              <button class="channel-name channel-select" onclick={() => selectActiveChannel(channel.id)}>{channel.label}</button>
-              <span class="channel-unit">{channel.unit ?? ""}</span>
-              <select
-                class="channel-rate"
-                value={selectedRate(channel.id)}
-                disabled={commandBusy}
-                onchange={(event) => changeRate(channel.id, (event.currentTarget as HTMLSelectElement).value as ScopeRate)}
-              >
-                <option value="fast" disabled={!channel.supportsFast}>{rateLabel("fast")}</option>
-                <option value="normal" disabled={!channel.supportsNormal}>{rateLabel("normal")}</option>
-              </select>
+            <div class="channel-entry">
+              <div class:active-channel={activeChannelId === channel.id} class="channel-row">
+                <input
+                  id={`scope-channel-${channel.id}`}
+                  class="scope-channel-checkbox"
+                  type="checkbox"
+                  checked={selectedIds.has(channel.id)}
+                  onchange={() => toggleChannel(channel.id)}
+                />
+                <button class="channel-name channel-select" onclick={() => selectActiveChannel(channel.id)}>{channel.label}</button>
+                <span class="channel-unit">{channel.unit ?? ""}</span>
+                <select
+                  class="channel-rate"
+                  value={selectedRate(channel.id)}
+                  disabled={commandBusy}
+                  onchange={(event) => changeRate(channel.id, (event.currentTarget as HTMLSelectElement).value as ScopeRate)}
+                >
+                  <option value="fast" disabled={!channel.supportsFast}>{rateLabel("fast")}</option>
+                  <option value="normal" disabled={!channel.supportsNormal}>{rateLabel("normal")}</option>
+                </select>
+              </div>
+              {#if selectedIds.has(channel.id)}
+                <div class="channel-y-controls">
+                  <label class="channel-y-field">
+                    <span>Scale/div</span>
+                    <input
+                      type="number"
+                      min="0.000001"
+                      step="any"
+                      value={verticalScale.get(channel.id) ?? 1}
+                      onfocus={() => selectActiveChannel(channel.id)}
+                      oninput={(event) => updateVerticalScale(channel.id, Number((event.currentTarget as HTMLInputElement).value))}
+                    />
+                    <em>{channel.unit ?? ""}/div</em>
+                  </label>
+                  <label class="channel-y-field">
+                    <span>Y Pos</span>
+                    <input
+                      type="number"
+                      step="any"
+                      value={verticalOffset.get(channel.id) ?? 0}
+                      onfocus={() => selectActiveChannel(channel.id)}
+                      oninput={(event) => updateVerticalOffset(channel.id, Number((event.currentTarget as HTMLInputElement).value))}
+                    />
+                    <em>{channel.unit ?? ""}</em>
+                  </label>
+                </div>
+              {/if}
             </div>
           {/each}
         {:else}
@@ -790,49 +819,6 @@
         disabled={!scopeConfig}
         oninput={(event) => updateHorizontalOffset(Number((event.currentTarget as HTMLInputElement).value))}
       />
-    </section>
-
-    <section class="side-section">
-      <div class="section-heading">VERTICAL</div>
-      {#if activeChannelId !== undefined}
-        {@const activeChannel = plotChannels.find((channel) => channel.id === activeChannelId)}
-        {#if activeChannel}
-          <div class="scope-active-channel">
-            <span class="trace-mark" style={`background:${traceColor(activeChannel)}`}></span>
-            <strong>{activeChannel.label}</strong>
-            <span>{activeChannel.unit ?? ""}</span>
-          </div>
-          <div class="scope-control-grid">
-            <label>
-              <span>Scale/div</span>
-              <div class="scope-unit-input">
-                <input
-                  type="number"
-                  min="0.000001"
-                  step="any"
-                  value={verticalScale.get(activeChannelId) ?? 1}
-                  oninput={(event) => updateVerticalScale(activeChannelId!, Number((event.currentTarget as HTMLInputElement).value))}
-                />
-                <em>{activeChannel.unit ?? ""}/div</em>
-              </div>
-            </label>
-            <label>
-              <span>Offset</span>
-              <div class="scope-unit-input">
-                <input
-                  type="number"
-                  step="any"
-                  value={verticalOffset.get(activeChannelId) ?? 0}
-                  oninput={(event) => updateVerticalOffset(activeChannelId!, Number((event.currentTarget as HTMLInputElement).value))}
-                />
-                <em>{activeChannel.unit ?? ""}</em>
-              </div>
-            </label>
-          </div>
-        {/if}
-      {:else}
-        <div class="empty-hint">Select a channel to adjust its vertical scale.</div>
-      {/if}
     </section>
 
     {#if cursorEnabled}
