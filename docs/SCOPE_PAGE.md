@@ -101,7 +101,7 @@ The mouse wheel changes `Time/div` through the existing oscilloscope-style 1-2-5
 
 Zoom is anchored to the time under the mouse pointer. The time under the pointer should remain at approximately the same screen X coordinate after the scale step unless clamping at the available history boundary makes that impossible.
 
-The wheel does not modify Y scale in this milestone.
+The plot-background wheel changes only the horizontal time scale. Vertical scale changes are accepted only when the pointer is over a channel Y marker, so X and Y zoom gestures remain unambiguous.
 
 ## Pointer interaction priority
 
