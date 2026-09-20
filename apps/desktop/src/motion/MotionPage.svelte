@@ -6,7 +6,11 @@
   import type { MotionMode, MotionState, SCurveMode, TrajectoryType } from "./types";
 
   export let capabilities: MotionCapabilities | undefined;
+  export let motorState: number | null = null;
   export let onError: (error: unknown) => void = () => undefined;
+
+  const MOTOR_DISABLED = 0;
+  const MOTOR_RUN = 2;
 
   let actionBusy = false;
 
@@ -62,7 +66,7 @@
   }
 
   function canStop(): boolean {
-    return !!capabilities?.stop;
+    return !!capabilities?.stop && motorState === MOTOR_RUN;
   }
 
   async function run() {
@@ -107,7 +111,12 @@
   <div class="motion-mode-row">
     <label>
       <span>Mode</span>
-      <select value={$motionState.mode} onchange={(event) => update("mode", (event.currentTarget as HTMLSelectElement).value as MotionMode)}>
+      <select
+        value={$motionState.mode}
+        disabled={motorState !== MOTOR_DISABLED || actionBusy}
+        title={motorState === MOTOR_DISABLED ? "Select motor mode" : "Disable the motor before changing mode"}
+        onchange={(event) => update("mode", (event.currentTarget as HTMLSelectElement).value as MotionMode)}
+      >
         {#each Object.entries(modeLabels) as [value, label]}
           <option value={value} disabled={!modeSupported(value as MotionMode)}>{label}</option>
         {/each}
