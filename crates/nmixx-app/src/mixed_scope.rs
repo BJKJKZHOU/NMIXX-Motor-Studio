@@ -107,6 +107,7 @@ struct GroupLayout {
 struct GroupRuntime {
     active: GroupLayout,
     pending: Option<GroupLayout>,
+    previous_config_id: Option<u8>,
     sequence: SequenceTracker,
     lost_frames: u64,
 }
@@ -630,6 +631,7 @@ fn group_runtime(layout: GroupLayout) -> GroupRuntime {
     GroupRuntime {
         active: layout,
         pending: None,
+        previous_config_id: None,
         sequence: SequenceTracker::default(),
         lost_frames: 0,
     }
@@ -784,15 +786,21 @@ fn scope_worker(
     }
 }
 
-fn promote_if_pending(group: &mut GroupRuntime, config_id: u8) -> Result<(), MixedScopeError> {
+fn accept_config_frame(group: &mut GroupRuntime, config_id: u8) -> Result<bool, MixedScopeError> {
     if group.active.config_id == config_id {
-        return Ok(());
+        return Ok(true);
     }
 
     if group.pending.as_ref().is_some_and(|pending| pending.config_id == config_id) {
+        let previous = group.active.config_id;
         group.active = group.pending.take().expect("pending config checked");
+        group.previous_config_id = Some(previous);
         group.sequence.reset();
-        return Ok(());
+        return Ok(true);
+    }
+
+    if group.previous_config_id == Some(config_id) {
+        return Ok(false);
     }
 
     Err(MixedScopeError::UnknownConfig(config_id))
@@ -805,8 +813,12 @@ fn ingest_fast(
     let config_id = frame.data().get(2).copied().ok_or(MixedScopeError::UnknownConfig(0))?;
     let mut state = shared.lock().map_err(|_| MixedScopeError::Closed)?;
     let (ids, scales) = {
-        let group = state.fast.as_mut().ok_or(MixedScopeError::UnknownConfig(config_id))?;
-        promote_if_pending(group, config_id)?;
+        let Some(group) = state.fast.as_mut() else {
+            return Ok(());
+        };
+        if !accept_config_frame(group, config_id)? {
+            return Ok(());
+        }
         let ids = group.active.ids.clone();
         let scales = group.active.scales.clone();
 
@@ -839,11 +851,12 @@ fn ingest_normal(
     let decoded = decode_normal_data(frame)?;
     let mut state = shared.lock().map_err(|_| MixedScopeError::Closed)?;
     let ids = {
-        let group = state
-            .normal
-            .as_mut()
-            .ok_or(MixedScopeError::UnknownConfig(decoded.config_id))?;
-        promote_if_pending(group, decoded.config_id)?;
+        let Some(group) = state.normal.as_mut() else {
+            return Ok(());
+        };
+        if !accept_config_frame(group, decoded.config_id)? {
+            return Ok(());
+        }
 
         if decoded.values.len() != group.active.ids.len() {
             return Err(MixedScopeError::Runtime("NORMAL channel count mismatch".to_owned()));
