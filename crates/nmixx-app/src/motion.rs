@@ -139,6 +139,7 @@ impl MotionService {
         &self,
         parameters: &ParameterService,
         session: &DeviceSession,
+        position_target_override: Option<f64>,
     ) -> Result<ActionHandle, String> {
         let config = self.get();
         validate(&config)?;
@@ -169,11 +170,15 @@ impl MotionService {
                 )?;
                 write_motion_limits(parameters, &config)?;
 
-                let target_turns = match config.position_command {
-                    PositionCommand::Absolute => config.position_target_turn,
-                    PositionCommand::Incremental => {
-                        let current = read_position(parameters, "PARAM_RUN_POSITION")?;
-                        position_to_turns(current) + config.position_target_turn
+                let target_turns = if let Some(target) = position_target_override {
+                    target
+                } else {
+                    match config.position_command {
+                        PositionCommand::Absolute => config.position_target_turn,
+                        PositionCommand::Incremental => {
+                            let current = read_position(parameters, "PARAM_RUN_POSITION")?;
+                            position_to_turns(current) + config.position_target_turn
+                        }
                     }
                 };
                 write_by_symbol(
