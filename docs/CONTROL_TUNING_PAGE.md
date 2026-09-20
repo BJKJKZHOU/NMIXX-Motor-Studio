@@ -344,6 +344,19 @@ The Scale tab edits the multiplier directly as `×N`. The rendering rule is exac
 
 The intended workflow is to configure channels and display multipliers infrequently, then repeatedly change tuning parameters, Run the same motion, inspect the waveform, and tune again.
 
+### Waveform LOD
+
+The retained tuning capture remains raw engineering-value data. Display reduction is performed only for the currently visible time window.
+
+- When the visible window contains a manageable number of samples, the GUI receives the raw samples directly.
+- When the visible window is much denser than the plot width, the Application/Tauri boundary groups samples into time buckets.
+- Each bucket returns a representative mean value for the trend line plus the bucket minimum and maximum for an envelope.
+- The envelope is drawn as a vertical min/max range at the bucket time. Min/max endpoints are not connected to one another as a zig-zag line.
+- Zooming in naturally reduces samples per pixel; once the requested window is small enough, the response switches back to raw samples.
+- Horizontal panning requests only the corresponding raw source window. It must not clone or transfer the entire retained capture first.
+
+This preserves short spikes and overshoot in overview views while avoiding the false visual impression of high-frequency oscillation that results from connecting alternating extrema. LOD never changes the stored raw capture or future exported/measurement values.
+
 ## Motion Command
 
 The lower-left Motion Command area uses a compact two-column engineering form rather than a tall settings stack. Position mode should present command-mode options and the common motion values in one bounded area, for example:
