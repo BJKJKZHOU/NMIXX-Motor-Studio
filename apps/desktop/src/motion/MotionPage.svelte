@@ -130,10 +130,10 @@
     }
   }
 
-  function parameterKeydown(event: KeyboardEvent, symbol: string) {
+  async function parameterKeydown(event: KeyboardEvent, symbol: string) {
     if (event.key === "Enter") {
       event.preventDefault();
-      void commitParameter(symbol);
+      await commitParameter(symbol);
       (event.currentTarget as HTMLInputElement).blur();
     } else if (event.key === "Escape") {
       event.preventDefault();
@@ -198,10 +198,10 @@
     }
   }
 
-  function incrementalKeydown(event: KeyboardEvent) {
+  async function incrementalKeydown(event: KeyboardEvent) {
     if (event.key === "Enter") {
       event.preventDefault();
-      void commitIncremental();
+      await commitIncremental();
       (event.currentTarget as HTMLInputElement).blur();
     } else if (event.key === "Escape") {
       event.preventDefault();
