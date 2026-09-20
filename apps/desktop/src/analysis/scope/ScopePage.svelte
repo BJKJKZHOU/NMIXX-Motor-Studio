@@ -137,8 +137,12 @@
     return scopeConfig?.historySeconds ?? 10;
   }
 
+  function recordedSeconds(): number {
+    return snapshot?.recordedSeconds ?? 0;
+  }
+
   function maxHorizontalOffset(): number {
-    return Math.max(0, historySeconds() - windowSeconds());
+    return Math.max(0, recordedSeconds() - windowSeconds());
   }
 
   function defaultRate(channel: PlotChannel): ScopeRate {
@@ -421,6 +425,7 @@
 
   async function hotReconfigure() {
     if (!scopeConfig || !isRunning || commandBusy || !configurationDirty) return;
+    snapshotRevision += 1;
     commandBusy = true;
     try {
       const configured = await configureScope(
@@ -1250,7 +1255,7 @@
       plugins: [
         scopeNavigationPlugin({
           panButton: 0,
-          bounds: () => [-historySeconds(), 0],
+          bounds: () => [-recordedSeconds(), 0],
           wheelRange: navigationWheelRange,
           blockPan: navigationBlocksPointer,
           blockWheel: navigationBlocksPointer,
@@ -1469,7 +1474,7 @@
       {#if visibleChannels.length === 0}
         <div class="plot-placeholder">{connection ? "Select channels and press Run." : "Connect a device before using Scope."}</div>
       {/if}
-      <div class="plot-meta">{snapshot?.sampleCount ?? 0} samples · loss {snapshot?.lostFrames ?? 0}</div>
+      <div class="plot-meta">{snapshot ? snapshot.recordedSeconds.toFixed(3) + " s recorded" : "0.000 s recorded"} · loss {snapshot?.lostFrames ?? 0}</div>
     </div>
     <div bind:this={plotHost} class="plot-host scope-plot-interactive"></div>
   </section>
