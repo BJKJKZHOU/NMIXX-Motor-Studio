@@ -66,7 +66,17 @@ The plot header does not duplicate channel legend entries or per-channel latest 
 
 Each visible waveform has an identically colored Y-position marker on the left edge of the plot. Dragging that marker changes only that channel's `verticalOffset`. The numeric `Y Pos` field and marker are two views over the same value.
 
-The Y marker does not change acquisition configuration and must not modify sample values.
+`Scale/div` remains the only vertical gain control. It stores the real physical quantity per division and does not introduce a separate display-gain multiplier.
+
+- values are stored internally in the channel's real unit;
+- the UI formats small/large values with engineering prefixes such as mA, mrad and µrad;
+- fast scale changes follow oscilloscope-style 1-2-5 steps;
+- Auto Set rounds its calculated vertical scale upward to a 1-2-5 step;
+- arbitrary positive numeric input remains allowed;
+- scrolling the mouse wheel while hovering the channel's Y marker changes only that channel's `Scale/div`;
+- scrolling over the plot background continues to change only `Time/div`.
+
+The Y marker and Scale/div controls do not change acquisition configuration and must not modify sample values.
 
 ## Horizontal navigation
 
@@ -79,9 +89,9 @@ drag right  -> older history -> horizontalOffset increases
 drag left   -> newer history -> horizontalOffset decreases
 ```
 
-`horizontalOffset == 0` means the latest acquired window.
+`horizontalOffset == 0` means the latest acquired window and therefore **Follow Latest** is active. While acquisition is running, new samples stay at the right edge.
 
-The existing horizontal Position control remains a secondary precise/navigation control. A `Latest` action returns `horizontalOffset` to zero.
+Dragging into history makes `horizontalOffset > 0` and leaves Follow Latest without stopping acquisition. The existing horizontal Position control remains a secondary precise/navigation control. A `Latest` action returns `horizontalOffset` to zero and re-enters Follow Latest.
 
 Panning changes only the viewed time range. It does not Stop acquisition.
 
@@ -124,6 +134,8 @@ Each cursor is rendered as:
 
 The line and both markers are draggable hit targets. Dragging clamps the cursor to the visible time window.
 
+A compact label between X1 and X2 shows `Δt · 1/Δt`. That label is also a drag handle: dragging it moves X1 and X2 together while preserving their interval, clamped to the visible time window.
+
 The Cursor panel shows:
 
 - X1;
@@ -133,6 +145,62 @@ The Cursor panel shows:
 - for every visible channel: value at X1, value at X2 and ΔY.
 
 The first implementation may use the nearest captured sample for channel cursor values; interpolation is not required.
+
+## Hover time marker
+
+Moving the pointer across the plot without dragging shows a lightweight temporary time marker at the pointer's X position.
+
+The hover marker:
+
+- shows time only;
+- disappears when the pointer leaves the plot;
+- does not create or move X1/X2;
+- does not become persisted Scope state;
+- exists only for quick visual inspection.
+
+## Run / Stop and frozen data
+
+`Stop` stops Scope acquisition but preserves the completed waveform and current view state.
+
+After Stop, the user must still be able to:
+
+- pan and zoom time;
+- change per-channel Scale/div and Y Pos;
+- drag Y markers;
+- enable/drag cursors;
+- inspect cursor values and hover time;
+- use later measurement/export functions.
+
+Stop must not clear captured samples, reset channels, reset vertical scales or discard cursors.
+
+Starting a new Run returns the time view to Latest/Follow Latest. It does not require resetting the user's saved channel layout or vertical configuration.
+
+## View settings persistence
+
+Scope persists **view settings**, not acquisition data.
+
+The persisted view includes:
+
+- selected channel IDs that still exist on the current device/schema;
+- FAST/NORMAL rate selection;
+- stable channel color assignment;
+- per-channel Scale/div;
+- per-channel Y Pos;
+- Time/div;
+- Cursor enabled/disabled preference;
+- active channel where it still exists.
+
+The persistence key is derived from the current channel/capability signature so unrelated firmware/device layouts do not blindly receive the same view.
+
+The following are deliberately not restored:
+
+- captured samples;
+- Scope LIVE/STOPPED runtime state;
+- lost-frame counters;
+- historical `horizontalOffset`;
+- previous absolute X1/X2 positions.
+
+When Cursor is restored as enabled, X1/X2 are initialized in the new visible window rather than reusing old acquisition times.
 
 ## Interaction and acquisition traffic
 
@@ -164,7 +232,6 @@ The following are deliberately deferred:
 
 - Trigger;
 - Single;
-- Y-scale wheel gestures;
 - touchpad-specific gestures;
 - inertial scrolling;
 - rectangle zoom;
