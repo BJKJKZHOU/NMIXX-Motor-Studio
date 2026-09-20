@@ -336,69 +336,21 @@ impl ApplicationSession {
         ).save()?)
     }
 
-    pub fn motion_get(&self) -> Result<MotionConfig, ApplicationError> {
-        let mut config = self.inner.motion.get();
-        let mode_meta = self
-            .inner
-            .schema
-            .parameter_by_key("PARAM_MOTOR_MODE")
-            .ok_or_else(|| ApplicationError::Motion("connected device does not expose PARAM_MOTOR_MODE".to_owned()))?;
-        let mode = match self.inner.parameters.read(mode_meta.id)? {
-            ParameterValue::U8(value) => crate::motion::mode_from_wire_value(value)
-                .map_err(ApplicationError::Motion)?,
-            _ => return Err(ApplicationError::Motion("PARAM_MOTOR_MODE is not a u8 parameter".to_owned())),
-        };
-        config.mode = mode;
-        self.inner.motion.set(config.clone()).map_err(ApplicationError::Motion)?;
-        Ok(config)
+    pub fn motion_get(&self) -> MotionConfig {
+        self.inner.motion.get()
     }
 
     pub fn motion_set(&self, config: MotionConfig) -> Result<MotionConfig, ApplicationError> {
-        let current = self.motion_get()?;
-        if current.mode != config.mode {
-            let state_meta = self
-                .inner
-                .schema
-                .parameter_by_key("PARAM_MOTOR_STATE")
-                .ok_or_else(|| ApplicationError::Motion("connected device does not expose PARAM_MOTOR_STATE".to_owned()))?;
-            let state = match self.inner.parameters.read(state_meta.id)? {
-                ParameterValue::U8(value) => value,
-                _ => return Err(ApplicationError::Motion("PARAM_MOTOR_STATE is not a u8 parameter".to_owned())),
-            };
-            if state != 0 {
-                return Err(ApplicationError::Motion(
-                    "changing Motion mode requires the motor to be DISABLED".to_owned(),
-                ));
-            }
-
-            let mode_meta = self
-                .inner
-                .schema
-                .parameter_by_key("PARAM_MOTOR_MODE")
-                .ok_or_else(|| ApplicationError::Motion("connected device does not expose PARAM_MOTOR_MODE".to_owned()))?;
-            let wire = crate::motion::mode_wire_value(config.mode).map_err(ApplicationError::Motion)?;
-            self.inner.parameters.write(mode_meta.id, ParameterValue::U8(wire))?;
-
-            let confirmed = match self.inner.parameters.read(mode_meta.id)? {
-                ParameterValue::U8(value) => crate::motion::mode_from_wire_value(value)
-                    .map_err(ApplicationError::Motion)?,
-                _ => return Err(ApplicationError::Motion("PARAM_MOTOR_MODE is not a u8 parameter".to_owned())),
-            };
-            if confirmed != config.mode {
-                return Err(ApplicationError::Motion("motor mode write did not take effect".to_owned()));
-            }
-        }
-
-        let reset_repeat = current.mode != config.mode
-            || current.repeat != config.repeat
+        let current = self.inner.motion.get();
+        let reset_repeat = current.repeat != config.repeat
             || current.position_command != config.position_command
-            || current.position_target_turn != config.position_target_turn;
+            || current.incremental_delta_turn != config.incremental_delta_turn;
 
-        self.inner.motion.set(config).map_err(ApplicationError::Motion)?;
+        let canonical = self.inner.motion.set(config).map_err(ApplicationError::Motion)?;
         if reset_repeat {
             self.reset_motion_repeat()?;
         }
-        self.motion_get()
+        Ok(canonical)
     }
 
     pub fn motion_preview(&self) -> Result<MotionPreview, ApplicationError> {
@@ -415,16 +367,17 @@ impl ApplicationSession {
 
         self.inner
             .motion
-            .preview_with_speed_limit(effective_limit)
+            .preview_with_parameters(&self.inner.parameters, effective_limit)
             .map_err(ApplicationError::Motion)
     }
 
     pub fn motion_run(&self) -> Result<ActionHandle, ApplicationError> {
         let events = self.subscribe()?;
         let config = self.inner.motion.get();
+        let mode = self.read_motion_mode()?;
         let mut repeat_target: Option<(f64, bool)> = None;
 
-        if config.mode == MotionMode::Position && config.repeat {
+        if mode == MotionMode::Position && config.repeat {
             let needs_init = {
                 let runtime = self.inner.motion_repeat.lock().map_err(|_| ApplicationError::Poisoned)?;
                 runtime.endpoint_a.is_none() || runtime.endpoint_b.is_none()
@@ -433,8 +386,8 @@ impl ApplicationSession {
             if needs_init {
                 let current = self.read_position_turns("PARAM_RUN_POSITION")?;
                 let target = match config.position_command {
-                    PositionCommand::Absolute => config.position_target_turn,
-                    PositionCommand::Incremental => current + config.position_target_turn,
+                    PositionCommand::Absolute => self.read_position_turns("PARAM_TARGET_POSITION")?,
+                    PositionCommand::Incremental => current + config.incremental_delta_turn,
                 };
                 if (target - current).abs() <= 1e-9 {
                     return Err(ApplicationError::Motion(
@@ -594,8 +547,7 @@ impl ApplicationSession {
     }
 
     pub fn tuning_experiment_default_selections(&self) -> Result<Vec<ScopeSelection>, ApplicationError> {
-        let motion = self.inner.motion.get();
-        self.tuning_default_selections(motion.mode)
+        self.tuning_default_selections(self.read_motion_mode()?)
     }
 
     fn tuning_capture_duration(
@@ -657,7 +609,8 @@ impl ApplicationSession {
         }
 
         let motion = self.inner.motion.get();
-        let preview_duration = if motion.mode == MotionMode::Position {
+        let mode = self.read_motion_mode()?;
+        let preview_duration = if mode == MotionMode::Position {
             self.motion_preview()?
                 .times
                 .last()
@@ -697,7 +650,7 @@ impl ApplicationSession {
 
         let app = self.clone();
         thread::spawn(move || {
-            app.run_tuning_experiment(generation, motion, preview_duration, capture_duration);
+            app.run_tuning_experiment(generation, motion, mode, preview_duration, capture_duration);
         });
 
         self.tuning_experiment_status()
@@ -785,7 +738,7 @@ impl ApplicationSession {
                 selections.push(self.tuning_selection("PARAM_REF_WM", ScopeRate::Normal)?);
                 selections.push(self.tuning_selection("PARAM_RUN_WM", ScopeRate::Normal)?);
             }
-            MotionMode::Torque | MotionMode::Mit => {}
+            MotionMode::Torque => {}
         }
 
         Ok(selections)
@@ -816,6 +769,21 @@ impl ApplicationSession {
             id: metadata.id,
             rate,
         })
+    }
+
+    fn read_motion_mode(&self) -> Result<MotionMode, ApplicationError> {
+        let metadata = self
+            .inner
+            .schema
+            .parameter_by_key("PARAM_MOTOR_MODE")
+            .ok_or_else(|| ApplicationError::Motion("Motor mode is not exposed".to_owned()))?;
+        match self.inner.parameters.read(metadata.id)? {
+            ParameterValue::U8(value) => crate::motion::mode_from_wire_value(value)
+                .map_err(ApplicationError::Motion),
+            _ => Err(ApplicationError::Motion(
+                "Motor mode has an unexpected type".to_owned(),
+            )),
+        }
     }
 
     fn read_position_turns(&self, key: &str) -> Result<f64, ApplicationError> {
@@ -909,6 +877,7 @@ impl ApplicationSession {
         &self,
         generation: u64,
         motion: MotionConfig,
+        mode: MotionMode,
         preview_duration: f64,
         capture_duration: Duration,
     ) {
@@ -926,7 +895,7 @@ impl ApplicationSession {
             return;
         }
 
-        let auto_position = motion.mode == MotionMode::Position;
+        let auto_position = mode == MotionMode::Position;
         let mut stop_sent = false;
         let reserve_ratio = (TUNING_POST_CAPTURE.as_secs_f64() / capture_duration.as_secs_f64())
             .clamp(0.0, 1.0);
