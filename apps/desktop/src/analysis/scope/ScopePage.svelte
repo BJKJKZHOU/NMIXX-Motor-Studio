@@ -195,8 +195,9 @@
     else if (abs > 0 && abs < 1) selected = prefixes[1];
     else if (abs >= 1e3) selected = prefixes[3];
 
+    const displayed = value / selected.factor;
     return {
-      value: value / selected.factor,
+      value: Number(displayed.toPrecision(6)),
       unit: `${selected.prefix}${unit}`,
       factor: selected.factor,
     };
@@ -266,7 +267,7 @@
   }
 
   function validTimePerDiv(value: number | undefined): value is number {
-    return value !== undefined && Number.isFinite(value) && value > 0;
+    return value !== undefined && Number.isFinite(value) && timeDivOptions.includes(value);
   }
 
   function restoreScopeView(): boolean {
@@ -1401,7 +1402,7 @@
         <div class="scope-readout">
           <span>Position</span>
           <div class="scope-position-readout">
-            <strong>{horizontalOffset === 0 ? "Latest" : `-${formatTime(horizontalOffset)}`}</strong>
+            <strong>{followLatest ? "Latest" : `-${formatTime(horizontalOffset)}`}</strong>
             {#if horizontalOffset > 0}
               <button class="scope-latest-button" onclick={goLatest}>Latest</button>
             {/if}
