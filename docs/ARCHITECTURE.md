@@ -77,7 +77,7 @@ Automation ----+
 
 Normal product clients must not assemble `DeviceSession + ParameterService + ScopeSession + MotionService` themselves. Tauri is a thin IPC bridge over `ApplicationSession`; the formal CLI uses the same runtime. Low-level smoke/protocol tests may intentionally use `DeviceSession` directly because their purpose is to validate the lower layer itself.
 
-Host-only models that are meaningful while disconnected, such as the editable Motion command model and theoretical preview, may outlive a device connection. When connected, the same shared model instance is injected into `ApplicationSession`; a second copy must not be created.
+Motion command configuration is owned by the connected `ApplicationSession`; Tauri must not keep a second `MotionService` copy beside it. Device-owned runtime state such as motor mode is read from the shared Parameter service and remains authoritative. Host-only trajectory fields may remain in the Application Motion model, but they must not create a parallel truth for device Parameters.
 
 The Application API should expose domain concepts such as `parameter.get`, `motor.enable`, `motor.disable`, `motor.stop`, `action.start`, `stream.subscribe` and `task.cancel`, not raw CAN IDs or payload bytes.
 
@@ -491,7 +491,7 @@ Detailed Scope interaction rules, including mouse-centered time zoom, history pa
 
 The GUI must not open its own transport or decode telemetry wire frames for any of these functions. Acquisition remains an Application Runtime capability.
 
-Chart interaction should use uPlot capabilities and plugins instead of recreating generic plotting behavior in Svelte. Unit metadata should drive reusable scale/axis policy rather than page-specific conditionals.
+Chart interaction should use the selected ECharts capabilities instead of recreating generic plotting behavior in Svelte. Unit metadata should drive reusable scale/axis policy rather than page-specific conditionals.
 
 ## Connection is transport-oriented
 
