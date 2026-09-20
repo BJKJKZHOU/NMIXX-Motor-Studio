@@ -3,7 +3,7 @@
   import ConnectionPage from "./connection/ConnectionPage.svelte";
   import { disconnectDevice } from "./connection/api";
   import type { ConnectionInfo } from "./connection/types";
-  import ScopePage from "./analysis/scope/ScopePage.svelte";
+  import ScopePage from "./analysis/scope/ScopeDygraphPage.svelte";
   import type { ScopeSummary } from "./analysis/scope/types";
   import ParameterTablePage from "./parameters/ParameterTablePage.svelte";
   import MotorPage from "./motor/MotorPage.svelte";
