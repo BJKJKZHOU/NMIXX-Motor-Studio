@@ -6,6 +6,7 @@
   import { subscribeRefresh } from "../../refreshScheduler";
   import { configureScope, readScopeSnapshot, startScope, stopScope } from "./api";
   import { loadScopeViewSettings, saveScopeViewSettings, type ScopeViewSettings } from "./viewSettings";
+  import { scopeNavigationPlugin } from "./uplotNavigation";
   import type { ScopeConfig, ScopeRate, ScopeSnapshot, ScopeSummary } from "./types";
 
   export let connection: ConnectionInfo | undefined;
@@ -70,7 +71,6 @@
   let cursorGroupHit: { left: number; right: number; top: number; bottom: number } | undefined;
 
   type DragState =
-    | { kind: "pan"; pointerId: number; startClientX: number; startOffset: number }
     | { kind: "vertical"; pointerId: number; id: number; startClientY: number; startOffset: number }
     | { kind: "cursor"; pointerId: number; cursor: "a" | "b" }
     | { kind: "cursor-group"; pointerId: number; startClientX: number; startA: number; startB: number };
@@ -461,16 +461,6 @@
     scheduleViewRefresh();
   }
 
-  function displayCacheWindowSeconds(): number {
-    return Math.min(historySeconds(), Math.max(windowSeconds() * 4, 1));
-  }
-
-  function displayCacheEndOffsetSeconds(cacheWindow: number): number {
-    const margin = Math.max(0, cacheWindow - windowSeconds()) / 2;
-    const requested = Math.max(0, horizontalOffset - margin);
-    return Math.min(requested, Math.max(0, historySeconds() - cacheWindow));
-  }
-
   function scheduleViewRefresh(delay = 80) {
     viewNavigationActive = true;
     if (interactionRefreshTimer) clearTimeout(interactionRefreshTimer);
@@ -789,9 +779,7 @@
     snapshotBusy = true;
     const revision = snapshotRevision;
     try {
-      const cacheWindow = displayCacheWindowSeconds();
-      const cacheEndOffset = displayCacheEndOffsetSeconds(cacheWindow);
-      const next = await readScopeSnapshot(cacheWindow, cacheEndOffset);
+      const next = await readScopeSnapshot(windowSeconds(), horizontalOffset);
       if (revision !== snapshotRevision) return;
       snapshot = next;
       if (active) {
@@ -1056,14 +1044,7 @@
         };
         plot.over.style.cursor = "ns-resize";
       } else {
-        dragState = {
-          kind: "pan",
-          pointerId: event.pointerId,
-          startClientX: event.clientX,
-          startOffset: horizontalOffset,
-        };
-        viewNavigationActive = true;
-        plot.over.style.cursor = "grabbing";
+        return;
       }
     }
 
@@ -1123,60 +1104,55 @@
       return;
     }
 
-    const secondsPerPixel = windowSeconds() / Math.max(point.width, 1);
-    horizontalOffset = Math.min(
-      Math.max(0, dragState.startOffset + (event.clientX - dragState.startClientX) * secondsPerPixel),
-      maxHorizontalOffset(),
-    );
-    applyHorizontalScale();
   }
 
   function finishPlotDrag(event: PointerEvent) {
     const chart = plot;
     if (!chart || !dragState || dragState.pointerId !== event.pointerId) return;
-    const completed = dragState;
     dragState = undefined;
     if (chart.over.hasPointerCapture(event.pointerId)) chart.over.releasePointerCapture(event.pointerId);
     chart.over.style.cursor = "grab";
-    if (completed.kind === "pan") scheduleViewRefresh(0);
   }
 
   function handlePlotWheel(event: WheelEvent) {
-    const chart = plot;
     const point = plotPointerPosition(event);
-    if (!chart || !point || event.deltaY === 0) return;
+    if (!point || event.deltaY === 0) return;
 
     const verticalChannel = hitVerticalMarker(point.x, point.y);
-    if (verticalChannel !== undefined) {
-      event.preventDefault();
-      stepVerticalScale(verticalChannel, event.deltaY > 0 ? 1 : -1);
-      return;
-    }
-
-    const currentIndex = timeDivOptions.findIndex((value) => value === timePerDiv);
-    if (currentIndex < 0) return;
-    const nextIndex = Math.min(
-      timeDivOptions.length - 1,
-      Math.max(0, currentIndex + (event.deltaY > 0 ? -1 : 1)),
-    );
-    if (nextIndex === currentIndex) return;
+    if (verticalChannel === undefined) return;
 
     event.preventDefault();
+    stepVerticalScale(verticalChannel, event.deltaY > 0 ? 1 : -1);
+  }
 
-    const ratio = Math.min(Math.max(point.x / Math.max(point.width, 1), 0), 1);
-    const oldWindow = windowSeconds();
-    const oldRight = -horizontalOffset;
-    const oldLeft = oldRight - oldWindow;
-    const anchorTime = oldLeft + ratio * oldWindow;
+  function navigationWheelRange(currentRange: number, direction: -1 | 1): number {
+    const currentPerDiv = currentRange / horizontalDivisions;
+    const currentIndex = timeDivOptions.reduce((best, value, index) =>
+      Math.abs(value - currentPerDiv) < Math.abs(timeDivOptions[best] - currentPerDiv) ? index : best,
+    0);
+    const nextIndex = Math.min(
+      timeDivOptions.length - 1,
+      Math.max(0, currentIndex + direction),
+    );
+    return timeDivOptions[nextIndex] * horizontalDivisions;
+  }
 
-    timePerDiv = timeDivOptions[nextIndex];
-    const newWindow = windowSeconds();
-    const newLeft = anchorTime - ratio * newWindow;
-    const newRight = newLeft + newWindow;
-    horizontalOffset = Math.min(Math.max(0, -newRight), maxHorizontalOffset());
+  function applyNavigationView(min: number, max: number, committed: boolean) {
+    const range = max - min;
+    const nextPerDiv = range / horizontalDivisions;
+    const nearest = timeDivOptions.reduce((best, value) =>
+      Math.abs(value - nextPerDiv) < Math.abs(best - nextPerDiv) ? value : best,
+    timeDivOptions[0]);
+    timePerDiv = nearest;
+    horizontalOffset = Math.min(Math.max(0, -max), maxHorizontalOffset());
+    if (committed) scheduleViewRefresh(0);
+  }
 
-    applyHorizontalScale();
-    scheduleViewRefresh();
+  function navigationBlocksPointer(u: uPlot, event: MouseEvent | WheelEvent): boolean {
+    const rect = u.over.getBoundingClientRect();
+    const x = event.clientX - rect.left;
+    const y = event.clientY - rect.top;
+    return Boolean(hitCursor(x) || hitCursorGroup(x, y) || hitVerticalMarker(x, y) !== undefined);
   }
 
   function handlePlotPointerLeave() {
@@ -1271,7 +1247,20 @@
       scales,
       axes,
       series,
-      plugins: [cursorPlugin()],
+      plugins: [
+        scopeNavigationPlugin({
+          panButton: 0,
+          bounds: () => [-historySeconds(), 0],
+          wheelRange: navigationWheelRange,
+          blockPan: navigationBlocksPointer,
+          blockWheel: navigationBlocksPointer,
+          onInteractionStart: () => {
+            viewNavigationActive = true;
+          },
+          onViewChange: applyNavigationView,
+        }),
+        cursorPlugin(),
+      ],
     }, [[], ...plotChannels.map(() => [])] as uPlot.AlignedData, plotHost);
 
     bindPlotInteractions();
