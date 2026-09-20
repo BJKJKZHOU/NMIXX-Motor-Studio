@@ -45,6 +45,7 @@
     gains: string[];
   };
 
+  const MOTOR_DISABLED = 0;
   const MOTOR_ENABLED = 1;
   const MOTOR_RUN = 2;
 
@@ -661,7 +662,8 @@
                 <select
                   class="compact-select motion-mode-select"
                   value={$motionState.mode}
-                  disabled={motionLocked()}
+                  disabled={motionLocked() || motorState !== MOTOR_DISABLED}
+                  title={motorState === MOTOR_DISABLED ? "Select motor mode" : "Disable the motor before changing mode"}
                   onchange={(event) => updateMotionField("mode", (event.currentTarget as HTMLSelectElement).value as MotionMode)}
                 >
                   {#each Object.entries(motionModeLabels) as [value, labelText]}
