@@ -285,6 +285,10 @@ struct ScopeSeriesDto {
     sample_rate_hz: u32,
     times: Vec<f64>,
     values: Vec<f32>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    envelope_min: Option<Vec<f32>>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    envelope_max: Option<Vec<f32>>,
 }
 
 #[derive(Debug, Serialize)]
@@ -309,6 +313,9 @@ struct TuningExperimentSnapshotDto {
     status: TuningExperimentStatusDto,
     config: ScopeConfigDto,
     snapshot: ScopeSnapshotDto,
+    recorded_seconds: f64,
+    window_seconds: f64,
+    end_offset_seconds: f64,
 }
 
 fn stream_state_name(state: StreamState) -> &'static str {
@@ -872,19 +879,43 @@ fn tuning_experiment_status(
 #[tauri::command]
 fn tuning_experiment_snapshot(
     state: State<'_, Mutex<DesktopState>>,
+    window_seconds: Option<f64>,
+    end_offset_seconds: Option<f64>,
     max_points: Option<usize>,
 ) -> Result<TuningExperimentSnapshotDto, String> {
     let app = application(&state)?;
-    let result = app
-        .tuning_experiment_snapshot()
-        .map_err(|error| error.to_string())?;
+    let status = app.tuning_experiment_status().map_err(|error| error.to_string())?;
+    let config = app.scope_config().map_err(|error| error.to_string())?;
     let scope_status = app.scope_status().map_err(|error| error.to_string())?;
-    let max_points = max_points.unwrap_or(5000).clamp(200, 20_000);
+    let recorded = app.scope_recorded_duration().map_err(|error| error.to_string())?;
+    let recorded_seconds = recorded.as_secs_f64();
 
-    let config = ScopeConfigDto {
-        history_seconds: result.config.history.as_secs_f64(),
-        channels: result
-            .config
+    let default_window = if matches!(
+        status.state,
+        TuningExperimentState::Preparing
+            | TuningExperimentState::Running
+            | TuningExperimentState::Stopping
+    ) {
+        3.0
+    } else {
+        recorded_seconds.max(0.0005)
+    };
+    let window_seconds = window_seconds
+        .unwrap_or(default_window)
+        .clamp(0.0005, recorded_seconds.max(0.0005));
+    let max_offset = (recorded_seconds - window_seconds).max(0.0);
+    let end_offset_seconds = end_offset_seconds.unwrap_or(0.0).clamp(0.0, max_offset);
+    let snapshot = app
+        .scope_snapshot_window(
+            Duration::from_secs_f64(window_seconds),
+            Duration::from_secs_f64(end_offset_seconds),
+        )
+        .map_err(|error| error.to_string())?;
+    let max_points = max_points.unwrap_or(3000).clamp(200, 20_000);
+
+    let config_dto = ScopeConfigDto {
+        history_seconds: config.history.as_secs_f64(),
+        channels: config
             .channels
             .iter()
             .map(|channel| ScopeChannelDto {
@@ -900,21 +931,56 @@ fn tuning_experiment_snapshot(
             .collect(),
     };
 
-    let series = result
-        .snapshot
+    let series = snapshot
         .series
         .into_iter()
         .map(|series| {
             let sample_count = series.values.len();
-            let stride = sample_count.div_ceil(max_points).max(1);
-            let mut times = Vec::with_capacity(sample_count.div_ceil(stride));
-            let mut values = Vec::with_capacity(sample_count.div_ceil(stride));
+            let rate = f64::from(series.sample_rate_hz);
 
-            for index in (0..sample_count).step_by(stride) {
-                let t = (index as f64 - sample_count.saturating_sub(1) as f64)
-                    / f64::from(series.sample_rate_hz);
-                times.push(t);
-                values.push(series.values[index]);
+            if sample_count <= max_points {
+                let times = (0..sample_count)
+                    .map(|index| {
+                        (index as f64 - sample_count.saturating_sub(1) as f64) / rate
+                            - end_offset_seconds
+                    })
+                    .collect();
+                return ScopeSeriesDto {
+                    id: series.id,
+                    sample_rate_hz: series.sample_rate_hz,
+                    times,
+                    values: series.values,
+                    envelope_min: None,
+                    envelope_max: None,
+                };
+            }
+
+            let bucket_size = sample_count.div_ceil(max_points).max(1);
+            let bucket_count = sample_count.div_ceil(bucket_size);
+            let mut times = Vec::with_capacity(bucket_count);
+            let mut values = Vec::with_capacity(bucket_count);
+            let mut envelope_min = Vec::with_capacity(bucket_count);
+            let mut envelope_max = Vec::with_capacity(bucket_count);
+
+            for start in (0..sample_count).step_by(bucket_size) {
+                let end = (start + bucket_size).min(sample_count);
+                let bucket = &series.values[start..end];
+                let mut min = f32::INFINITY;
+                let mut max = f32::NEG_INFINITY;
+                let mut sum = 0.0f64;
+                for &value in bucket {
+                    min = min.min(value);
+                    max = max.max(value);
+                    sum += f64::from(value);
+                }
+                let middle = start + (end - start - 1) / 2;
+                times.push(
+                    (middle as f64 - sample_count.saturating_sub(1) as f64) / rate
+                        - end_offset_seconds,
+                );
+                values.push((sum / bucket.len() as f64) as f32);
+                envelope_min.push(min);
+                envelope_max.push(max);
             }
 
             ScopeSeriesDto {
@@ -922,22 +988,27 @@ fn tuning_experiment_snapshot(
                 sample_rate_hz: series.sample_rate_hz,
                 times,
                 values,
+                envelope_min: Some(envelope_min),
+                envelope_max: Some(envelope_max),
             }
         })
         .collect();
 
     Ok(TuningExperimentSnapshotDto {
         status: TuningExperimentStatusDto {
-            state: tuning_experiment_state_name(result.status.state),
-            message: result.status.message,
+            state: tuning_experiment_state_name(status.state),
+            message: status.message,
         },
-        config,
+        config: config_dto,
         snapshot: ScopeSnapshotDto {
             sample_count: scope_status.samples,
-            lost_frames: result.snapshot.lost_frames,
-            state: stream_state_name(result.snapshot.state),
+            lost_frames: snapshot.lost_frames,
+            state: stream_state_name(snapshot.state),
             series,
         },
+        recorded_seconds,
+        window_seconds,
+        end_offset_seconds,
     })
 }
 
@@ -1069,6 +1140,8 @@ fn scope_snapshot(
                 sample_rate_hz: series.sample_rate_hz,
                 times,
                 values,
+                envelope_min: None,
+                envelope_max: None,
             }
         })
         .collect();
