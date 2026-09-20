@@ -1065,50 +1065,46 @@
 
   .waveform-tabs {
     display: flex;
-    align-items: end;
-    margin: 8px -14px 0;
-    padding: 0 10px;
+    align-items: center;
+    gap: 14px;
+    margin-top: 8px;
     border-bottom: 1px solid var(--vscode-panel-border);
-    gap: 0;
   }
 
   .waveform-tabs button {
     appearance: none;
     border: 0;
-    border-right: 1px solid var(--vscode-panel-border);
-    border-left: 1px solid transparent;
-    background: color-mix(in srgb, var(--vscode-editor-background) 90%, black 10%);
+    border-bottom: 1px solid transparent;
+    background: transparent;
     color: var(--vscode-descriptionForeground);
-    padding: 6px 12px 5px;
+    padding: 5px 1px 6px;
+    margin-bottom: -1px;
     font: inherit;
     font-size: 11px;
     cursor: pointer;
   }
 
-  .waveform-tabs button:first-child {
-    border-left-color: var(--vscode-panel-border);
+  .waveform-tabs button:hover {
+    color: var(--vscode-foreground);
   }
 
   .waveform-tabs button.active {
-    background: var(--vscode-editor-background);
     color: var(--vscode-foreground);
-    border-top: 1px solid var(--vscode-focusBorder);
-    margin-bottom: -1px;
-    padding-bottom: 6px;
+    border-bottom-color: var(--vscode-focusBorder);
   }
 
   .waveform-tab-content {
+    min-width: 0;
     min-height: 340px;
     height: 340px;
-    min-width: 0;
     padding-top: 8px;
   }
 
   .waveform-tools {
-    height: 22px;
+    height: 20px;
     display: flex;
     justify-content: flex-end;
-    gap: 7px;
+    gap: 6px;
     align-items: baseline;
     color: var(--vscode-descriptionForeground);
     font-size: 10px;
@@ -1123,38 +1119,36 @@
   .tuning-scale-list {
     height: 100%;
     overflow: auto;
-    padding: 4px 2px;
   }
 
   .tuning-channel-row,
   .tuning-scale-row {
-    min-height: 32px;
+    min-height: 30px;
     display: grid;
-    grid-template-columns: minmax(0, 1fr) 96px;
+    grid-template-columns: minmax(0, 1fr) 94px;
     align-items: center;
-    gap: 12px;
+    gap: 10px;
     border-bottom: 1px solid color-mix(in srgb, var(--vscode-panel-border) 55%, transparent);
+    font-size: 12px;
   }
 
   .tuning-channel-row label {
+    min-width: 0;
     display: grid;
     grid-template-columns: auto minmax(0, 1fr) auto;
     align-items: center;
-    gap: 8px;
-    min-width: 0;
+    gap: 7px;
   }
 
   .tuning-channel-row small {
     color: var(--vscode-descriptionForeground);
+    font-size: 10px;
   }
 
   .tuning-channel-limits {
-    position: sticky;
-    bottom: 0;
     display: flex;
-    gap: 18px;
-    padding: 8px 2px 2px;
-    background: var(--vscode-editor-background);
+    gap: 16px;
+    padding-top: 8px;
     color: var(--vscode-descriptionForeground);
     font-size: 10px;
   }
@@ -1175,21 +1169,28 @@
   }
 
   .scale-editor input {
-    width: 76px;
+    width: 72px;
   }
 
   .tuning-scale-actions {
     display: flex;
     justify-content: flex-end;
-    padding-top: 10px;
+    padding-top: 8px;
   }
 
   .tuning-scale-actions button {
-    border: 1px solid var(--vscode-panel-border);
-    background: var(--vscode-button-secondaryBackground);
-    color: var(--vscode-button-secondaryForeground);
-    padding: 4px 9px;
+    appearance: none;
+    border: 0;
+    background: transparent;
+    color: var(--vscode-descriptionForeground);
+    padding: 3px 0;
+    font: inherit;
+    font-size: 11px;
     cursor: pointer;
+  }
+
+  .tuning-scale-actions button:hover {
+    color: var(--vscode-foreground);
   }
 
   .experiment-status {
