@@ -310,13 +310,23 @@ fn turns_to_position(turns: f64) -> Result<PositionValue, String> {
 // but schema v1 does not yet export symbol -> numeric enum values. Keep this
 // compatibility mapping isolated here so schema enum metadata can replace it
 // without changing the Motion API or GUI.
-fn mode_wire_value(mode: MotionMode) -> Result<u8, String> {
+pub(crate) fn mode_wire_value(mode: MotionMode) -> Result<u8, String> {
     match mode {
         MotionMode::Torque => Ok(0),
         MotionMode::Speed => Ok(1),
         MotionMode::Position => Ok(2),
         MotionMode::SensorlessSpeed => Ok(5),
         MotionMode::Mit => Err("MIT has no AxDr_L Motor Mode value".to_owned()),
+    }
+}
+
+pub(crate) fn mode_from_wire_value(value: u8) -> Result<MotionMode, String> {
+    match value {
+        0 => Ok(MotionMode::Torque),
+        1 => Ok(MotionMode::Speed),
+        2 => Ok(MotionMode::Position),
+        5 => Ok(MotionMode::SensorlessSpeed),
+        other => Err(format!("unsupported motor mode value {other}")),
     }
 }
 
