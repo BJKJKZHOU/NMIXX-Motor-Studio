@@ -30,7 +30,10 @@
   $: channels = result?.config.channels ?? [];
   $: series = result?.snapshot.series ?? [];
   $: rebuildKey = channels.map((channel) => channel.id).join(",");
-  $: if (host && rebuildKey) updatePlot();
+  $: if (host && rebuildKey && result) {
+    series;
+    updatePlot();
+  }
   $: if (plot && result) {
     multipliers;
     timePerDiv;
@@ -47,9 +50,6 @@
   }
 
   function ensureBaseRange(channel: ScopeChannel, source: ScopeSeries | undefined): number {
-    const existing = baseRanges.get(channel.id);
-    if (existing !== undefined) return existing;
-
     let peak = 0;
     if (source) {
       for (const value of source.values) {
@@ -57,8 +57,10 @@
       }
     }
     const fallback = channel.unit === "A" ? 1 : channel.unit === "rad/s" ? 10 : 1;
-    const range = Math.max(peak * 1.1, fallback * 0.1, 1e-6);
-    baseRanges.set(channel.id, range);
+    const candidate = Math.max(peak * 1.1, fallback * 0.1, 1e-6);
+    const existing = baseRanges.get(channel.id);
+    const range = existing === undefined ? candidate : Math.max(existing, candidate);
+    if (existing !== range) baseRanges.set(channel.id, range);
     return range;
   }
 
