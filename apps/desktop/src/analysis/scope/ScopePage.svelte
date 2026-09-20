@@ -835,6 +835,18 @@
     return `${value.toFixed(3)}${unit ? ` ${unit}` : ""}`;
   }
 
+  function formatFrequency(value: number): string {
+    if (!Number.isFinite(value) || value <= 0) return "—";
+    if (value >= 1000) return `${(value / 1000).toFixed(value >= 10_000 ? 1 : 2)} kHz`;
+    return `${value.toFixed(value >= 100 ? 1 : 2)} Hz`;
+  }
+
+  function cursorIntervalLabel(): string | undefined {
+    if (cursorA === undefined || cursorB === undefined || cursorA === cursorB) return undefined;
+    const delta = Math.abs(cursorB - cursorA);
+    return `${formatTime(delta)} · ${formatFrequency(1 / delta)}`;
+  }
+
   function cursorPlugin(): uPlot.Plugin {
     return {
       hooks: {
@@ -862,6 +874,24 @@
               ctx.fill();
             }
 
+            if (hoverTime !== undefined && !dragState) {
+              const hoverX = u.valToPos(hoverTime, "x", true);
+              const top = u.bbox.top;
+              const hoverMarker = 5 * px;
+              ctx.fillStyle = "#858585";
+              ctx.beginPath();
+              ctx.moveTo(hoverX - hoverMarker, top);
+              ctx.lineTo(hoverX + hoverMarker, top);
+              ctx.lineTo(hoverX, top + hoverMarker);
+              ctx.closePath();
+              ctx.fill();
+              ctx.font = `${9 * px}px "SFMono-Regular", Consolas, monospace`;
+              ctx.textAlign = "center";
+              ctx.textBaseline = "top";
+              ctx.fillText(formatSignedTime(hoverTime), hoverX, top + hoverMarker + 2 * px);
+            }
+
+            cursorGroupHit = undefined;
             if (cursorEnabled) {
               const values: Array<{ value: number | undefined; color: string; label: string }> = [
                 { value: cursorA, color: cursorColors[0], label: "X1" },
@@ -902,6 +932,35 @@
                 ctx.textBaseline = "top";
                 ctx.fillText(item.label, x + marker + 2 * px, top + 2 * px);
               }
+
+              const intervalLabel = cursorIntervalLabel();
+              if (intervalLabel && cursorA !== undefined && cursorB !== undefined) {
+                const cssX1 = u.valToPos(cursorA, "x");
+                const cssX2 = u.valToPos(cursorB, "x");
+                const cssMid = (cssX1 + cssX2) / 2;
+                const cssWidth = Math.max(94, intervalLabel.length * 6.2 + 18);
+                cursorGroupHit = {
+                  left: cssMid - cssWidth / 2,
+                  right: cssMid + cssWidth / 2,
+                  top: 10,
+                  bottom: 30,
+                };
+
+                const canvasMid = (u.valToPos(cursorA, "x", true) + u.valToPos(cursorB, "x", true)) / 2;
+                const canvasWidth = cssWidth * px;
+                const labelTop = u.bbox.top + 10 * px;
+                const labelHeight = 20 * px;
+                ctx.fillStyle = "rgba(30, 30, 30, 0.92)";
+                ctx.strokeStyle = "#555b64";
+                ctx.lineWidth = px;
+                ctx.fillRect(canvasMid - canvasWidth / 2, labelTop, canvasWidth, labelHeight);
+                ctx.strokeRect(canvasMid - canvasWidth / 2, labelTop, canvasWidth, labelHeight);
+                ctx.fillStyle = "#c4c4c4";
+                ctx.font = `${9 * px}px "SFMono-Regular", Consolas, monospace`;
+                ctx.textAlign = "center";
+                ctx.textBaseline = "middle";
+                ctx.fillText(intervalLabel, canvasMid, labelTop + labelHeight / 2);
+              }
             }
 
             ctx.restore();
@@ -930,6 +989,11 @@
     return undefined;
   }
 
+  function hitCursorGroup(x: number, y: number): boolean {
+    const hit = cursorGroupHit;
+    return Boolean(hit && x >= hit.left && x <= hit.right && y >= hit.top && y <= hit.bottom);
+  }
+
   function hitVerticalMarker(x: number, y: number): number | undefined {
     if (!plot || x > markerHitPixels * 2) return undefined;
     const height = plot.over.getBoundingClientRect().height;
@@ -948,7 +1012,16 @@
     if (!point) return;
 
     const cursor = hitCursor(point.x);
-    if (cursor) {
+    if (hitCursorGroup(point.x, point.y) && cursorA !== undefined && cursorB !== undefined) {
+      dragState = {
+        kind: "cursor-group",
+        pointerId: event.pointerId,
+        startClientX: event.clientX,
+        startA: cursorA,
+        startB: cursorB,
+      };
+      plot.over.style.cursor = "ew-resize";
+    } else if (cursor) {
       dragState = { kind: "cursor", pointerId: event.pointerId, cursor };
       plot.over.style.cursor = "ew-resize";
     } else {
@@ -984,9 +1057,15 @@
     if (!chart || !point) return;
 
     if (!dragState) {
+      const nextHover = chart.posToVal(Math.min(Math.max(0, point.x), point.width), "x");
+      if (hoverTime !== nextHover) {
+        hoverTime = nextHover;
+        chart.redraw(false, false);
+      }
       const cursor = hitCursor(point.x);
+      const group = hitCursorGroup(point.x, point.y);
       const channelId = hitVerticalMarker(point.x, point.y);
-      chart.over.style.cursor = cursor ? "ew-resize" : channelId !== undefined ? "ns-resize" : "grab";
+      chart.over.style.cursor = group || cursor ? "ew-resize" : channelId !== undefined ? "ns-resize" : "grab";
       return;
     }
     if (dragState.pointerId !== event.pointerId) return;
@@ -998,6 +1077,20 @@
       const value = Math.min(Math.max(chart.posToVal(x, "x"), scale.min), scale.max);
       if (dragState.cursor === "a") cursorA = value;
       else cursorB = value;
+      chart.redraw(false, false);
+      return;
+    }
+
+    if (dragState.kind === "cursor-group") {
+      const scale = chart.scales.x;
+      if (scale.min === undefined || scale.max === undefined) return;
+      const secondsPerPixel = (scale.max - scale.min) / Math.max(point.width, 1);
+      const requested = (event.clientX - dragState.startClientX) * secondsPerPixel;
+      const low = Math.min(dragState.startA, dragState.startB);
+      const high = Math.max(dragState.startA, dragState.startB);
+      const delta = Math.min(Math.max(requested, scale.min - low), scale.max - high);
+      cursorA = dragState.startA + delta;
+      cursorB = dragState.startB + delta;
       chart.redraw(false, false);
       return;
     }
@@ -1066,6 +1159,12 @@
     scheduleViewRefresh();
   }
 
+  function handlePlotPointerLeave() {
+    if (dragState || hoverTime === undefined) return;
+    hoverTime = undefined;
+    plot?.redraw(false, false);
+  }
+
   function bindPlotInteractions() {
     if (!plot) return;
     plot.over.style.cursor = "grab";
@@ -1073,6 +1172,7 @@
     plot.over.addEventListener("pointermove", handlePlotPointerMove);
     plot.over.addEventListener("pointerup", finishPlotDrag);
     plot.over.addEventListener("pointercancel", finishPlotDrag);
+    plot.over.addEventListener("pointerleave", handlePlotPointerLeave);
     plot.over.addEventListener("wheel", handlePlotWheel, { passive: false });
   }
 
@@ -1082,6 +1182,7 @@
     plot.over.removeEventListener("pointermove", handlePlotPointerMove);
     plot.over.removeEventListener("pointerup", finishPlotDrag);
     plot.over.removeEventListener("pointercancel", finishPlotDrag);
+    plot.over.removeEventListener("pointerleave", handlePlotPointerLeave);
     plot.over.removeEventListener("wheel", handlePlotWheel);
   }
 
