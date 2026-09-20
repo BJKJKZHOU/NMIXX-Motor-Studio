@@ -29,6 +29,7 @@ export type ScopeSeries = {
 
 export type ScopeSnapshot = {
   sampleCount: number;
+  recordedSeconds: number;
   lostFrames: number;
   state: string;
   series: ScopeSeries[];
