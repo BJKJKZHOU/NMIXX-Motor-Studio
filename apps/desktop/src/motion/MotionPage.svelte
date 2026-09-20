@@ -6,7 +6,11 @@
   import type { MotionMode, MotionState, SCurveMode, TrajectoryType } from "./types";
 
   export let capabilities: MotionCapabilities | undefined;
+  export let motorState: number | null = null;
   export let onError: (error: unknown) => void = () => undefined;
+
+  const MOTOR_ENABLED = 1;
+  const MOTOR_RUN = 2;
 
   let actionBusy = false;
 
@@ -57,8 +61,13 @@
   }
 
   function canRun(): boolean {
+    if (motorState !== MOTOR_ENABLED) return false;
     if (!capabilities || !capabilities.run || !modeSupported($motionState.mode)) return false;
     return !hasTrajectory() || trajectorySupported($motionState.trajectory);
+  }
+
+  function canStop(): boolean {
+    return motorState === MOTOR_RUN && !!capabilities?.stop;
   }
 
   async function run() {
@@ -70,7 +79,7 @@
   }
 
   async function stop() {
-    if (!capabilities?.stop || actionBusy) return;
+    if (!canStop() || actionBusy) return;
     actionBusy = true;
     try { await stopMotionExecution(); }
     catch (error) { onError(error); }
@@ -231,8 +240,17 @@
       {/if}
 
       <div class="motion-runbar">
-        <button class="motion-run" disabled={!canRun() || actionBusy} onclick={run}><i class="codicon codicon-debug-start"></i> Run</button>
-        <button disabled={!capabilities?.stop || actionBusy} onclick={stop}><i class="codicon codicon-debug-stop"></i> Stop</button>
+        <button
+          class="motion-run"
+          disabled={!canRun() || actionBusy}
+          title={motorState !== MOTOR_ENABLED ? "Enable motor first" : "Run motion"}
+          onclick={run}
+        ><i class="codicon codicon-debug-start"></i> Run</button>
+        <button
+          disabled={!canStop() || actionBusy}
+          title={motorState === MOTOR_RUN ? "Stop motor motion" : "Motor is not running"}
+          onclick={stop}
+        ><i class="codicon codicon-debug-stop"></i> Stop</button>
       </div>
     </div>
 
