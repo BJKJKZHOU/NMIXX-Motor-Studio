@@ -425,7 +425,15 @@ impl ApplicationSession {
         self.with_scope(|scope| scope.config())
     }
 
-    pub fn tuning_experiment_start(&self) -> Result<TuningExperimentStatus, ApplicationError> {
+    pub fn tuning_experiment_default_selections(&self) -> Result<Vec<ScopeSelection>, ApplicationError> {
+        let motion = self.inner.motion.get();
+        self.tuning_default_selections(motion.mode)
+    }
+
+    pub fn tuning_experiment_start(
+        &self,
+        selections: &[ScopeSelection],
+    ) -> Result<TuningExperimentStatus, ApplicationError> {
         if self.read_motor_state()? != 1 {
             return Err(ApplicationError::TuningExperimentMotorNotEnabled);
         }
@@ -447,7 +455,6 @@ impl ApplicationSession {
         }
 
         let motion = self.inner.motion.get();
-        let selections = self.tuning_default_selections(motion.mode)?;
         let preview_duration = if motion.mode == MotionMode::Position && !motion.repeat {
             self.motion_preview()?
                 .times
@@ -469,7 +476,7 @@ impl ApplicationSession {
             self.scope_stop()?;
         }
 
-        self.scope_configure(&selections, TUNING_HISTORY, 2)?;
+        self.scope_configure(selections, TUNING_HISTORY, 2)?;
         self.scope_clear()?;
         self.scope_live()?;
 
