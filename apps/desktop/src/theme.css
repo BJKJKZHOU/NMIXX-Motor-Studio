@@ -173,6 +173,9 @@ vscode-button { --vscode-button-border: transparent; }
 .channel-row.active-channel { background: #272727; }
 .channel-select {
   min-width: 0;
+  display: flex;
+  align-items: center;
+  gap: 6px;
   padding: 0;
   border: 0;
   outline: none;
@@ -184,6 +187,19 @@ vscode-button { --vscode-button-border: transparent; }
   cursor: pointer;
 }
 .channel-select:hover { color: #fff; }
+.channel-color-mark {
+  width: 13px;
+  height: 3px;
+  flex: 0 0 auto;
+  border-radius: 1px;
+}
+.channel-color-mark.inactive { background: #4a4a4a; }
+.channel-label {
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
 .scope-control-grid {
   display: grid;
   grid-template-columns: repeat(2, minmax(0, 1fr));
@@ -317,15 +333,6 @@ vscode-button { --vscode-button-border: transparent; }
   height: 2px;
   flex: 0 0 auto;
 }
-.trace-key-button {
-  padding: 0;
-  border: 0;
-  color: inherit;
-  background: transparent;
-  font: inherit;
-  cursor: pointer;
-}
-.trace-key-button:hover { color: #d6d6d6; }
 .scope-plot-interactive {
   cursor: grab;
   user-select: none;
