@@ -1,5 +1,5 @@
 <script lang="ts">
-  import { onDestroy } from "svelte";
+  import { onDestroy, onMount } from "svelte";
   import ConnectionPage from "./connection/ConnectionPage.svelte";
   import { disconnectDevice } from "./connection/api";
   import type { ConnectionInfo } from "./connection/types";
@@ -17,6 +17,7 @@
   import { initializePersistenceBaseline, listParameters, readParameter, refreshAllParameters as refreshParameterCache } from "./parameters/api";
   import { clearParameterPersistence, commitParameterPersistence } from "./parameters/persistence";
   import type { ParameterMetadata, ParameterValue } from "./parameters/types";
+  import { subscribeRefresh } from "./refreshScheduler";
 
   type Page = "connection" | "motor" | "encoder" | "limits" | "control" | "tuning" | "motion" | "analysis" | "parameters" | "events" | "automation";
   type ControlLoopPage = "current" | "speed" | "position";
@@ -45,7 +46,7 @@
   let saveFeedbackTimer: ReturnType<typeof setTimeout> | undefined;
   let readingParameters = false;
   let refreshingGlobalStatus = false;
-  let globalRefreshTimer: ReturnType<typeof setInterval> | undefined;
+  let globalRefreshUnsubscribe: (() => void) | undefined;
 
   const workflowPages: Array<{ id: Page; title: string; icon: string }> = [
     { id: "connection", title: "Connection", icon: "codicon-plug" },
@@ -91,15 +92,12 @@
           .map((item) => [item.symbol, item.id]),
       );
       await refreshGlobalStatus();
-      globalRefreshTimer = setInterval(() => void refreshGlobalStatus(), 500);
     } catch (error) {
       setError(error);
     }
   }
 
   function clearGlobalStatus() {
-    if (globalRefreshTimer) clearInterval(globalRefreshTimer);
-    globalRefreshTimer = undefined;
     parameterRegistry = [];
     globalIds = {};
     motorState = null;
@@ -145,8 +143,6 @@
       speedWm = numeric(values.get(globalIds.PARAM_RUN_WM) ?? null);
       positionText = position(values.get(globalIds.PARAM_RUN_POSITION) ?? null);
     } catch (error) {
-      if (globalRefreshTimer) clearInterval(globalRefreshTimer);
-      globalRefreshTimer = undefined;
       setError(error);
     } finally {
       refreshingGlobalStatus = false;
@@ -213,7 +209,13 @@
     await startGlobalAction("ACTION_PARAMETER_SAVE", saveParameters);
   }
 
+  onMount(() => {
+    globalRefreshUnsubscribe = subscribeRefresh(500, () => void refreshGlobalStatus());
+  });
+
   onDestroy(() => {
+    globalRefreshUnsubscribe?.();
+    globalRefreshUnsubscribe = undefined;
     clearGlobalStatus();
     disconnectDevice().catch(() => undefined);
   });
