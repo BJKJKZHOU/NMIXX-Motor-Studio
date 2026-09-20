@@ -3,7 +3,7 @@ use std::time::Duration;
 
 use nmixx_app::{
     ActionHandle, ActionMetadata, ApplicationSession, AxdrStatus, DEFAULT_USB_BAUD, HostSchema,
-    IdentificationKind, IdentificationStart, MixedScopeSeries, MotionCapabilities, MotionConfig, MotionPreview, MotionService,
+    IdentificationKind, IdentificationStart, MixedScopeSeries, MotionCapabilities, MotionConfig, MotionPreview,
     ParameterMetadata, ParameterValue, PositionValue, PreflightDomain, RangeMetadata,
     SchemaNumber, ScopeRate, ScopeSelection, StreamState, TuningExperimentState,
 };
@@ -13,7 +13,6 @@ use tauri::{Emitter, State};
 #[derive(Default)]
 struct DesktopState {
     app: Option<ApplicationSession>,
-    motion: MotionService,
     port: Option<String>,
 }
 
@@ -499,16 +498,10 @@ async fn device_connect(
     drop(old_app);
 
     let schema = HostSchema::load(&schema_path).map_err(|error| error.to_string())?;
-    let motion = state
-        .lock()
-        .map_err(|_| "desktop state is poisoned".to_owned())?
-        .motion
-        .clone();
-    let app = ApplicationSession::open_usb_with_motion(
+    let app = ApplicationSession::open_usb(
         &port,
         baud.unwrap_or(DEFAULT_USB_BAUD),
         schema,
-        motion,
     )
     .map_err(|error| error.to_string())?;
 
@@ -842,8 +835,9 @@ async fn phase_search_start(
 
 #[tauri::command]
 fn motion_get(state: State<'_, Mutex<DesktopState>>) -> Result<MotionConfig, String> {
-    let guard = state.lock().map_err(|_| "desktop state is poisoned".to_owned())?;
-    Ok(guard.motion.get())
+    application(&state)?
+        .motion_get()
+        .map_err(|error| error.to_string())
 }
 
 #[tauri::command]
@@ -851,21 +845,16 @@ fn motion_set(
     state: State<'_, Mutex<DesktopState>>,
     config: MotionConfig,
 ) -> Result<MotionConfig, String> {
-    let guard = state.lock().map_err(|_| "desktop state is poisoned".to_owned())?;
-    guard.motion.set(config)
+    application(&state)?
+        .motion_set(config)
+        .map_err(|error| error.to_string())
 }
 
 #[tauri::command]
 async fn motion_preview(state: State<'_, Mutex<DesktopState>>) -> Result<MotionPreview, String> {
-    let (app, motion) = {
-        let guard = state.lock().map_err(|_| "desktop state is poisoned".to_owned())?;
-        (guard.app.clone(), guard.motion.clone())
-    };
-
-    match app {
-        Some(app) => app.motion_preview().map_err(|error| error.to_string()),
-        None => motion.preview(),
-    }
+    application(&state)?
+        .motion_preview()
+        .map_err(|error| error.to_string())
 }
 
 #[tauri::command]
