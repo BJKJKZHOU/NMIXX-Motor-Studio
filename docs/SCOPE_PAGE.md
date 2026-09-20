@@ -2,9 +2,9 @@
 
 ## Purpose
 
-The Scope page is the general-purpose time-domain analysis surface in NMIXX Motor Studio. It should behave like a compact engineering oscilloscope for continuous acquisition and history inspection, without duplicating device acquisition state in the GUI.
+The Scope page is the general-purpose time-domain analysis surface in NMIXX Motor Studio. It behaves as a compact engineering waveform viewer for continuous acquisition and history inspection.
 
-This document defines the first oscilloscope-style interaction set. Triggering is intentionally excluded from the current Scope page milestone.
+Triggering is intentionally excluded from the current Scope milestone.
 
 ## Product boundary
 
@@ -14,217 +14,208 @@ Scope owns:
 - continuous Run/Stop acquisition;
 - time-domain history viewing;
 - per-channel vertical scale and position;
-- mouse-centered horizontal zoom;
-- horizontal history pan;
-- draggable time cursors and cursor measurements;
-- Auto Set for initial horizontal/vertical presentation.
+- continuous horizontal zoom and history pan;
+- Follow Latest / Latest navigation;
+- time cursors and cursor measurements;
+- vertical Auto Set.
 
 Scope does not currently own:
 
 - edge/level trigger configuration;
 - Single-shot trigger capture;
 - pulse/window/logic trigger modes;
-- horizontal Y cursors;
-- rectangle zoom;
 - control-tuning experiment sequencing.
 
-Trigger and Single-shot behavior must not be invented in the GUI before their acquisition semantics are deliberately added to the Application layer.
+Trigger and Single-shot behavior must not be invented in the GUI before their acquisition semantics exist in the Application layer.
 
-## One display state per concept
+## Plot infrastructure boundary
 
-The page reuses one state for each display concept:
+ECharts owns generic plotting and interaction mechanics:
+
+- waveform rendering;
+- continuous horizontal zoom;
+- horizontal pan;
+- coordinate transforms;
+- axis pointer / hover;
+- multiple Y axes;
+- resize and plot lifecycle.
+
+NMIXX owns product semantics:
+
+- acquisition Run/Stop;
+- FAST/NORMAL capability and channel limits;
+- Scope history;
+- snapshot requests;
+- Follow Latest;
+- per-channel physical Scale/div and Y Pos;
+- units, colors and page layout.
+
+NMIXX must not reimplement ECharts pan/zoom coordinate math or maintain a parallel horizontal timebase model.
+
+## Display state
+
+The page owns one state for each product concept:
 
 ```text
-timePerDiv          horizontal time scale
-horizontalOffset    history position; 0 == Latest
-verticalScale[id]   per-channel units/div
-verticalOffset[id]  per-channel Y position/reference
-cursorA / cursorB   X1 / X2 time cursor positions
+viewRange             visible horizontal [start, end] time range
+followLatest          whether the visible range tracks newest data
+verticalScale[id]     per-channel physical units/div
+verticalOffset[id]    per-channel Y position/reference
+cursorA / cursorB     X1 / X2 time cursor positions
 ```
 
-Mouse interaction, numeric fields and plot rendering all edit these same values. A mouse gesture must not introduce a parallel pan/zoom/offset state.
+There is no horizontal `Time/div` state and no 1-2-5 horizontal timebase. Horizontal scale is the continuous ECharts dataZoom range.
 
 ## Channel controls
 
-Every selected channel exposes its color identity and vertical controls directly in the channel selector:
+Every selected channel exposes its color identity, acquisition rate and vertical controls.
 
 ```text
-[x] ━ Iq                                    20K
-    Scale/div [ 0.5 ] A/div       Y Pos [ 0.0 ] A
+[x] ● Iq                                  FAST
+    Scale/div [ 0.5 ] A/div    Y Pos [ 0.0 ] A
 ```
 
-Unselected channels remain one row high and do not own an active waveform color.
+Per-channel vertical scale remains a physical engineering quantity:
 
-A channel receives a waveform color when it is selected. Color assignment is stable for the current device session:
+- `Scale/div` stores real units per division;
+- `Y Pos` stores the channel's vertical center/reference;
+- arbitrary positive Scale/div values are valid;
+- Auto may round its calculated Scale/div to a convenient 1-2-5 engineering value;
+- changing vertical view state never changes acquisition data.
 
-- adding or removing another channel must not recolor channels that remain selected;
-- if a previously selected channel is enabled again and its previous color is still free, that color is reused;
-- if the previous color is occupied, the first free palette color is assigned;
-- the channel selector color mark, waveform and Y-position marker always use the same color.
-
-The plot header does not duplicate channel legend entries or per-channel latest values. It is reserved for Scope-level information such as sample count and loss state.
-
-Each visible waveform has an identically colored Y-position marker on the left edge of the plot. Dragging that marker changes only that channel's `verticalOffset`. The numeric `Y Pos` field and marker are two views over the same value.
-
-`Scale/div` remains the only vertical gain control. It stores the real physical quantity per division and does not introduce a separate display-gain multiplier.
-
-- values are stored internally in the channel's real unit;
-- the UI formats small/large values with engineering prefixes such as mA, mrad and µrad;
-- fast scale changes follow oscilloscope-style 1-2-5 steps;
-- Auto Set rounds its calculated vertical scale upward to a 1-2-5 step;
-- arbitrary positive numeric input remains allowed;
-- scrolling the mouse wheel while hovering the channel's Y marker changes only that channel's `Scale/div`;
-- scrolling over the plot background continues to change only `Time/div`.
-
-The Y marker and Scale/div controls do not change acquisition configuration and must not modify sample values.
+Each selected channel has its own ECharts Y axis internally. Only the active channel's Y-axis labels need to be visible.
 
 ## Horizontal navigation
 
+### Continuous zoom
+
+Horizontal zoom is owned directly by ECharts `dataZoom`.
+
+Mouse wheel / trackpad zoom changes the visible time span continuously. NMIXX does not quantize or snap the result to oscilloscope-style timebase steps.
+
+The time under the pointer and the exact zoom behavior follow the ECharts interaction model.
+
 ### Pan
 
-Dragging the plot background horizontally moves through Scope history.
+Dragging the plot moves through the available Scope history using ECharts pan/dataZoom behavior.
+
+Pan changes only the visible range. Acquisition continues while browsing history.
+
+### Follow Latest
+
+A new Run starts in Follow Latest using the default initial span of 0.5 s.
+
+While Follow Latest is active:
+
+- the visible range remains attached to the newest data;
+- the current visible span is preserved;
+- new data appears at the right edge.
+
+Any user horizontal zoom or pan leaves Follow Latest.
+
+The **Latest** action returns the current visible span to the newest data without resetting that span.
+
+Example:
 
 ```text
-drag right  -> older history -> horizontalOffset increases
-drag left   -> newer history -> horizontalOffset decreases
+history view: [-4.183, -4.000]  span = 0.183 s
+Latest
+latest view:  [-0.183,  0.000]  span = 0.183 s
 ```
 
-`horizontalOffset == 0` means the latest acquired window and therefore **Follow Latest** is active. While acquisition is running, new samples stay at the right edge.
+Only a new Run resets the horizontal span to the default 0.5 s.
 
-Dragging into history makes `horizontalOffset > 0` and leaves Follow Latest without stopping acquisition. The existing horizontal Position control remains a secondary precise/navigation control. A `Latest` action returns `horizontalOffset` to zero and re-enters Follow Latest.
+## Acquisition requests from the viewport
 
-Panning changes only the viewed time range. It does not Stop acquisition.
+ECharts is the source of truth for the horizontal viewport.
 
-### Wheel zoom
-
-The mouse wheel changes `Time/div` through the existing oscilloscope-style 1-2-5 steps.
-
-Zoom is anchored to the time under the mouse pointer. The time under the pointer should remain at approximately the same screen X coordinate after the scale step unless clamping at the available history boundary makes that impossible.
-
-The plot-background wheel changes only the horizontal time scale. Vertical scale changes are accepted only when the pointer is over a channel Y marker, so X and Y zoom gestures remain unambiguous.
-
-## Pointer interaction priority
-
-Pointer hit testing follows one fixed priority:
+When a history refresh is needed, NMIXX converts the visible range to the existing Scope Application API:
 
 ```text
-pointer down
-    |
-    +-- hit X1 / X2 line or marker -> drag that cursor
-    |
-    +-- hit channel Y marker ------> drag that channel Y position
-    |
-    +-- otherwise -----------------> horizontal history pan
+visibleRange = [start, end]
+
+windowSeconds    = end - start
+endOffsetSeconds = max(0, -end)
 ```
 
-The priority is independent of Cursor mode for background panning. Enabling cursors must not disable normal history navigation.
+Pan/zoom pointer movement remains local inside ECharts. Snapshot reads are debounced and occur after view changes rather than for every pointer-move event.
+
+No new transport path or device-side Plot state is introduced for horizontal navigation.
+
+## Run / Stop and frozen data
+
+`Stop` stops acquisition but preserves captured history and the current display state.
+
+After Stop the user must still be able to:
+
+- pan and zoom history;
+- return to Latest;
+- change per-channel Scale/div and Y Pos;
+- inspect hover/cursor values;
+- use later measurement/export functions.
+
+Stop must not clear captured samples or reset channel/vertical settings.
+
+Starting a new Run returns to Follow Latest with the default 0.5 s span.
 
 ## Time cursors
 
-Cursor mode owns two vertical time cursors, X1 and X2.
+Cursor mode owns X1 and X2 time cursors.
 
-When Cursor is enabled and no existing cursor positions are available, X1 and X2 are initialized near 30% and 70% of the visible time window. The old "click once for X1, click again for X2" placement model is not used.
+When enabled without existing cursor positions, X1 and X2 initialize near 30% and 70% of the current visible range.
 
-Each cursor is rendered as:
-
-- one vertical line through the plot;
-- one marker at the top edge;
-- one same-colored marker at the bottom edge;
-- an X1/X2 identity.
-
-The line and both markers are draggable hit targets. Dragging clamps the cursor to the visible time window.
-
-A compact label between X1 and X2 shows `Δt · 1/Δt`. That label is also a drag handle: dragging it moves X1 and X2 together while preserving their interval, clamped to the visible time window.
-
-The Cursor panel shows:
+The Cursor panel may show:
 
 - X1;
 - X2;
 - Δt;
 - 1/Δt;
-- for every visible channel: value at X1, value at X2 and ΔY.
+- per-visible-channel value at X1, value at X2 and ΔY.
 
-The first implementation may use the nearest captured sample for channel cursor values; interpolation is not required.
+The first implementation may use nearest captured samples; interpolation is not required.
 
-## Hover time marker
-
-Moving the pointer across the plot without dragging shows a lightweight temporary time marker at the pointer's X position.
-
-The hover marker:
-
-- shows time only;
-- disappears when the pointer leaves the plot;
-- does not create or move X1/X2;
-- does not become persisted Scope state;
-- exists only for quick visual inspection.
-
-## Run / Stop and frozen data
-
-`Stop` stops Scope acquisition but preserves the completed waveform and current view state.
-
-After Stop, the user must still be able to:
-
-- pan and zoom time;
-- change per-channel Scale/div and Y Pos;
-- drag Y markers;
-- enable/drag cursors;
-- inspect cursor values and hover time;
-- use later measurement/export functions.
-
-Stop must not clear captured samples, reset channels, reset vertical scales or discard cursors.
-
-Starting a new Run returns the time view to Latest/Follow Latest. It does not require resetting the user's saved channel layout or vertical configuration.
+Cursor interaction should use ECharts/ZRender extension points rather than a second general-purpose plot interaction system.
 
 ## View settings persistence
 
-Scope persists **view settings**, not acquisition data.
+Scope persists view configuration, not acquisition history.
 
-The persisted view includes:
+Persist:
 
-- selected channel IDs that still exist on the current device/schema;
-- FAST/NORMAL rate selection;
-- stable channel color assignment;
+- selected channel IDs that still exist;
+- FAST/NORMAL selection;
+- stable channel colors;
 - per-channel Scale/div;
 - per-channel Y Pos;
-- Time/div;
 - Cursor enabled/disabled preference;
-- active channel where it still exists.
+- active channel.
 
-The persistence key is derived from the current channel/capability signature so unrelated firmware/device layouts do not blindly receive the same view.
-
-The following are deliberately not restored:
+Do not persist:
 
 - captured samples;
-- Scope LIVE/STOPPED runtime state;
+- LIVE/STOPPED state;
 - lost-frame counters;
-- historical `horizontalOffset`;
-- previous absolute X1/X2 positions.
+- historical horizontal position;
+- absolute cursor timestamps;
+- horizontal zoom span for the initial implementation.
 
-When Cursor is restored as enabled, X1/X2 are initialized in the new visible window rather than reusing old acquisition times.
+A new Run therefore always starts at Latest with the default 0.5 s span.
 
-## Interaction and acquisition traffic
+## Display data and downsampling
 
-Pointer movement must stay local and responsive.
+The Application layer keeps the high-resolution Scope history.
 
-- Y-marker drag updates the local uPlot scale directly.
-- X-cursor drag redraws cursor graphics locally.
-- horizontal drag updates the local X scale while moving.
-- wheel zoom updates the local X scale immediately.
+The desktop snapshot path limits data sent to the chart according to the requested viewport and display point budget while preserving extrema.
 
-History snapshot reads are deferred/debounced rather than issued for every pointer-move event. A completed pan/zoom then refreshes the corresponding history window from the existing Scope API.
-
-No new transport path, Plot protocol message or device-side state is introduced for these interactions.
+ECharts must not apply a second lossy waveform sampler on top of the Host-prepared data. Scope line series therefore use no ECharts LTTB/average sampling.
 
 ## Visual rules
 
-- Channel selector marks, waveforms and Y markers share one per-channel color identity.
-- Channel colors are allocated only to selected channels and remain stable while other channels are added or removed.
-- X1 top/bottom markers use one consistent cursor color; X2 uses a second consistent cursor color.
-- Cursor colors are not channel colors and do not imply a channel association.
-- Markers are small but have a larger invisible hit tolerance than their painted size.
-- Plot background uses a grab/grabbing cursor for history pan.
-- Hovering a Y marker indicates vertical dragging.
-- Hovering an X cursor indicates horizontal dragging.
+- Channel selector marks and waveforms share one stable per-channel color.
+- The active channel's Y axis uses that channel color.
+- Cursor colors are independent from channel colors.
+- The plot keeps NMIXX's VS Code-like engineering-tool visual style.
+- Generic interaction mechanics remain owned by ECharts.
 
 ## Current non-goals
 
@@ -232,10 +223,8 @@ The following are deliberately deferred:
 
 - Trigger;
 - Single;
-- touchpad-specific gestures;
-- inertial scrolling;
-- rectangle zoom;
+- inertial scrolling policy beyond the plotting library's normal behavior;
 - horizontal Y cursors;
 - acquire-vs-hide channel separation.
 
-These may be added when their workflow is required, without changing the state ownership rules above.
+These may be added when their workflows are required without reintroducing a parallel horizontal timebase model.
