@@ -747,9 +747,12 @@
 
   function hitVerticalMarker(x: number, y: number): number | undefined {
     if (!plot || x > markerHitPixels * 2) return undefined;
+    const height = plot.over.getBoundingClientRect().height;
     for (const channel of visibleChannels) {
-      const markerY = plot.valToPos(0, yScaleKey(channel.id));
-      if (Number.isFinite(markerY) && Math.abs(markerY - y) <= markerHitPixels) return channel.id;
+      const rawY = plot.valToPos(0, yScaleKey(channel.id));
+      if (!Number.isFinite(rawY)) continue;
+      const markerY = Math.min(Math.max(rawY, markerHitPixels), Math.max(markerHitPixels, height - markerHitPixels));
+      if (Math.abs(markerY - y) <= markerHitPixels) return channel.id;
     }
     return undefined;
   }
@@ -773,7 +776,6 @@
           startClientY: event.clientY,
           startOffset: verticalOffset.get(channelId) ?? 0,
         };
-        selectActiveChannel(channelId);
         plot.over.style.cursor = "ns-resize";
       } else {
         dragState = {
