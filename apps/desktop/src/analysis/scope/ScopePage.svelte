@@ -3,6 +3,7 @@
   import Split from "split.js";
   import uPlot from "uplot";
   import type { ConnectionInfo, PlotChannel } from "../../connection/types";
+  import { subscribeRefresh } from "../../refreshScheduler";
   import { configureScope, readScopeSnapshot, startScope, stopScope } from "./api";
   import { loadScopeViewSettings, saveScopeViewSettings, type ScopeViewSettings } from "./viewSettings";
   import type { ScopeConfig, ScopeRate, ScopeSnapshot, ScopeSummary } from "./types";
@@ -31,7 +32,7 @@
   let plot: uPlot | undefined;
   let split: Split.Instance | undefined;
   let resizeObserver: ResizeObserver | undefined;
-  let refreshTimer: ReturnType<typeof setInterval> | undefined;
+  let refreshUnsubscribe: (() => void) | undefined;
   let reconfigureTimer: ReturnType<typeof setTimeout> | undefined;
   let interactionRefreshTimer: ReturnType<typeof setTimeout> | undefined;
   let scopeViewSaveTimer: ReturnType<typeof setTimeout> | undefined;
@@ -1278,18 +1279,12 @@
     rebuildPlot();
     resizeObserver = new ResizeObserver(resizePlot);
     resizeObserver.observe(plotHost);
-    let hiddenTicks = 0;
-    refreshTimer = setInterval(() => {
-      if (active) {
-        hiddenTicks = 0;
-        if (!viewNavigationActive) void refreshSnapshot();
-      } else if (++hiddenTicks >= 10) {
-        hiddenTicks = 0;
-        void refreshSnapshot();
-      }
-    }, 50);
+    refreshUnsubscribe = subscribeRefresh(50, () => {
+      if (active && !viewNavigationActive) void refreshSnapshot();
+    });
     return () => {
-      if (refreshTimer) clearInterval(refreshTimer);
+      refreshUnsubscribe?.();
+      refreshUnsubscribe = undefined;
       if (reconfigureTimer) clearTimeout(reconfigureTimer);
       if (interactionRefreshTimer) clearTimeout(interactionRefreshTimer);
       if (scopeViewSaveTimer) clearTimeout(scopeViewSaveTimer);
