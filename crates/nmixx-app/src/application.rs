@@ -359,12 +359,18 @@ impl ApplicationSession {
         history: Duration,
         config_id: u8,
     ) -> Result<MixedScopeConfig, ApplicationError> {
-        {
-            let slot = self.inner.scope.lock().map_err(|_| ApplicationError::Poisoned)?;
+        let old_scope = {
+            let mut slot = self.inner.scope.lock().map_err(|_| ApplicationError::Poisoned)?;
             if let Some(scope) = slot.as_ref() {
-                return Ok(scope.reconfigure(selections)?);
+                let current = scope.config()?;
+                if current.history == history {
+                    return Ok(scope.reconfigure(selections)?);
+                }
+                let _ = scope.stop();
             }
-        }
+            slot.take()
+        };
+        drop(old_scope);
 
         let plot_capabilities = self.plot_capabilities()?;
         let scope = MixedScopeSession::from_capabilities(
