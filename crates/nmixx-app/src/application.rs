@@ -347,10 +347,7 @@ impl ApplicationSession {
     }
 
     pub fn motion_stop(&self) -> Result<ActionHandle, ApplicationError> {
-        self.inner
-            .motion
-            .stop(&self.inner.parameters, &self.inner.session)
-            .map_err(ApplicationError::Motion)
+        self.motor_stop()
     }
 
     pub fn scope_configure(
