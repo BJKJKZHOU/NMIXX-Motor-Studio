@@ -3,7 +3,7 @@ use std::time::Duration;
 
 use nmixx_app::{
     ActionHandle, ActionMetadata, ApplicationSession, AxdrStatus, DEFAULT_USB_BAUD, HostSchema,
-    IdentificationKind, IdentificationStart, MotionCapabilities, MotionConfig, MotionPreview, MotionService,
+    IdentificationKind, IdentificationStart, MixedScopeSeries, MotionCapabilities, MotionConfig, MotionPreview, MotionService,
     ParameterMetadata, ParameterValue, PositionValue, PreflightDomain, RangeMetadata,
     SchemaNumber, ScopeRate, ScopeSelection, StreamState, TuningExperimentState,
 };
@@ -295,9 +295,74 @@ struct ScopeSeriesDto {
 #[serde(rename_all = "camelCase")]
 struct ScopeSnapshotDto {
     sample_count: usize,
+    recorded_seconds: f64,
     lost_frames: u64,
     state: &'static str,
     series: Vec<ScopeSeriesDto>,
+}
+
+fn scope_series_dto(
+    series: MixedScopeSeries,
+    end_offset_seconds: f64,
+    max_points: usize,
+) -> ScopeSeriesDto {
+    let sample_count = series.values.len();
+    let rate = f64::from(series.sample_rate_hz);
+
+    if sample_count <= max_points {
+        let times = (0..sample_count)
+            .map(|index| {
+                (index as f64 - sample_count.saturating_sub(1) as f64) / rate
+                    - end_offset_seconds
+            })
+            .collect();
+        return ScopeSeriesDto {
+            id: series.id,
+            sample_rate_hz: series.sample_rate_hz,
+            times,
+            values: series.values,
+            envelope_min: None,
+            envelope_max: None,
+        };
+    }
+
+    let bucket_size = sample_count.div_ceil(max_points).max(1);
+    let bucket_count = sample_count.div_ceil(bucket_size);
+    let mut times = Vec::with_capacity(bucket_count);
+    let mut values = Vec::with_capacity(bucket_count);
+    let mut envelope_min = Vec::with_capacity(bucket_count);
+    let mut envelope_max = Vec::with_capacity(bucket_count);
+
+    for start in (0..sample_count).step_by(bucket_size) {
+        let end = (start + bucket_size).min(sample_count);
+        let bucket = &series.values[start..end];
+        let mut min = f32::INFINITY;
+        let mut max = f32::NEG_INFINITY;
+        let mut sum = 0.0f64;
+        for &value in bucket {
+            min = min.min(value);
+            max = max.max(value);
+            sum += f64::from(value);
+        }
+
+        let middle = start + (end - start - 1) / 2;
+        times.push(
+            (middle as f64 - sample_count.saturating_sub(1) as f64) / rate
+                - end_offset_seconds,
+        );
+        values.push((sum / bucket.len() as f64) as f32);
+        envelope_min.push(min);
+        envelope_max.push(max);
+    }
+
+    ScopeSeriesDto {
+        id: series.id,
+        sample_rate_hz: series.sample_rate_hz,
+        times,
+        values,
+        envelope_min: Some(envelope_min),
+        envelope_max: Some(envelope_max),
+    }
 }
 
 #[derive(Debug, Serialize)]
@@ -934,64 +999,7 @@ fn tuning_experiment_snapshot(
     let series = snapshot
         .series
         .into_iter()
-        .map(|series| {
-            let sample_count = series.values.len();
-            let rate = f64::from(series.sample_rate_hz);
-
-            if sample_count <= max_points {
-                let times = (0..sample_count)
-                    .map(|index| {
-                        (index as f64 - sample_count.saturating_sub(1) as f64) / rate
-                            - end_offset_seconds
-                    })
-                    .collect();
-                return ScopeSeriesDto {
-                    id: series.id,
-                    sample_rate_hz: series.sample_rate_hz,
-                    times,
-                    values: series.values,
-                    envelope_min: None,
-                    envelope_max: None,
-                };
-            }
-
-            let bucket_size = sample_count.div_ceil(max_points).max(1);
-            let bucket_count = sample_count.div_ceil(bucket_size);
-            let mut times = Vec::with_capacity(bucket_count);
-            let mut values = Vec::with_capacity(bucket_count);
-            let mut envelope_min = Vec::with_capacity(bucket_count);
-            let mut envelope_max = Vec::with_capacity(bucket_count);
-
-            for start in (0..sample_count).step_by(bucket_size) {
-                let end = (start + bucket_size).min(sample_count);
-                let bucket = &series.values[start..end];
-                let mut min = f32::INFINITY;
-                let mut max = f32::NEG_INFINITY;
-                let mut sum = 0.0f64;
-                for &value in bucket {
-                    min = min.min(value);
-                    max = max.max(value);
-                    sum += f64::from(value);
-                }
-                let middle = start + (end - start - 1) / 2;
-                times.push(
-                    (middle as f64 - sample_count.saturating_sub(1) as f64) / rate
-                        - end_offset_seconds,
-                );
-                values.push((sum / bucket.len() as f64) as f32);
-                envelope_min.push(min);
-                envelope_max.push(max);
-            }
-
-            ScopeSeriesDto {
-                id: series.id,
-                sample_rate_hz: series.sample_rate_hz,
-                times,
-                values,
-                envelope_min: Some(envelope_min),
-                envelope_max: Some(envelope_max),
-            }
-        })
+        .map(|series| scope_series_dto(series, end_offset_seconds, max_points))
         .collect();
 
     Ok(TuningExperimentSnapshotDto {
@@ -1002,6 +1010,7 @@ fn tuning_experiment_snapshot(
         config: config_dto,
         snapshot: ScopeSnapshotDto {
             sample_count: scope_status.samples,
+            recorded_seconds,
             lost_frames: snapshot.lost_frames,
             state: stream_state_name(snapshot.state),
             series,
@@ -1105,10 +1114,16 @@ fn scope_snapshot(
     max_points: Option<usize>,
 ) -> Result<ScopeSnapshotDto, String> {
     let app = application(&state)?;
-    let status = app.scope_status().map_err(|error| error.to_string())?;
-    let config = app.scope_config().map_err(|error| error.to_string())?;
-    let window = window_seconds.unwrap_or(0.5).clamp(0.0005, config.history.as_secs_f64());
-    let max_offset = (config.history.as_secs_f64() - window).max(0.0);
+    let app = application(&state)?;
+    let recorded_seconds = app
+        .scope_recorded_duration()
+        .map_err(|error| error.to_string())?
+        .as_secs_f64();
+    let available_seconds = recorded_seconds.max(0.0005);
+    let window = window_seconds
+        .unwrap_or(0.5)
+        .clamp(0.0005, available_seconds);
+    let max_offset = (recorded_seconds - window).max(0.0);
     let end_offset = end_offset_seconds.unwrap_or(0.0).clamp(0.0, max_offset);
     let snapshot = app
         .scope_snapshot_window(
@@ -1117,37 +1132,21 @@ fn scope_snapshot(
         )
         .map_err(|error| error.to_string())?;
     let max_points = max_points.unwrap_or(2500).clamp(100, 10_000);
-
+    let sample_count = snapshot
+        .series
+        .iter()
+        .map(|series| series.values.len())
+        .max()
+        .unwrap_or(0);
     let series = snapshot
         .series
         .into_iter()
-        .map(|series| {
-            let sample_count = series.values.len();
-            let stride = sample_count.div_ceil(max_points).max(1);
-            let mut times = Vec::with_capacity(sample_count.div_ceil(stride));
-            let mut values = Vec::with_capacity(sample_count.div_ceil(stride));
-
-            for index in (0..sample_count).step_by(stride) {
-                let t = (index as f64 - sample_count.saturating_sub(1) as f64)
-                    / f64::from(series.sample_rate_hz)
-                    - end_offset;
-                times.push(t);
-                values.push(series.values[index]);
-            }
-
-            ScopeSeriesDto {
-                id: series.id,
-                sample_rate_hz: series.sample_rate_hz,
-                times,
-                values,
-                envelope_min: None,
-                envelope_max: None,
-            }
-        })
+        .map(|series| scope_series_dto(series, end_offset, max_points))
         .collect();
 
     Ok(ScopeSnapshotDto {
-        sample_count: status.samples,
+        sample_count,
+        recorded_seconds,
         lost_frames: snapshot.lost_frames,
         state: stream_state_name(snapshot.state),
         series,
