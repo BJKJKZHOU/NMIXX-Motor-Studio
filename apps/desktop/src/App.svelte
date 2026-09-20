@@ -25,12 +25,14 @@
   const GLOBAL_SYMBOLS = ["PARAM_MOTOR_STATE", "PARAM_RUN_IQ", "PARAM_RUN_WM", "PARAM_RUN_POSITION"] as const;
   const MOTOR_DISABLED = 0;
   const MOTOR_RUN = 2;
+  const DEFAULT_SCHEMA_PATH = "../../../AxDr_L_Motor/build/host/axdr-host-schema.toml";
+  const SCHEMA_PATH_STORAGE_KEY = "nmixx.connection.hostSchemaPath";
 
   let activePage: Page = "connection";
   let activeControlLoop: ControlLoopPage = "current";
   let controlArchitectureExpanded = true;
   let connectionPort = "";
-  let connectionSchemaPath = "../../../AxDr_L_Motor/build/host/axdr-host-schema.toml";
+  let connectionSchemaPath = DEFAULT_SCHEMA_PATH;
   let connection: ConnectionInfo | undefined;
   let errorText = "";
   let scopeSummary: ScopeSummary = { state: "STOPPED", selectedChannels: 0, lostFrames: 0 };
@@ -67,6 +69,14 @@
 
   function setError(error: unknown) {
     errorText = error instanceof Error ? error.message : String(error);
+  }
+
+  function persistConnectionSchemaPath(path: string) {
+    try {
+      localStorage.setItem(SCHEMA_PATH_STORAGE_KEY, path);
+    } catch {
+      // Keep the in-memory path usable even when WebView storage is unavailable.
+    }
   }
 
   async function setConnection(next: ConnectionInfo | undefined) {
@@ -210,6 +220,12 @@
   }
 
   onMount(() => {
+    try {
+      const storedPath = localStorage.getItem(SCHEMA_PATH_STORAGE_KEY);
+      if (storedPath?.trim()) connectionSchemaPath = storedPath;
+    } catch {
+      // Fall back to the development default when WebView storage is unavailable.
+    }
     globalRefreshUnsubscribe = subscribeRefresh(500, () => void refreshGlobalStatus());
   });
 
@@ -288,7 +304,7 @@
 
     <main class="main-area">
         {#if activePage === "connection"}
-          <ConnectionPage {connection} bind:port={connectionPort} bind:schemaPath={connectionSchemaPath} onConnected={(next) => void setConnection(next)} onDisconnected={() => void setConnection(undefined)} onError={setError} />
+          <ConnectionPage {connection} bind:port={connectionPort} bind:schemaPath={connectionSchemaPath} onSchemaPathChanged={persistConnectionSchemaPath} onConnected={(next) => void setConnection(next)} onDisconnected={() => void setConnection(undefined)} onError={setError} />
         {:else if activePage === "motor"}
           <div class="domain-page-container">
             <MotorPage {connection} onError={setError} />
