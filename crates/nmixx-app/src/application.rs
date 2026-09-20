@@ -236,7 +236,13 @@ impl ApplicationSession {
         id: u16,
         value: ParameterValue,
     ) -> Result<(), ApplicationError> {
-        Ok(self.inner.parameters.write(id, value)?)
+        self.inner.parameters.write(id, value)?;
+        if let Some(metadata) = self.inner.schema.parameter_by_id(id) {
+            if matches!(metadata.symbol.as_str(), "PARAM_MOTOR_MODE" | "PARAM_TARGET_POSITION") {
+                self.reset_motion_repeat()?;
+            }
+        }
+        Ok(())
     }
 
     pub fn action_start(&self, key: &str) -> Result<ActionHandle, ApplicationError> {
@@ -608,7 +614,6 @@ impl ApplicationSession {
             }
         }
 
-        let motion = self.inner.motion.get();
         let mode = self.read_motion_mode()?;
         let preview_duration = if mode == MotionMode::Position {
             self.motion_preview()?
@@ -650,7 +655,7 @@ impl ApplicationSession {
 
         let app = self.clone();
         thread::spawn(move || {
-            app.run_tuning_experiment(generation, motion, mode, preview_duration, capture_duration);
+            app.run_tuning_experiment(generation, mode, preview_duration, capture_duration);
         });
 
         self.tuning_experiment_status()
@@ -876,7 +881,6 @@ impl ApplicationSession {
     fn run_tuning_experiment(
         &self,
         generation: u64,
-        motion: MotionConfig,
         mode: MotionMode,
         preview_duration: f64,
         capture_duration: Duration,
