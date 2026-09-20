@@ -721,6 +721,7 @@
       if (!(await ensureConfigured())) return;
       await startScope();
       horizontalOffset = 0;
+      initializeCursorPositions();
       configuring = false;
       await refreshSnapshot();
     } catch (error) { onError(error); }
