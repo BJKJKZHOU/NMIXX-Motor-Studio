@@ -18,7 +18,11 @@
     1e-3, 2e-3, 5e-3, 10e-3, 20e-3, 50e-3,
     100e-3, 200e-3, 500e-3, 1,
   ];
-  const traceColors = ["#7aa2c8", "#c8b77a", "#9b8ac8", "#7fa68a", "#c28b73", "#aa829a", "#79a6ad", "#91a77b"];
+  const traceColors = [
+    "#7aa2c8", "#c8b77a", "#9b8ac8", "#7fa68a",
+    "#c28b73", "#aa829a", "#79a6ad", "#91a77b",
+    "#b68f6a", "#6f9ca8", "#a47f86", "#8398b5",
+  ];
   const cursorColors = ["#c9c9c9", "#c8b77a"];
   const markerHitPixels = 10;
 
@@ -42,10 +46,10 @@
   let channelRates = new Map<number, ScopeRate>();
   let verticalScale = new Map<number, number>();
   let verticalOffset = new Map<number, number>();
+  let channelColors = new Map<number, number>();
   let plotChannels: PlotChannel[] = [];
   let visibleChannels: PlotChannel[] = [];
   let snapshot: ScopeSnapshot | undefined;
-  let latestValues: string[] = [];
   let fastSelected = 0;
   let normalSelected = 0;
   let activeChannelId: number | undefined;
@@ -83,12 +87,6 @@
   }
   $: onSummary({ state: snapshot?.state ?? "STOPPED", selectedChannels: selectedIds.size, lostFrames: snapshot?.lostFrames ?? 0 });
   $: visibleChannels = plotChannels.filter((channel) => selectedIds.has(channel.id));
-  $: latestValues = visibleChannels.map((channel) => {
-    const values = snapshot?.series.find((series) => series.id === channel.id)?.values;
-    if (!values?.length) return "—";
-    const unit = channel.unit ?? "";
-    return `${values[values.length - 1].toFixed(3)}${unit ? ` ${unit}` : ""}`;
-  });
   $: fastSelected = Array.from(selectedIds).filter((id) => channelRates.get(id) === "fast").length;
   $: normalSelected = Array.from(selectedIds).filter((id) => channelRates.get(id) === "normal").length;
   $: isRunning = snapshot?.state === "LIVE";
@@ -179,6 +177,7 @@
     channelRates = new Map(defaults.map((channel) => [channel.id, defaultRate(channel)]));
     verticalScale = new Map(plotChannels.map((channel) => [channel.id, defaultVerticalScale(channel)]));
     verticalOffset = new Map(plotChannels.map((channel) => [channel.id, 0]));
+    channelColors = new Map(defaults.map((channel, index) => [channel.id, index % traceColors.length]));
     activeChannelId = defaults[0]?.id;
     rebuildPlot();
   }
@@ -203,6 +202,7 @@
       }
       next.add(id);
       rates.set(id, rate);
+      ensureChannelColor(id, next);
       activeChannelId = id;
     }
 
@@ -621,9 +621,27 @@
     finally { snapshotBusy = false; }
   }
 
+  function ensureChannelColor(id: number, selected = selectedIds): number {
+    const preferred = channelColors.get(id);
+    const used = new Set(
+      Array.from(selected)
+        .filter((selectedId) => selectedId !== id)
+        .map((selectedId) => channelColors.get(selectedId))
+        .filter((index): index is number => index !== undefined),
+    );
+
+    if (preferred !== undefined && !used.has(preferred)) return preferred;
+
+    const available = traceColors.findIndex((_, index) => !used.has(index));
+    const assigned = available >= 0 ? available : (preferred ?? 0);
+    channelColors = new Map(channelColors).set(id, assigned);
+    return assigned;
+  }
+
   function traceColor(channel: PlotChannel): string {
-    const index = connection?.channels.findIndex((candidate) => candidate.id === channel.id) ?? 0;
-    return traceColors[Math.max(0, index) % traceColors.length];
+    const index = channelColors.get(channel.id);
+    if (index === undefined) return "#666666";
+    return traceColors[index % traceColors.length];
   }
 
   function sampleAtTime(id: number, time: number): number | undefined {
@@ -1035,7 +1053,14 @@
                   checked={selectedIds.has(channel.id)}
                   onchange={() => toggleChannel(channel.id)}
                 />
-                <button class="channel-name channel-select" onclick={() => selectActiveChannel(channel.id)}>{channel.label}</button>
+                <button class="channel-name channel-select" onclick={() => selectActiveChannel(channel.id)}>
+                  <span
+                    class:inactive={!selectedIds.has(channel.id)}
+                    class="channel-color-mark"
+                    style={selectedIds.has(channel.id) ? `background:${traceColor(channel)}` : ""}
+                  ></span>
+                  <span class="channel-label">{channel.label}</span>
+                </button>
                 <span class="channel-unit">{channel.unit ?? ""}</span>
                 <select
                   class="channel-rate"
@@ -1161,15 +1186,7 @@
   <section id="scope-workspace" class="scope-workspace">
     <div class="editor-tabs"><div class="editor-tab active"><i class="codicon codicon-graph-line"></i> Scope</div></div>
     <div class="plot-header">
-      {#if visibleChannels.length > 0}
-        {#each visibleChannels as channel, index}
-          <button class="trace-key trace-key-button" onclick={() => selectActiveChannel(channel.id)}>
-            <span class="trace-mark" style={`background:${traceColor(channel)}`}></span>
-            {channel.label}
-            <span class="value">{latestValues[index] ?? "—"}</span>
-          </button>
-        {/each}
-      {:else}
+      {#if visibleChannels.length === 0}
         <div class="plot-placeholder">{connection ? "Select channels and press Run." : "Connect a device before using Scope."}</div>
       {/if}
       <div class="plot-meta">{snapshot?.sampleCount ?? 0} samples · loss {snapshot?.lostFrames ?? 0}</div>
