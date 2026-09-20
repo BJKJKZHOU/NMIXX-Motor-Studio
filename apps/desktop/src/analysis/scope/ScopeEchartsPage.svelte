@@ -18,6 +18,7 @@
   export let active = false;
   export let onSummary: (summary: ScopeSummary) => void = () => undefined;
   export let onError: (error: unknown) => void = () => undefined;
+  export let onClearError: () => void = () => undefined;
 
   use([LineChart, DataZoomComponent, GridComponent, LegendComponent, TooltipComponent, CanvasRenderer]);
 
@@ -51,6 +52,7 @@
   let viewRevision = 0;
   let applyingChartOption = false;
   let activeConnection: ConnectionInfo | undefined;
+  let channelNotice = "";
 
   $: channels = connection?.channels.filter((channel) => channel.supportsFast || channel.supportsNormal) ?? [];
   $: running = snapshot?.state === "LIVE";
@@ -103,6 +105,7 @@
     viewRefreshTimer = undefined;
     configured = false;
     configurationDirty = false;
+    channelNotice = "";
     snapshot = undefined;
     followingLatest = true;
     viewRange = [-snapshotWindowSeconds, 0];
@@ -118,6 +121,26 @@
     activeChannelId = defaults[0]?.id;
     chart?.clear();
     setEmptyChartOption();
+  }
+
+  function selectedRateCount(ids: Set<number>, nextRates: Map<number, ScopeRate>, rate: ScopeRate): number {
+    return Array.from(ids).filter((id) => nextRates.get(id) === rate).length;
+  }
+
+  function rateLimit(rate: ScopeRate): number {
+    if (!connection) return 0;
+    return rate === "fast" ? connection.fastMaxChannels : connection.normalMaxChannels;
+  }
+
+  function validateChannelSelection(ids: Set<number>, nextRates: Map<number, ScopeRate>): string {
+    for (const rate of ["fast", "normal"] as const) {
+      const count = selectedRateCount(ids, nextRates, rate);
+      const limit = rateLimit(rate);
+      if (count > limit) {
+        return `Scope supports at most ${limit} ${rate.toUpperCase()} channels.`;
+      }
+    }
+    return "";
   }
 
   function setSelected(id: number) {
@@ -143,6 +166,14 @@
       activeChannelId = id;
     }
 
+    const validation = validateChannelSelection(next, nextRates);
+    if (validation) {
+      channelNotice = validation;
+      return;
+    }
+
+    channelNotice = "";
+    onClearError();
     selectedIds = next;
     rates = nextRates;
     configurationDirty = true;
@@ -156,7 +187,16 @@
     if (!channel) return;
     if (rate === "fast" && !channel.supportsFast) return;
     if (rate === "normal" && !channel.supportsNormal) return;
-    rates = new Map(rates).set(id, rate);
+    const nextRates = new Map(rates).set(id, rate);
+    const validation = validateChannelSelection(selectedIds, nextRates);
+    if (validation) {
+      channelNotice = validation;
+      return;
+    }
+
+    channelNotice = "";
+    onClearError();
+    rates = nextRates;
     configurationDirty = true;
     scheduleHotReconfigure();
   }
@@ -169,6 +209,8 @@
     );
     configured = true;
     configurationDirty = false;
+    channelNotice = "";
+    onClearError();
     return true;
   }
 
@@ -539,6 +581,7 @@
 <div class="scope-spike-shell">
   <aside class="scope-spike-sidebar">
     <div class="section-heading">CHANNELS</div>
+    {#if channelNotice}<div class="scope-channel-notice">{channelNotice}</div>{/if}
     {#each channels as channel}
       <div class:active-channel={activeChannelId === channel.id} class="channel-block">
         <div class="scope-spike-channel">
@@ -630,6 +673,15 @@
   .channel-block.active-channel {
     border-left-color: var(--vscode-focusBorder);
     background: rgba(255, 255, 255, 0.025);
+  }
+  .scope-channel-notice {
+    margin: 0 8px 7px;
+    padding: 6px 8px;
+    border-left: 2px solid #c8b77a;
+    color: #c8b77a;
+    background: #27251f;
+    font-size: 10.5px;
+    line-height: 1.4;
   }
   .scope-spike-channel {
     min-height: 31px;
