@@ -421,6 +421,10 @@ impl ApplicationSession {
         self.with_scope(|scope| scope.snapshot_window(window, end_offset))
     }
 
+    pub fn scope_recorded_duration(&self) -> Result<Duration, ApplicationError> {
+        self.with_scope(|scope| scope.recorded_duration())
+    }
+
     pub fn scope_config(&self) -> Result<MixedScopeConfig, ApplicationError> {
         self.with_scope(|scope| scope.config())
     }
