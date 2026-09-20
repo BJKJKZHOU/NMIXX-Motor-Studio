@@ -326,33 +326,45 @@ fn scope_series_dto(
         };
     }
 
-    let bucket_size = sample_count.div_ceil(max_points).max(1);
-    let bucket_count = sample_count.div_ceil(bucket_size);
-    let mut times = Vec::with_capacity(bucket_count);
-    let mut values = Vec::with_capacity(bucket_count);
-    let mut envelope_min = Vec::with_capacity(bucket_count);
-    let mut envelope_max = Vec::with_capacity(bucket_count);
+    // Min/max downsampling preserves narrow spikes instead of periodically
+    // sampling one arbitrary point from each bucket.
+    let target_buckets = (max_points / 2).max(1);
+    let bucket_size = sample_count.div_ceil(target_buckets).max(1);
+    let mut times = Vec::with_capacity(target_buckets * 2);
+    let mut values = Vec::with_capacity(target_buckets * 2);
 
     for start in (0..sample_count).step_by(bucket_size) {
         let end = (start + bucket_size).min(sample_count);
         let bucket = &series.values[start..end];
-        let mut min = f32::INFINITY;
-        let mut max = f32::NEG_INFINITY;
-        let mut sum = 0.0f64;
-        for &value in bucket {
-            min = min.min(value);
-            max = max.max(value);
-            sum += f64::from(value);
+        let mut min_index = start;
+        let mut max_index = start;
+        let mut min_value = f32::INFINITY;
+        let mut max_value = f32::NEG_INFINITY;
+
+        for (offset, &value) in bucket.iter().enumerate() {
+            let index = start + offset;
+            if value < min_value {
+                min_value = value;
+                min_index = index;
+            }
+            if value > max_value {
+                max_value = value;
+                max_index = index;
+            }
         }
 
-        let middle = start + (end - start - 1) / 2;
-        times.push(
-            (middle as f64 - sample_count.saturating_sub(1) as f64) / rate
-                - end_offset_seconds,
-        );
-        values.push((sum / bucket.len() as f64) as f32);
-        envelope_min.push(min);
-        envelope_max.push(max);
+        let mut extrema = [(min_index, min_value), (max_index, max_value)];
+        extrema.sort_by_key(|(index, _)| *index);
+        for (index, value) in extrema {
+            if times.len() >= max_points {
+                break;
+            }
+            times.push(
+                (index as f64 - sample_count.saturating_sub(1) as f64) / rate
+                    - end_offset_seconds,
+            );
+            values.push(value);
+        }
     }
 
     ScopeSeriesDto {
@@ -360,8 +372,8 @@ fn scope_series_dto(
         sample_rate_hz: series.sample_rate_hz,
         times,
         values,
-        envelope_min: Some(envelope_min),
-        envelope_max: Some(envelope_max),
+        envelope_min: None,
+        envelope_max: None,
     }
 }
 
