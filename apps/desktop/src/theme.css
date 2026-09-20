@@ -125,7 +125,44 @@ vscode-button { --vscode-button-border: transparent; }
 .app-error { position: absolute; left: 10px; right: 10px; bottom: 10px; z-index: 20; }
 
 .channel-list { display: flex; flex-direction: column; }
+.channel-entry { border-bottom: 1px solid #232323; }
+.channel-entry:last-child { border-bottom: 0; }
 .channel-row { min-height: 30px; display: grid; grid-template-columns: 24px minmax(0, 1fr) 42px 62px; gap: 4px; align-items: center; padding: 0 7px; cursor: default; }
+.channel-y-controls {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 6px;
+  padding: 1px 7px 7px 31px;
+}
+.channel-y-field {
+  min-width: 0;
+  display: grid;
+  grid-template-columns: auto minmax(0, 1fr) auto;
+  gap: 4px;
+  align-items: center;
+  color: #7f7f7f;
+  font-size: 9.5px;
+}
+.channel-y-field input {
+  width: 100%;
+  min-width: 0;
+  height: 22px;
+  padding: 1px 5px;
+  border: 1px solid #343434;
+  border-radius: 2px;
+  outline: none;
+  color: #c9c9c9;
+  background: #222325;
+  font-family: "SFMono-Regular", Consolas, "Liberation Mono", monospace;
+  font-size: 10px;
+}
+.channel-y-field input:focus { border-color: var(--vscode-focusBorder); }
+.channel-y-field em {
+  color: #696969;
+  font-style: normal;
+  white-space: nowrap;
+  font-size: 9px;
+}
 .channel-row:hover { background: #242424; }
 .channel-row.disabled-row { opacity: .58; }
 .channel-name { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; color: #d0d0d0; font-family: "SFMono-Regular", Consolas, "Liberation Mono", monospace; font-size: 12px; }
