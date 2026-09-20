@@ -6,6 +6,7 @@
   export let result: TuningExperimentSnapshot | undefined;
   export let multipliers: Record<number, number> = {};
   export let timePerDiv = 20e-3;
+  export let onViewRequest: (windowSeconds: number, endOffsetSeconds: number, maxPoints: number) => void = () => undefined;
 
   const horizontalDivisions = 10;
   const timeDivOptions = [
@@ -24,6 +25,7 @@
   let resizeObserver: ResizeObserver | undefined;
   let panOffset = 0;
   let dragStart: { x: number; offset: number } | undefined;
+  let viewRequestTimer: ReturnType<typeof setTimeout> | undefined;
 
   $: channels = result?.config.channels ?? [];
   $: series = result?.snapshot.series ?? [];
@@ -65,33 +67,69 @@
   }
 
   function fullTimeRange(): { min: number; max: number } {
-    let min = 0;
-    let max = 0;
-    let initialized = false;
-    for (const entry of series) {
-      if (entry.times.length === 0) continue;
-      const first = entry.times[0];
-      const last = entry.times[entry.times.length - 1];
-      if (!initialized) {
-        min = first;
-        max = last;
-        initialized = true;
-      } else {
-        min = Math.min(min, first);
-        max = Math.max(max, last);
-      }
-    }
-    return initialized ? { min, max } : { min: -timePerDiv * horizontalDivisions, max: 0 };
+    const recorded = result?.recordedSeconds ?? 0;
+    return recorded > 0
+      ? { min: -recorded, max: 0 }
+      : { min: -timePerDiv * horizontalDivisions, max: 0 };
+  }
+
+  function currentWindowSeconds(): number {
+    return Math.max(0.0005, timePerDiv * horizontalDivisions);
+  }
+
+  function scheduleViewRequest(delay = 80) {
+    if (viewRequestTimer) clearTimeout(viewRequestTimer);
+    viewRequestTimer = setTimeout(() => {
+      viewRequestTimer = undefined;
+      const width = Math.max(320, Math.floor(host?.clientWidth ?? 1000));
+      onViewRequest(currentWindowSeconds(), panOffset, Math.min(20_000, Math.max(1000, width * 3)));
+    }, delay);
   }
 
   function applyRanges() {
     if (!plot) return;
 
     const full = fullTimeRange();
-    const span = Math.min(timePerDiv * horizontalDivisions, Math.max(full.max - full.min, 1e-9));
+    const span = Math.min(currentWindowSeconds(), Math.max(full.max - full.min, 1e-9));
     const maxOffset = Math.max(0, full.max - full.min - span);
-    panOffset = Math.min(Math.max(panOffset, 0), maxOffset);
-    plot.setScale("x", { min: full.max - panOffset - span, max: full.max - panOffset });
+    panOffset = Math.min(Math.max(result?.endOffsetSeconds ?? panOffset, 0), maxOffset);
+    plot.setScale("x", { min: -panOffset - span, max: -panOffset });
+  }
+
+  function envelopePlugin(): uPlot.Plugin {
+    return {
+      hooks: {
+        draw: [
+          (u) => {
+            const ctx = u.ctx;
+            const px = window.devicePixelRatio || 1;
+            ctx.save();
+            ctx.lineWidth = Math.max(1, px * 0.75);
+            for (let channelIndex = 0; channelIndex < channels.length; channelIndex += 1) {
+              const channel = channels[channelIndex];
+              const source = series.find((entry) => entry.id === channel.id);
+              if (!source?.envelopeMin || !source.envelopeMax) continue;
+              if (source.envelopeMin.length !== source.times.length || source.envelopeMax.length !== source.times.length) continue;
+
+              ctx.strokeStyle = traceColors[channelIndex % traceColors.length];
+              ctx.globalAlpha = 0.42;
+              const scale = multiplier(channel.id);
+              for (let index = 0; index < source.times.length; index += 1) {
+                const x = u.valToPos(source.times[index], "x", true);
+                const yMin = u.valToPos(source.envelopeMin[index] * scale, "y", true);
+                const yMax = u.valToPos(source.envelopeMax[index] * scale, "y", true);
+                if (!Number.isFinite(x) || !Number.isFinite(yMin) || !Number.isFinite(yMax)) continue;
+                ctx.beginPath();
+                ctx.moveTo(x, yMin);
+                ctx.lineTo(x, yMax);
+                ctx.stroke();
+              }
+            }
+            ctx.restore();
+          },
+        ],
+      },
+    };
   }
 
   function options(): uPlot.Options {
@@ -109,6 +147,7 @@
       axes: [
         { label: "s", stroke: "#858585", grid: { stroke: "#2d2d2d" } },
       ],
+      plugins: [envelopePlugin()],
       series: [
         {},
         ...channels.map((channel, index) => ({
@@ -148,6 +187,7 @@
     );
     timePerDiv = timeDivOptions[nextIndex];
     applyRanges();
+    scheduleViewRequest();
   }
 
   function handlePointerDown(event: PointerEvent) {
@@ -160,13 +200,13 @@
   function handlePointerMove(event: PointerEvent) {
     if (!plot || !dragStart) return;
     const full = fullTimeRange();
-    const span = Math.min(timePerDiv * horizontalDivisions, Math.max(full.max - full.min, 1e-9));
+    const span = Math.min(currentWindowSeconds(), Math.max(full.max - full.min, 1e-9));
     const rect = plot.over.getBoundingClientRect();
     const secondsPerPixel = span / Math.max(rect.width, 1);
     const delta = (event.clientX - dragStart.x) * secondsPerPixel;
     const maxOffset = Math.max(0, full.max - full.min - span);
     panOffset = Math.min(Math.max(dragStart.offset + delta, 0), maxOffset);
-    applyRanges();
+    plot.setScale("x", { min: -panOffset - span, max: -panOffset });
   }
 
   function finishPointer(event: PointerEvent) {
@@ -174,6 +214,7 @@
     dragStart = undefined;
     if (plot.over.hasPointerCapture(event.pointerId)) plot.over.releasePointerCapture(event.pointerId);
     plot.over.style.cursor = "grab";
+    scheduleViewRequest(0);
   }
 
   function bindInteractions() {
@@ -209,6 +250,7 @@
   });
 
   onDestroy(() => {
+    if (viewRequestTimer) clearTimeout(viewRequestTimer);
     resizeObserver?.disconnect();
     unbindInteractions();
     plot?.destroy();
