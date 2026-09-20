@@ -277,9 +277,10 @@ The initial lifecycle uses:
 - Position with Repeat disabled: run for the calculated trajectory duration, keep a short settling interval, then issue the normal controlled Stop;
 - Speed / Sensorless Speed / Torque and repeated Position: continue until the user presses local or global Stop;
 - post-stop capture: 0.75 s after the motor leaves RUN;
-- rolling history: 15 s, with a shorter live view while the experiment is running.
+- one finite non-overwriting raw capture for the complete experiment, bounded by a 128 MiB RAM protection budget;
+- a shorter live preview window while the experiment is running.
 
-The post-stop interval is important because position/speed tuning must show the stop transient, residual vibration and settling. A long manually controlled experiment may overwrite the oldest samples in the rolling history; the most recent response through Stop and post-capture is retained.
+The post-stop interval is important because position/speed tuning must show the stop transient, residual vibration and settling. Control Tuning does not silently roll over or overwrite the beginning of an experiment. The Application converts the selected FAST/NORMAL channel rates into the maximum finite capture duration that fits the 128 MiB raw-sample budget. As the capture approaches that limit, it issues a controlled Stop early enough to preserve the post-capture interval, retains the samples already recorded, and reports that the recording limit was reached.
 
 The waveform remains on screen after capture ends so the user can inspect the complete response before changing the next parameter set.
 
