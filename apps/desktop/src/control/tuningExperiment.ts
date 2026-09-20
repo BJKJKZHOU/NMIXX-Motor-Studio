@@ -20,8 +20,17 @@ export type TuningExperimentSnapshot = {
   snapshot: ScopeSnapshot;
 };
 
-export function startTuningExperiment(): Promise<TuningExperimentStatus> {
-  return invoke<TuningExperimentStatus>("tuning_experiment_start");
+export type TuningExperimentSelection = {
+  id: number;
+  rate: "fast" | "normal";
+};
+
+export function tuningExperimentDefaults(): Promise<TuningExperimentSelection[]> {
+  return invoke<TuningExperimentSelection[]>("tuning_experiment_defaults");
+}
+
+export function startTuningExperiment(selections: TuningExperimentSelection[]): Promise<TuningExperimentStatus> {
+  return invoke<TuningExperimentStatus>("tuning_experiment_start", { selections });
 }
 
 export function stopTuningExperiment(): Promise<TuningExperimentStatus> {
