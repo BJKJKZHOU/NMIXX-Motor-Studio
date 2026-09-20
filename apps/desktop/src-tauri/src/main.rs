@@ -835,9 +835,7 @@ async fn phase_search_start(
 
 #[tauri::command]
 fn motion_get(state: State<'_, Mutex<DesktopState>>) -> Result<MotionConfig, String> {
-    application(&state)?
-        .motion_get()
-        .map_err(|error| error.to_string())
+    Ok(application(&state)?.motion_get())
 }
 
 #[tauri::command]
