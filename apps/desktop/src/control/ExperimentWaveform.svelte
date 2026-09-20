@@ -89,6 +89,27 @@
   function applyRanges() {
     if (!plot) return;
 
+    let yMin = Number.POSITIVE_INFINITY;
+    let yMax = Number.NEGATIVE_INFINITY;
+    for (const channel of channels) {
+      const source = series.find((entry) => entry.id === channel.id);
+      if (!source) continue;
+      const scale = multiplier(channel.id);
+      const mins = source.envelopeMin ?? source.values;
+      const maxs = source.envelopeMax ?? source.values;
+      for (const value of mins) {
+        if (Number.isFinite(value)) yMin = Math.min(yMin, value * scale);
+      }
+      for (const value of maxs) {
+        if (Number.isFinite(value)) yMax = Math.max(yMax, value * scale);
+      }
+    }
+    if (Number.isFinite(yMin) && Number.isFinite(yMax)) {
+      const span = Math.max(yMax - yMin, Math.max(Math.abs(yMin), Math.abs(yMax)) * 0.02, 1e-9);
+      const pad = span * 0.05;
+      plot.setScale("y", { min: yMin - pad, max: yMax + pad });
+    }
+
     const full = fullTimeRange();
     const span = Math.min(currentWindowSeconds(), Math.max(full.max - full.min, 1e-9));
     const maxOffset = Math.max(0, full.max - full.min - span);
@@ -135,7 +156,7 @@
   function options(): uPlot.Options {
     const scales: Record<string, uPlot.Scale> = {
       x: { time: false, auto: false },
-      y: { auto: true },
+      y: { auto: false },
     };
 
     return {
