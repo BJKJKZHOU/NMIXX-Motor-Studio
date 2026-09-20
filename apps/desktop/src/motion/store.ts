@@ -3,31 +3,9 @@ import { getMotion, getMotionPreview, runMotion, setMotion, stopMotion } from ".
 import type { MotionPreview, MotionState } from "./types";
 
 const defaultMotion: MotionState = {
-  mode: "position",
-  trajectory: "trapezoidal",
-  acceleration: 20,
-  deceleration: 20,
-  filterTimeMs: 20,
-  sCurveMode: "peak-accel",
-  repeat: false,
-
   positionCommand: "incremental",
-  positionTargetTurn: 1,
-  positionMaxSpeed: 8,
-
-  speedTarget: 20,
-  sensorlessSpeedTarget: 20,
-  sensorlessStartupCurrent: 1,
-  sensorlessEntrySpeed: 8,
-
-  torqueTargetNm: 0.2,
-  torqueRampNmPerS: 1,
-
-  mitPositionRef: 0,
-  mitVelocityRef: 0,
-  mitKp: 10,
-  mitKd: 0.5,
-  mitTorqueFeedforward: 0,
+  incrementalDeltaTurn: 1,
+  repeat: false,
 };
 
 export const motionState = writable<MotionState>(defaultMotion);
@@ -37,8 +15,7 @@ let revision = 0;
 let writeChain: Promise<void> = Promise.resolve();
 
 export async function initializeMotion(): Promise<void> {
-  const config = await getMotion();
-  motionState.set(config);
+  motionState.set(await getMotion());
   motionPreview.set(await getMotionPreview());
 }
 
@@ -57,7 +34,6 @@ export async function updateMotion<K extends keyof MotionState>(
     motionState.set(canonical);
     motionPreview.set(await getMotionPreview());
   });
-
   writeChain = write.catch(() => undefined);
 
   try {
@@ -71,7 +47,6 @@ export async function updateMotion<K extends keyof MotionState>(
 export async function refreshMotionPreview(): Promise<void> {
   motionPreview.set(await getMotionPreview());
 }
-
 
 export async function executeMotion(): Promise<void> {
   await writeChain;
