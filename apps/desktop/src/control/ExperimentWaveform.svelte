@@ -1,7 +1,6 @@
 <script lang="ts">
   import { onDestroy, onMount } from "svelte";
   import uPlot from "uplot";
-  import type { ScopeChannel, ScopeSeries } from "../analysis/scope/types";
   import type { TuningExperimentSnapshot } from "./tuningExperiment";
 
   export let result: TuningExperimentSnapshot | undefined;
@@ -23,7 +22,6 @@
   let host: HTMLDivElement;
   let plot: uPlot | undefined;
   let resizeObserver: ResizeObserver | undefined;
-  let baseRanges = new Map<number, number>();
   let panOffset = 0;
   let dragStart: { x: number; offset: number } | undefined;
 
@@ -32,10 +30,10 @@
   $: rebuildKey = channels.map((channel) => channel.id).join(",");
   $: if (host && rebuildKey && result) {
     series;
+    multipliers;
     updatePlot();
   }
   $: if (plot && result) {
-    multipliers;
     timePerDiv;
     applyRanges();
   }
@@ -43,25 +41,6 @@
   function multiplier(id: number): number {
     const value = multipliers[id];
     return Number.isFinite(value) && value > 0 ? value : 1;
-  }
-
-  function yScaleKey(id: number): string {
-    return `y-${id}`;
-  }
-
-  function ensureBaseRange(channel: ScopeChannel, source: ScopeSeries | undefined): number {
-    let peak = 0;
-    if (source) {
-      for (const value of source.values) {
-        if (Number.isFinite(value)) peak = Math.max(peak, Math.abs(value));
-      }
-    }
-    const fallback = channel.unit === "A" ? 1 : channel.unit === "rad/s" ? 10 : 1;
-    const candidate = Math.max(peak * 1.1, fallback * 0.1, 1e-6);
-    const existing = baseRanges.get(channel.id);
-    const range = existing === undefined ? candidate : Math.max(existing, candidate);
-    if (existing !== range) baseRanges.set(channel.id, range);
-    return range;
   }
 
   function alignedData(): uPlot.AlignedData {
@@ -78,7 +57,7 @@
       if (!source) return output;
       for (let index = 0; index < source.times.length; index += 1) {
         const target = indexByKey.get(source.times[index].toFixed(7));
-        if (target !== undefined) output[target] = source.values[index];
+        if (target !== undefined) output[target] = source.values[index] * multiplier(channel.id);
       }
       return output;
     });
@@ -108,13 +87,6 @@
   function applyRanges() {
     if (!plot) return;
 
-    for (const channel of channels) {
-      const source = series.find((entry) => entry.id === channel.id);
-      const base = ensureBaseRange(channel, source);
-      const half = base / multiplier(channel.id);
-      plot.setScale(yScaleKey(channel.id), { min: -half, max: half });
-    }
-
     const full = fullTimeRange();
     const span = Math.min(timePerDiv * horizontalDivisions, Math.max(full.max - full.min, 1e-9));
     const maxOffset = Math.max(0, full.max - full.min - span);
@@ -125,13 +97,8 @@
   function options(): uPlot.Options {
     const scales: Record<string, uPlot.Scale> = {
       x: { time: false, auto: false },
+      y: { auto: true },
     };
-    for (const channel of channels) {
-      const source = series.find((entry) => entry.id === channel.id);
-      const base = ensureBaseRange(channel, source);
-      const half = base / multiplier(channel.id);
-      scales[yScaleKey(channel.id)] = { auto: false, range: [-half, half] };
-    }
 
     return {
       width: Math.max(320, host?.clientWidth ?? 640),
@@ -148,7 +115,7 @@
           label: channel.label,
           stroke: traceColors[index % traceColors.length],
           width: 1.25,
-          scale: yScaleKey(channel.id),
+          scale: "y",
           spanGaps: true,
         })),
       ],
