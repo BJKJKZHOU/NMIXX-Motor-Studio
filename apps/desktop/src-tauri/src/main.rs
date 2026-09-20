@@ -245,7 +245,7 @@ struct ParameterReadResultDto {
     error: Option<String>,
 }
 
-#[derive(Debug, Clone, Deserialize)]
+#[derive(Debug, Clone, Deserialize, Serialize)]
 #[serde(rename_all = "camelCase")]
 struct ScopeSelectionDto {
     id: u16,
@@ -800,12 +800,42 @@ async fn motion_stop(state: State<'_, Mutex<DesktopState>>) -> Result<(), String
         .map_err(|error| error.to_string())
 }
 
+fn scope_selection_from_dto(selection: ScopeSelectionDto) -> Result<ScopeSelection, String> {
+    let rate = match selection.rate.as_str() {
+        "fast" => ScopeRate::Fast,
+        "normal" => ScopeRate::Normal,
+        other => return Err(format!("unknown Scope rate '{other}'")),
+    };
+    Ok(ScopeSelection { id: selection.id, rate })
+}
+
+#[tauri::command]
+fn tuning_experiment_defaults(
+    state: State<'_, Mutex<DesktopState>>,
+) -> Result<Vec<ScopeSelectionDto>, String> {
+    application(&state)?
+        .tuning_experiment_default_selections()
+        .map_err(|error| error.to_string())
+        .map(|selections| selections.into_iter().map(|selection| ScopeSelectionDto {
+            id: selection.id,
+            rate: match selection.rate {
+                ScopeRate::Fast => "fast".to_owned(),
+                ScopeRate::Normal => "normal".to_owned(),
+            },
+        }).collect())
+}
+
 #[tauri::command]
 async fn tuning_experiment_start(
     state: State<'_, Mutex<DesktopState>>,
+    selections: Vec<ScopeSelectionDto>,
 ) -> Result<TuningExperimentStatusDto, String> {
+    let selections = selections
+        .into_iter()
+        .map(scope_selection_from_dto)
+        .collect::<Result<Vec<_>, _>>()?;
     let status = application(&state)?
-        .tuning_experiment_start()
+        .tuning_experiment_start(&selections)
         .map_err(|error| error.to_string())?;
     Ok(TuningExperimentStatusDto {
         state: tuning_experiment_state_name(status.state),
@@ -1081,6 +1111,7 @@ fn main() {
             motion_preview,
             motion_run,
             motion_stop,
+            tuning_experiment_defaults,
             tuning_experiment_start,
             tuning_experiment_stop,
             tuning_experiment_status,
