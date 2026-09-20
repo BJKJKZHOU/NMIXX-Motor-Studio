@@ -10,8 +10,8 @@ use crate::{
     HostSchema, IdentificationKind, IdentificationStart, MixedScopeConfig, MixedScopeError, MixedScopeSession,
     MixedScopeSnapshot, MixedScopeStatus, MotionCapabilities, MotionConfig, MotionMode, MotionPreview,
     MotionService, MotorActionError, MotorActionService, ParameterMetadata, ParameterService,
-    ParameterServiceError, ParameterValue, PlotCapabilitiesError, PreflightError, PreflightIssue,
-    PreflightService, ScopeRate, ScopeSelection, SessionError, SessionEvent,
+    ParameterServiceError, ParameterValue, PlotCapabilitiesError, PositionCommand, PreflightError, PreflightIssue,
+    PreflightService, ScopeRate, ScopeSelection, SessionError, SessionEvent, AxdrStatus,
 };
 
 #[derive(Debug, Error)]
@@ -89,6 +89,25 @@ impl Default for TuningExperimentRuntime {
     }
 }
 
+#[derive(Debug)]
+struct MotionRepeatRuntime {
+    endpoint_a: Option<f64>,
+    endpoint_b: Option<f64>,
+    next_is_b: bool,
+    pending_target_is_b: Option<bool>,
+}
+
+impl Default for MotionRepeatRuntime {
+    fn default() -> Self {
+        Self {
+            endpoint_a: None,
+            endpoint_b: None,
+            next_is_b: true,
+            pending_target_is_b: None,
+        }
+    }
+}
+
 const TUNING_CAPTURE_BUDGET_BYTES: usize = 128 * 1024 * 1024;
 const TUNING_LIVE_WINDOW: Duration = Duration::from_secs(3);
 const TUNING_PRE_CAPTURE: Duration = Duration::from_millis(500);
@@ -103,6 +122,7 @@ struct ApplicationInner {
     plot_capabilities: Mutex<Option<DevicePlotCapabilities>>,
     motion_capabilities: MotionCapabilities,
     motion: MotionService,
+    motion_repeat: Mutex<MotionRepeatRuntime>,
     scope: Mutex<Option<MixedScopeSession>>,
     tuning_experiment: Mutex<TuningExperimentRuntime>,
 }
@@ -155,6 +175,7 @@ impl ApplicationSession {
                 plot_capabilities: Mutex::new(None),
                 motion_capabilities,
                 motion,
+                motion_repeat: Mutex::new(MotionRepeatRuntime::default()),
                 scope: Mutex::new(None),
                 tuning_experiment: Mutex::new(TuningExperimentRuntime::default()),
             }),
@@ -273,6 +294,7 @@ impl ApplicationSession {
     }
 
     pub fn motor_stop(&self) -> Result<ActionHandle, ApplicationError> {
+        self.cancel_motion_repeat_leg()?;
         Ok(MotorActionService::from_shared(
             self.inner.session.clone(),
             self.inner.schema.clone(),
@@ -281,6 +303,7 @@ impl ApplicationSession {
     }
 
     pub fn motor_disable(&self) -> Result<ActionHandle, ApplicationError> {
+        self.cancel_motion_repeat_leg()?;
         Ok(MotorActionService::from_shared(
             self.inner.session.clone(),
             self.inner.schema.clone(),
@@ -366,7 +389,15 @@ impl ApplicationSession {
             }
         }
 
+        let reset_repeat = current.mode != config.mode
+            || current.repeat != config.repeat
+            || current.position_command != config.position_command
+            || current.position_target_turn != config.position_target_turn;
+
         self.inner.motion.set(config).map_err(ApplicationError::Motion)?;
+        if reset_repeat {
+            self.reset_motion_repeat()?;
+        }
         self.motion_get()
     }
 
@@ -389,13 +420,75 @@ impl ApplicationSession {
     }
 
     pub fn motion_run(&self) -> Result<ActionHandle, ApplicationError> {
-        self.inner
+        let config = self.inner.motion.get();
+        let mut repeat_target: Option<(f64, bool)> = None;
+
+        if config.mode == MotionMode::Position && config.repeat {
+            let needs_init = {
+                let runtime = self.inner.motion_repeat.lock().map_err(|_| ApplicationError::Poisoned)?;
+                runtime.endpoint_a.is_none() || runtime.endpoint_b.is_none()
+            };
+
+            if needs_init {
+                let current = self.read_position_turns("PARAM_RUN_POSITION")?;
+                let target = match config.position_command {
+                    PositionCommand::Absolute => config.position_target_turn,
+                    PositionCommand::Incremental => current + config.position_target_turn,
+                };
+                if (target - current).abs() <= 1e-9 {
+                    return Err(ApplicationError::Motion(
+                        "Repeat position endpoints must be different".to_owned(),
+                    ));
+                }
+                let mut runtime = self.inner.motion_repeat.lock().map_err(|_| ApplicationError::Poisoned)?;
+                runtime.endpoint_a = Some(current);
+                runtime.endpoint_b = Some(target);
+                runtime.next_is_b = true;
+                runtime.pending_target_is_b = None;
+            }
+
+            let runtime = self.inner.motion_repeat.lock().map_err(|_| ApplicationError::Poisoned)?;
+            let target_is_b = runtime.next_is_b;
+            let target = if target_is_b {
+                runtime.endpoint_b
+            } else {
+                runtime.endpoint_a
+            }
+            .ok_or_else(|| ApplicationError::Motion("Repeat position endpoints are not initialized".to_owned()))?;
+            repeat_target = Some((target, target_is_b));
+        }
+
+        let handle = self
+            .inner
             .motion
-            .run(&self.inner.parameters, &self.inner.session)
-            .map_err(ApplicationError::Motion)
+            .run(
+                &self.inner.parameters,
+                &self.inner.session,
+                repeat_target.map(|(target, _)| target),
+            )
+            .map_err(ApplicationError::Motion)?;
+
+        if let Some((_, target_is_b)) = repeat_target {
+            let mut runtime = self.inner.motion_repeat.lock().map_err(|_| ApplicationError::Poisoned)?;
+            runtime.pending_target_is_b = Some(target_is_b);
+        }
+
+        Ok(handle)
+    }
+
+    pub fn motion_run_completed(&self, status: AxdrStatus) -> Result<(), ApplicationError> {
+        let mut runtime = self.inner.motion_repeat.lock().map_err(|_| ApplicationError::Poisoned)?;
+        let Some(target_is_b) = runtime.pending_target_is_b.take() else {
+            return Ok(());
+        };
+        if status == AxdrStatus::Ok {
+            runtime.next_is_b = !target_is_b;
+        }
+        Ok(())
     }
 
     pub fn motion_stop(&self) -> Result<ActionHandle, ApplicationError> {
+        self.cancel_motion_repeat_leg()?;
         self.motor_stop()
     }
 
@@ -545,7 +638,7 @@ impl ApplicationSession {
         }
 
         let motion = self.inner.motion.get();
-        let preview_duration = if motion.mode == MotionMode::Position && !motion.repeat {
+        let preview_duration = if motion.mode == MotionMode::Position {
             self.motion_preview()?
                 .times
                 .last()
@@ -706,6 +799,32 @@ impl ApplicationSession {
         })
     }
 
+    fn read_position_turns(&self, key: &str) -> Result<f64, ApplicationError> {
+        let metadata = self
+            .inner
+            .schema
+            .parameter_by_key(key)
+            .ok_or_else(|| ApplicationError::Motion(format!("{key} is not exposed")))?;
+        match self.inner.parameters.read(metadata.id)? {
+            ParameterValue::Position(value) => Ok(
+                f64::from(value.turns) + f64::from(value.theta) / std::f64::consts::TAU
+            ),
+            _ => Err(ApplicationError::Motion(format!("{key} has an unexpected type"))),
+        }
+    }
+
+    fn reset_motion_repeat(&self) -> Result<(), ApplicationError> {
+        let mut runtime = self.inner.motion_repeat.lock().map_err(|_| ApplicationError::Poisoned)?;
+        *runtime = MotionRepeatRuntime::default();
+        Ok(())
+    }
+
+    fn cancel_motion_repeat_leg(&self) -> Result<(), ApplicationError> {
+        let mut runtime = self.inner.motion_repeat.lock().map_err(|_| ApplicationError::Poisoned)?;
+        runtime.pending_target_is_b = None;
+        Ok(())
+    }
+
     fn read_motor_state(&self) -> Result<u8, ApplicationError> {
         let metadata = self
             .inner
@@ -788,7 +907,7 @@ impl ApplicationSession {
             return;
         }
 
-        let auto_position = motion.mode == MotionMode::Position && !motion.repeat;
+        let auto_position = motion.mode == MotionMode::Position;
         let mut stop_sent = false;
         let reserve_ratio = (TUNING_POST_CAPTURE.as_secs_f64() / capture_duration.as_secs_f64())
             .clamp(0.0, 1.0);
