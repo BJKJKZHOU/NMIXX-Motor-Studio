@@ -420,6 +420,7 @@ impl ApplicationSession {
     }
 
     pub fn motion_run(&self) -> Result<ActionHandle, ApplicationError> {
+        let events = self.subscribe()?;
         let config = self.inner.motion.get();
         let mut repeat_target: Option<(f64, bool)> = None;
 
@@ -472,6 +473,24 @@ impl ApplicationSession {
             let mut runtime = self.inner.motion_repeat.lock().map_err(|_| ApplicationError::Poisoned)?;
             runtime.pending_target_is_b = Some(target_is_b);
         }
+
+        let completion_app = self.clone();
+        thread::spawn(move || {
+            while let Ok(event) = events.recv() {
+                let SessionEvent::ActionCompleted {
+                    handle: completed,
+                    status,
+                } = event
+                else {
+                    continue;
+                };
+                if completed != handle {
+                    continue;
+                }
+                let _ = completion_app.motion_run_completed(status);
+                break;
+            }
+        });
 
         Ok(handle)
     }
