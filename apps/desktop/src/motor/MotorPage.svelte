@@ -333,35 +333,21 @@
     identStates = { ...identStates, [identKey]: { phase, message } };
   }
 
-  function closeEnough(a: number | null, b: number | null): boolean {
-    if (a === null || b === null) return false;
-    const scale = Math.max(1, Math.abs(a), Math.abs(b));
-    return Math.abs(a - b) <= 1e-6 * scale;
-  }
-
-  function resultApplied(identKey: IdentKey): boolean {
-    if (identKey === "rsLs") {
-      const rs = numericValue(values.PARAM_IDENT_RS_RESULT);
-      const ls = numericValue(values.PARAM_IDENT_LS_RESULT);
-      return closeEnough(numericValue(values.PARAM_MOTOR_RS), rs)
-        && closeEnough(numericValue(values.PARAM_MOTOR_LD), ls)
-        && closeEnough(numericValue(values.PARAM_MOTOR_LQ), ls);
-    }
-    if (identKey === "flux") {
-      return closeEnough(numericValue(values.PARAM_MOTOR_FLUX), numericValue(values.PARAM_IDENT_FLUX_RESULT));
-    }
-    return closeEnough(numericValue(values.PARAM_MOTOR_J), numericValue(values.PARAM_IDENT_J_RESULT))
-      && closeEnough(numericValue(values.PARAM_MOTOR_B), numericValue(values.PARAM_IDENT_B_RESULT));
-  }
-
   function restoreIdentificationStates() {
     const next = { ...identStates };
     for (const identKey of Object.keys(IDENT_CONFIGS) as IdentKey[]) {
       const current = next[identKey];
-      if (current.phase === "running" || current.phase === "applying" || current.phase === "failed") continue;
+      if (
+        current.phase === "running"
+        || current.phase === "applying"
+        || current.phase === "applied"
+        || current.phase === "failed"
+      ) {
+        continue;
+      }
       const valid = numericValue(values[IDENT_CONFIGS[identKey].validSymbol]) === 1;
       next[identKey] = valid
-        ? { phase: resultApplied(identKey) ? "applied" : "ready", message: "" }
+        ? { phase: "ready", message: "" }
         : { phase: "idle", message: "" };
     }
     identStates = next;
@@ -380,10 +366,6 @@
     if (!actionAvailable(config.startAction) || identifyBusy()) return;
 
     try {
-      for (const otherKey of Object.keys(IDENT_CONFIGS) as IdentKey[]) {
-        if (otherKey !== identKey && identStates[otherKey].phase === "ready") setIdentState(otherKey, "idle");
-      }
-
       let result = await startIdentificationAction(identKey, false);
       if (result.status === "blocked") {
         setIdentState(
