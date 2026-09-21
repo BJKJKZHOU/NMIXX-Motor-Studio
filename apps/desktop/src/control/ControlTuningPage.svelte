@@ -92,6 +92,7 @@
   let writing = $state<Set<string>>(new Set());
   let loading = $state(false);
   let motionActionBusy = $state(false);
+  let stopActionBusy = $state(false);
   let copyAccelToDecel = $state(false);
   let experimentState = $state<TuningExperimentState>("IDLE");
   let experimentMessage = $state("");
@@ -449,7 +450,7 @@
   }
 
   function motionLocked(): boolean {
-    return motorState === MOTOR_RUN || motionActionBusy || experimentActive();
+    return motorState === MOTOR_RUN || motionActionBusy || stopActionBusy || experimentActive();
   }
 
   async function refreshExperiment() {
@@ -481,6 +482,7 @@
     return !!connection
       && motorState === MOTOR_ENABLED
       && !motionActionBusy
+      && !stopActionBusy
       && !experimentActive()
       && !hasDirtyDraft()
       && connection.motion.run
@@ -491,8 +493,7 @@
 
   function canStopMotion(): boolean {
     return !!connection
-      && experimentActive()
-      && !motionActionBusy
+      && !stopActionBusy
       && connection.motion.stop;
   }
 
@@ -531,7 +532,7 @@
 
   async function stopTuningMotion() {
     if (!canStopMotion()) return;
-    motionActionBusy = true;
+    stopActionBusy = true;
     try {
       const status = await stopTuningExperiment();
       experimentState = status.state;
@@ -540,7 +541,7 @@
     } catch (error) {
       onError(error);
     } finally {
-      motionActionBusy = false;
+      stopActionBusy = false;
     }
   }
 </script>
@@ -891,7 +892,7 @@
                 <vscode-button
                   secondary
                   disabled={!canStopMotion()}
-                  title="Stop the active tuning experiment and retain its waveform"
+                  title="Stop motor motion and end the tuning experiment"
                   onclick={() => void stopTuningMotion()}
                 >Stop</vscode-button>
               </div>
