@@ -799,6 +799,23 @@ async fn action_start(
     Ok(result)
 }
 
+#[tauri::command]
+async fn action_start_immediate(
+    state: State<'_, Mutex<DesktopState>>,
+    key: String,
+) -> Result<ActionHandleDto, String> {
+    let app = application(&state)?;
+    let symbol = app
+        .schema()
+        .action_by_key(&key)
+        .ok_or_else(|| format!("Action '{key}' is not exposed by the HostSchema"))?
+        .symbol
+        .clone();
+    let handle = app.action_start(&key).map_err(|error| error.to_string())?;
+    let _ = app.parameter_refresh_all();
+    Ok(action_handle_dto(handle, symbol))
+}
+
 fn start_async_semantic_action(
     app_handle: tauri::AppHandle,
     app: ApplicationSession,
@@ -824,10 +841,12 @@ async fn motor_enable(
 
 #[tauri::command]
 async fn motor_stop(
+    app_handle: tauri::AppHandle,
     state: State<'_, Mutex<DesktopState>>,
 ) -> Result<ActionHandleDto, String> {
     let app = application(&state)?;
     let handle = app.motor_stop().map_err(|error| error.to_string())?;
+    let _ = app_handle.emit("motor-stop-issued", ());
     Ok(action_handle_dto(handle, "ACTION_MOTOR_STOP".to_owned()))
 }
 
@@ -899,11 +918,15 @@ async fn motion_run(state: State<'_, Mutex<DesktopState>>) -> Result<(), String>
 }
 
 #[tauri::command]
-async fn motion_stop(state: State<'_, Mutex<DesktopState>>) -> Result<(), String> {
+async fn motion_stop(
+    app_handle: tauri::AppHandle,
+    state: State<'_, Mutex<DesktopState>>,
+) -> Result<(), String> {
     application(&state)?
         .motion_stop()
-        .map(|_| ())
-        .map_err(|error| error.to_string())
+        .map_err(|error| error.to_string())?;
+    let _ = app_handle.emit("motor-stop-issued", ());
+    Ok(())
 }
 
 fn scope_selection_from_dto(selection: ScopeSelectionDto) -> Result<ScopeSelection, String> {
@@ -951,11 +974,13 @@ async fn tuning_experiment_start(
 
 #[tauri::command]
 async fn tuning_experiment_stop(
+    app_handle: tauri::AppHandle,
     state: State<'_, Mutex<DesktopState>>,
 ) -> Result<TuningExperimentStatusDto, String> {
     let status = application(&state)?
         .tuning_experiment_stop()
         .map_err(|error| error.to_string())?;
+    let _ = app_handle.emit("motor-stop-issued", ());
     Ok(TuningExperimentStatusDto {
         state: tuning_experiment_state_name(status.state),
         message: status.message,
@@ -1205,6 +1230,7 @@ fn main() {
             identification_apply,
             action_list,
             action_start,
+            action_start_immediate,
             motor_enable,
             motor_stop,
             motor_disable,
