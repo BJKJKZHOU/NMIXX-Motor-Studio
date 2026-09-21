@@ -1,7 +1,7 @@
 <script lang="ts">
   import { untrack } from "svelte";
   import type { ConnectionInfo } from "../connection/types";
-  import { listParameters, readParameters, writeParameter } from "../parameters/api";
+  import { listParameters, onParametersRefreshed, readCachedParameters, readParameters, writeParameter } from "../parameters/api";
   import type { ParameterMetadata, ParameterValue } from "../parameters/types";
   import { modifiedParameterIds } from "../parameters/persistence";
   import { listActions, onActionCompleted } from "../actions/api";
@@ -98,6 +98,23 @@
     return () => {
       disposed = true;
       actionUnlisten?.();
+    };
+  });
+
+  $effect(() => {
+    let disposed = false;
+    let parameterUnlisten: (() => void) | undefined;
+
+    onParametersRefreshed(() => void refreshFromCache())
+      .then((stop) => {
+        if (disposed) stop();
+        else parameterUnlisten = stop;
+      })
+      .catch(onError);
+
+    return () => {
+      disposed = true;
+      parameterUnlisten?.();
     };
   });
 
@@ -226,6 +243,18 @@
     applyValues(readable, results);
   }
 
+  async function refreshFromCache() {
+    const readable = Object.values(metadata).filter((item) => item.access.toLowerCase().includes("r"));
+    if (readable.length === 0) return;
+
+    try {
+      const results = await readCachedParameters(readable.map((item) => item.id));
+      applyValues(readable, results);
+    } catch (error) {
+      onError(error);
+    }
+  }
+
   async function commit(symbol: string) {
     const meta = metadata[symbol];
     if (!meta || !isWritable(symbol) || writing.has(symbol)) return;
@@ -249,18 +278,11 @@
     const meta = metadata[symbol];
     if (!meta || meta.typeName !== "u8" || !isWritable(symbol) || writing.has(symbol)) return;
 
-    const previous = values[symbol] ?? null;
-    values = { ...values, [symbol]: { type: "u8", value } };
     writing = new Set(writing).add(symbol);
     try {
       await writeParameter(meta.id, { type: "u8", value });
+      await refreshValues();
     } catch (error) {
-      values = { ...values, [symbol]: previous };
-      if (symbol === ENCODER_PROTOCOL_SYMBOL) {
-        encoderProtocolValue = previous?.type === "u8" ? Number(previous.value) : null;
-      } else if (symbol === ENCODER_SPI_TYPE_SYMBOL) {
-        encoderSpiTypeValue = previous?.type === "u8" ? Number(previous.value) : null;
-      }
       onError(error);
     } finally {
       const next = new Set(writing);
@@ -273,15 +295,12 @@
     const meta = metadata[MOTOR_DIR_SYMBOL];
     if (!meta || !isWritable(MOTOR_DIR_SYMBOL) || writing.has(MOTOR_DIR_SYMBOL)) return;
 
-    const previous = values[MOTOR_DIR_SYMBOL] ?? null;
     const nextValue = direction === "normal" ? 1 : -1;
-    values = { ...values, [MOTOR_DIR_SYMBOL]: { type: "i8", value: nextValue } };
     writing = new Set(writing).add(MOTOR_DIR_SYMBOL);
     try {
       await writeParameter(meta.id, { type: "i8", value: nextValue });
+      await refreshValues();
     } catch (error) {
-      values = { ...values, [MOTOR_DIR_SYMBOL]: previous };
-      motorDirectionValue = previous?.type === "i8" && Number(previous.value) === -1 ? "reversed" : "normal";
       onError(error);
     } finally {
       const next = new Set(writing);
@@ -321,6 +340,7 @@
     if (completion.ok) {
       phaseState = "success";
       phaseMessage = "";
+      void refreshValues();
     } else {
       phaseState = "failed";
       phaseMessage = completion.status;
