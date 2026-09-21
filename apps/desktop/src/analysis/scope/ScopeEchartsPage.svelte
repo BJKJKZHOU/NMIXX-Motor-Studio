@@ -244,16 +244,7 @@
     try {
       if (running) {
         await stopScope();
-
-        const deadline = Date.now() + 5_000;
-        do {
-          await refreshSnapshot(true);
-          if (snapshot?.state === "STOPPED") break;
-          if (Date.now() >= deadline) {
-            throw new Error("Scope stop was requested, but acquisition did not reach STOPPED within 5 seconds.");
-          }
-          await new Promise((resolve) => setTimeout(resolve, 50));
-        } while (true);
+        await refreshSnapshot(true);
       } else {
         if (!(await ensureConfigured())) return;
         await startScope();
