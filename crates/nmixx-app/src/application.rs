@@ -543,31 +543,26 @@ impl ApplicationSession {
     }
 
     pub fn tuning_experiment_stop(&self) -> Result<TuningExperimentStatus, ApplicationError> {
-        let active = {
+        {
             let mut runtime = self
                 .inner
                 .tuning_experiment
                 .lock()
                 .map_err(|_| ApplicationError::Poisoned)?;
-            let active = matches!(
+            if matches!(
                 runtime.state,
                 TuningExperimentState::Preparing
                     | TuningExperimentState::Running
                     | TuningExperimentState::Stopping
-            );
-            if active {
+            ) {
                 runtime.stop_requested = true;
                 if runtime.state == TuningExperimentState::Running {
                     runtime.state = TuningExperimentState::Stopping;
                 }
             }
-            active
-        };
-
-        if active && self.read_motor_state()? == 2 {
-            let _ = self.motion_stop();
         }
 
+        self.motion_stop()?;
         self.tuning_experiment_status()
     }
 
