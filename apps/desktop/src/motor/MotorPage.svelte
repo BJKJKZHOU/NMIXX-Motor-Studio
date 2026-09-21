@@ -299,9 +299,9 @@
     writing = new Set(writing).add(symbol);
     try {
       const value = parameterValue(meta, drafts[symbol] ?? "");
-      await writeParameter(meta.id, value);
-      values = { ...values, [symbol]: value };
-      drafts = { ...drafts, [symbol]: valueText(value) };
+      const result = await writeParameter(meta.id, value);
+      values = { ...values, [symbol]: result.value };
+      drafts = { ...drafts, [symbol]: valueText(result.value) };
 
       for (const identKey of Object.keys(IDENT_CONFIGS) as IdentKey[]) {
         if (IDENT_CONFIGS[identKey].activeSymbols.includes(symbol) && identStates[identKey].phase === "applied") {
