@@ -1,7 +1,7 @@
 <script lang="ts">
   import { onMount, untrack } from "svelte";
   import type { ConnectionInfo } from "../connection/types";
-  import { listParameters, onParametersRefreshed, readCachedParameters, readCurrentParameters, readParameters, writeParameter } from "../parameters/api";
+  import { listParameters, onParametersChanged, readCachedParameters, readCurrentParameters, readParameters, writeParameter } from "../parameters/api";
   import type { ParameterMetadata, ParameterValue } from "../parameters/types";
   import { modifiedParameterIds } from "../parameters/persistence";
 
@@ -39,7 +39,7 @@
   onMount(() => {
     let disposed = false;
     let refreshUnlisten: (() => void) | undefined;
-    onParametersRefreshed(() => void refreshFromCache())
+    onParametersChanged(() => void refreshFromCache())
       .then((stop) => {
         if (disposed) stop();
         else refreshUnlisten = stop;
