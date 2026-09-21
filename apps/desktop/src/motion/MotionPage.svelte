@@ -239,14 +239,6 @@
     stopping = true;
     try {
       await stopMotionExecution();
-
-      const deadline = Date.now() + 60_000;
-      while (motorState === MOTOR_RUN) {
-        if (Date.now() >= deadline) {
-          throw new Error("Stop was accepted, but the motor remained in RUN for 60 seconds.");
-        }
-        await new Promise((resolve) => setTimeout(resolve, 50));
-      }
     } catch (error) {
       onError(error);
     } finally {
