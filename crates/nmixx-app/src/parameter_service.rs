@@ -1,5 +1,5 @@
 use std::collections::HashMap;
-use std::sync::{Arc, RwLock};
+use std::sync::{mpsc, Arc, Mutex, RwLock};
 
 use thiserror::Error;
 
@@ -41,6 +41,7 @@ pub struct ParameterService {
     session: DeviceSession,
     schema: HostSchema,
     cache: Arc<RwLock<HashMap<u16, ParameterValue>>>,
+    subscribers: Arc<Mutex<Vec<mpsc::Sender<Vec<u16>>>>>,
 }
 
 impl ParameterService {
@@ -49,6 +50,7 @@ impl ParameterService {
             session,
             schema,
             cache: Arc::new(RwLock::new(HashMap::new())),
+            subscribers: Arc::new(Mutex::new(Vec::new())),
         }
     }
 
@@ -76,7 +78,44 @@ impl ParameterService {
             .cloned())
     }
 
+    pub fn subscribe(&self) -> Result<mpsc::Receiver<Vec<u16>>, ParameterServiceError> {
+        let (sender, receiver) = mpsc::channel();
+        self.subscribers
+            .lock()
+            .map_err(|_| ParameterServiceError::CachePoisoned)?
+            .push(sender);
+        Ok(receiver)
+    }
+
     pub fn read(&self, id: u16) -> Result<ParameterValue, ParameterServiceError> {
+        let value = self.read_cache(id)?;
+        self.notify_changed(vec![id])?;
+        Ok(value)
+    }
+
+    /// Convenience batch read. Each requested ID produces one independent result in input order.
+    /// A failed item does not discard successful values or stop the remaining reads.
+    pub fn read_many(
+        &self,
+        ids: &[u16],
+    ) -> Result<Vec<(u16, Result<ParameterValue, ParameterServiceError>)>, ParameterServiceError> {
+        let mut changed = Vec::new();
+        let results = ids
+            .iter()
+            .copied()
+            .map(|id| {
+                let result = self.read_cache(id);
+                if result.is_ok() {
+                    changed.push(id);
+                }
+                (id, result)
+            })
+            .collect();
+        self.notify_changed(changed)?;
+        Ok(results)
+    }
+
+    fn read_cache(&self, id: u16) -> Result<ParameterValue, ParameterServiceError> {
         let metadata = self.metadata(id)?;
         let ty = metadata.parameter_type()?;
         let value = self.session.parameter_read(id, ty)?;
@@ -87,17 +126,16 @@ impl ParameterService {
         Ok(value)
     }
 
-    /// Convenience batch read. Each requested ID produces one independent result in input order.
-    /// A failed item does not discard successful values or stop the remaining reads.
-    pub fn read_many(
-        &self,
-        ids: &[u16],
-    ) -> Result<Vec<(u16, Result<ParameterValue, ParameterServiceError>)>, ParameterServiceError> {
-        Ok(ids
-            .iter()
-            .copied()
-            .map(|id| (id, self.read(id)))
-            .collect())
+    fn notify_changed(&self, ids: Vec<u16>) -> Result<(), ParameterServiceError> {
+        if ids.is_empty() {
+            return Ok(());
+        }
+        let mut subscribers = self
+            .subscribers
+            .lock()
+            .map_err(|_| ParameterServiceError::CachePoisoned)?;
+        subscribers.retain(|subscriber| subscriber.send(ids.clone()).is_ok());
+        Ok(())
     }
 
     /// Refresh every readable Host-visible parameter into the shared cache.
