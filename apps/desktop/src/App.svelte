@@ -43,6 +43,7 @@
   let speedWm: number | null = null;
   let positionText = "—";
   let globalActionBusy = false;
+  let globalStopping = false;
   let parameterSaveAvailable = false;
   let saveFeedback: "idle" | "saved" = "idle";
   let saveFeedbackTimer: ReturnType<typeof setTimeout> | undefined;
@@ -115,6 +116,7 @@
     speedWm = null;
     positionText = "—";
     globalActionBusy = false;
+    globalStopping = false;
     parameterSaveAvailable = false;
     saveFeedback = "idle";
     if (saveFeedbackTimer) clearTimeout(saveFeedbackTimer);
@@ -210,7 +212,26 @@
 
   async function stopCurrentMotorOperation() {
     if (!connection || motorState !== MOTOR_RUN || globalActionBusy) return;
-    await startGlobalAction("ACTION_MOTOR_STOP", stopMotor);
+    globalActionBusy = true;
+    globalStopping = true;
+    try {
+      await stopMotor();
+
+      const deadline = Date.now() + 60_000;
+      while (connection && motorState === MOTOR_RUN) {
+        await refreshGlobalStatus();
+        if (motorState !== MOTOR_RUN) break;
+        if (Date.now() >= deadline) {
+          throw new Error("Stop was accepted, but the motor remained in RUN for 60 seconds.");
+        }
+        await new Promise((resolve) => setTimeout(resolve, 50));
+      }
+    } catch (error) {
+      setError(error);
+    } finally {
+      globalStopping = false;
+      globalActionBusy = false;
+    }
   }
 
   async function savePersistentParameters() {
@@ -272,11 +293,13 @@
         </button>
         <button
           class="tool-button global-action stop-action"
+          class:stopping-action={globalStopping}
           disabled={!connection || motorState !== MOTOR_RUN || globalActionBusy}
           onclick={() => void stopCurrentMotorOperation()}
-          title="Stop current motor operation"
+          title={globalStopping ? "Stopping current motor operation" : "Stop current motor operation"}
         >
-          <i class="codicon codicon-debug-stop"></i> Stop
+          <i class={`codicon ${globalStopping ? "codicon-loading codicon-modifier-spin" : "codicon-debug-stop"}`}></i>
+          {globalStopping ? "Stopping…" : "Stop"}
         </button>
         <span class="global-group-gap"></span>
         <button class="tool-button global-action" disabled={!connection || readingParameters} onclick={() => void refreshAllParameters()} title="Read current RAM parameters from device">
@@ -427,6 +450,12 @@
 
   .stop-action:not(:disabled) {
     font-weight: 600;
+  }
+
+  .stop-action.stopping-action {
+    opacity: 1;
+    background: var(--vscode-button-secondaryBackground, #3a3d41);
+    color: var(--vscode-button-secondaryForeground, #ffffff);
   }
 
   .problems-indicator {
