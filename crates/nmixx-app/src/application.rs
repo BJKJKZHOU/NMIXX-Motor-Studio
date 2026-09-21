@@ -214,8 +214,8 @@ impl ApplicationSession {
         &self,
         id: u16,
         value: ParameterValue,
-    ) -> Result<(), ApplicationError> {
-        Ok(self.inner.parameters.write(id, value)?)
+    ) -> Result<ParameterValue, ApplicationError> {
+        Ok(self.inner.parameters.write_readback(id, value)?)
     }
 
     pub fn action_start(&self, key: &str) -> Result<ActionHandle, ApplicationError> {
