@@ -229,8 +229,11 @@
     if (!isWritable(row.meta) || row.pending || writing.has(row.meta.id)) return;
     writing = new Set(writing).add(row.meta.id);
     try {
-      await writeParameter(row.meta.id, parseValue(row.meta, drafts[row.meta.id] ?? ""));
-      await refreshOne(row);
+      const result = await writeParameter(row.meta.id, parseValue(row.meta, drafts[row.meta.id] ?? ""));
+      drafts = { ...drafts, [row.meta.id]: valueText(result.value) };
+      rows = rows.map((item) => item.meta.id === row.meta.id
+        ? { ...item, value: result.value, error: null, pending: false }
+        : item);
     } catch (error) {
       const message = error instanceof Error ? error.message : String(error);
       rows = rows.map((item) => item.meta.id === row.meta.id ? { ...item, error: message } : item);
