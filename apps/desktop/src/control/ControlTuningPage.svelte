@@ -4,7 +4,7 @@
   import { subscribeRefresh } from "../refreshScheduler";
   import {
     listParameters,
-    onParametersRefreshed,
+    onParametersChanged,
     readCachedParameters,
     readCurrentParameters,
     readParameters,
@@ -114,7 +114,7 @@
 
     let disposed = false;
     let unlisten: (() => void) | undefined;
-    onParametersRefreshed(() => void refreshFromCache())
+    onParametersChanged(() => void refreshFromCache())
       .then((stop) => {
         if (disposed) stop();
         else unlisten = stop;
