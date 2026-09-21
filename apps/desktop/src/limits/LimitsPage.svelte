@@ -42,6 +42,7 @@
   let loading = $state(false);
   let writing = $state<Set<string>>(new Set());
   let busRefreshUnsubscribe: (() => void) | undefined;
+  let busReading = false;
   let generation = 0;
 
   onMount(() => {
@@ -202,15 +203,18 @@
   }
 
   async function refreshBusVoltage() {
-    if (!connection) return;
+    if (!connection || busReading) return;
     const meta = metadata[VBUS_ACTUAL_SYMBOL];
     if (!meta || !meta.access.toLowerCase().includes("r")) return;
 
+    busReading = true;
     try {
       const results = await readParameters([meta.id]);
       applyValues([meta], results);
     } catch (error) {
       onError(error);
+    } finally {
+      busReading = false;
     }
   }
 
@@ -310,7 +314,6 @@
 
         <section class="limits-section bus-section">
           <div class="section-title">Bus Voltage</div>
-          {@const vbusState = busState()}
           <div class="bus-grid" role="table" aria-label="Bus voltage limits">
             <div class="bus-header" role="row">
               <div role="columnheader">Minimum</div>
@@ -338,8 +341,8 @@
               </div>
 
               <div
-                class:bus-under={vbusState === "under"}
-                class:bus-over={vbusState === "over"}
+                class:bus-under={busState() === "under"}
+                class:bus-over={busState() === "over"}
                 class="bus-cell bus-actual"
                 role="cell"
               >
