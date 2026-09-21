@@ -109,6 +109,7 @@
   let writing = $state<Set<string>>(new Set());
   let loading = $state(false);
   let motionActionBusy = $state(false);
+  let stoppingExperiment = $state(false);
   let copyAccelToDecel = $state(false);
   let experimentState = $state<TuningExperimentState>("IDLE");
   let experimentMessage = $state("");
@@ -655,14 +656,28 @@
   async function stopTuningMotion() {
     if (!canStopMotion()) return;
     motionActionBusy = true;
+    stoppingExperiment = true;
     try {
-      const status = await stopTuningExperiment();
+      let status = await stopTuningExperiment();
       experimentState = status.state;
       experimentMessage = status.message ?? "";
+
+      const deadline = Date.now() + 60_000;
+      while (status.state === "PREPARING" || status.state === "RUNNING" || status.state === "STOPPING") {
+        if (Date.now() >= deadline) {
+          throw new Error("Stop was requested, but the tuning experiment did not finish within 60 seconds.");
+        }
+        await new Promise((resolve) => setTimeout(resolve, 50));
+        status = await tuningExperimentStatus();
+        experimentState = status.state;
+        experimentMessage = status.message ?? "";
+      }
+
       await refreshExperiment();
     } catch (error) {
       onError(error);
     } finally {
+      stoppingExperiment = false;
       motionActionBusy = false;
     }
   }
@@ -980,9 +995,18 @@
                         : "Run tuning experiment"}
                   onclick={() => void runTuningMotion()}
                 >Run</vscode-button>
-                <vscode-button secondary disabled={!canStopMotion()}
-                  title="Stop the active tuning experiment and retain its waveform"
-                  onclick={() => void stopTuningMotion()}>Stop</vscode-button>
+                <vscode-button
+                  secondary
+                  class:stopping={stoppingExperiment}
+                  disabled={!canStopMotion()}
+                  title={stoppingExperiment
+                    ? "Stopping the tuning experiment"
+                    : "Stop the active tuning experiment and retain its waveform"}
+                  onclick={() => void stopTuningMotion()}
+                >
+                  <i class={`codicon ${stoppingExperiment ? "codicon-loading codicon-modifier-spin" : "codicon-debug-stop"}`}></i>
+                  {stoppingExperiment ? "Stopping…" : "Stop"}
+                </vscode-button>
               </div>
             </div>
           </section>
@@ -1379,6 +1403,10 @@
   .copy-decel {
     color: var(--vscode-descriptionForeground);
     font-size: 12px;
+  }
+
+  vscode-button.stopping {
+    opacity: 1;
   }
 
   .motion-actions {
