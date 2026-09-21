@@ -89,7 +89,7 @@ impl ParameterService {
 
     pub fn read(&self, id: u16) -> Result<ParameterValue, ParameterServiceError> {
         let value = self.read_cache(id)?;
-        self.notify_changed(vec![id])?;
+        self.notify_changed(vec![id]);
         Ok(value)
     }
 
@@ -111,7 +111,7 @@ impl ParameterService {
                 (id, result)
             })
             .collect();
-        self.notify_changed(changed)?;
+        self.notify_changed(changed);
         Ok(results)
     }
 
@@ -126,16 +126,13 @@ impl ParameterService {
         Ok(value)
     }
 
-    fn notify_changed(&self, ids: Vec<u16>) -> Result<(), ParameterServiceError> {
+    fn notify_changed(&self, ids: Vec<u16>) {
         if ids.is_empty() {
-            return Ok(());
+            return;
         }
-        let mut subscribers = self
-            .subscribers
-            .lock()
-            .map_err(|_| ParameterServiceError::CachePoisoned)?;
-        subscribers.retain(|subscriber| subscriber.send(ids.clone()).is_ok());
-        Ok(())
+        if let Ok(mut subscribers) = self.subscribers.lock() {
+            subscribers.retain(|subscriber| subscriber.send(ids.clone()).is_ok());
+        }
     }
 
     /// Refresh every readable Host-visible parameter into the shared cache.
