@@ -13,7 +13,7 @@
   } from "@tanstack/svelte-table";
   import type { ColumnDef } from "@tanstack/svelte-table";
   import type { ConnectionInfo } from "../connection/types";
-  import { listParameters, onParametersRefreshed, readCachedParameters, readCurrentParameters, readParameter, writeParameter } from "./api";
+  import { listParameters, onParametersChanged, readCachedParameters, readCurrentParameters, readParameter, writeParameter } from "./api";
   import type { ParameterMetadata, ParameterValue } from "./types";
   import { modifiedParameterIds } from "./persistence";
 
@@ -73,7 +73,7 @@
   onMount(() => {
     let disposed = false;
     let refreshUnlisten: (() => void) | undefined;
-    onParametersRefreshed(() => void refreshFromCache())
+    onParametersChanged(() => void refreshFromCache())
       .then((stop) => {
         if (disposed) stop();
         else refreshUnlisten = stop;
