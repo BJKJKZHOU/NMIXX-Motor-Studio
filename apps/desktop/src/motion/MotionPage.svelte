@@ -40,6 +40,7 @@
   let drafts: Record<string, string> = {};
   let writing = new Set<string>();
   let actionBusy = false;
+  let stopping = false;
   let incrementalDraft = "1";
 
   $: activeMode = modeFromParameter(metadata[MOTION_MODE], values[MOTION_MODE]);
@@ -235,9 +236,23 @@
   async function stop() {
     if (!canStop() || actionBusy) return;
     actionBusy = true;
-    try { await stopMotionExecution(); }
-    catch (error) { onError(error); }
-    finally { actionBusy = false; }
+    stopping = true;
+    try {
+      await stopMotionExecution();
+
+      const deadline = Date.now() + 60_000;
+      while (motorState === MOTOR_RUN) {
+        if (Date.now() >= deadline) {
+          throw new Error("Stop was accepted, but the motor remained in RUN for 60 seconds.");
+        }
+        await new Promise((resolve) => setTimeout(resolve, 50));
+      }
+    } catch (error) {
+      onError(error);
+    } finally {
+      stopping = false;
+      actionBusy = false;
+    }
   }
 
   function previewLabel(): string {
@@ -460,8 +475,14 @@
         <button class="motion-run" disabled={!canRun() || actionBusy} title="Run motion" onclick={run}>
           <i class="codicon codicon-debug-start"></i> Run
         </button>
-        <button disabled={!canStop() || actionBusy} title="Stop motor motion" onclick={stop}>
-          <i class="codicon codicon-debug-stop"></i> Stop
+        <button
+          class:stopping={stopping}
+          disabled={!canStop() || actionBusy}
+          title={stopping ? "Stopping motor motion" : "Stop motor motion"}
+          onclick={stop}
+        >
+          <i class={`codicon ${stopping ? "codicon-loading codicon-modifier-spin" : "codicon-debug-stop"}`}></i>
+          {stopping ? "Stopping…" : "Stop"}
         </button>
       </div>
     </div>
