@@ -4,7 +4,7 @@
   import { listParameters, onParametersChanged, readCachedParameters, readParameters, writeParameter } from "../parameters/api";
   import type { ParameterMetadata, ParameterValue } from "../parameters/types";
   import { modifiedParameterIds } from "../parameters/persistence";
-  import { listActions, onActionCompleted } from "../actions/api";
+  import { listActions, onActionCompleted, onMotorStopIssued, startAction, startImmediateAction } from "../actions/api";
   import type { ActionCompletion, ActionHandle, ActionMetadata } from "../actions/types";
   import { startPhaseSearch as startPhaseSearchAction } from "./api";
 
@@ -13,7 +13,8 @@
     onError?: (error: unknown) => void;
   };
 
-  type PhaseState = "idle" | "running" | "success" | "failed";
+  type PhaseState = "idle" | "running" | "success" | "stopped" | "failed";
+  type HomingState = "idle" | "running" | "success" | "failed";
   type EnumOption = { value: number; symbol: string; label: string };
 
   const PHASE_CURRENT_SYMBOL = "PARAM_PHASE_I_SEARCH";
@@ -26,16 +27,6 @@
   const PHASE_SEARCH_ACTION = "ACTION_PHASE_SEARCH_START";
   const SET_ZERO_ACTION = "ACTION_POSITION_SET_ZERO";
   const HOMING_ACTION = "ACTION_HOME_START";
-
-  const PROTOCOL_OPTIONS: EnumOption[] = [
-    { value: 0, symbol: "ENC_PROTOCOL_NONE", label: "None" },
-    { value: 1, symbol: "ENC_PROTOCOL_SPI", label: "SPI" },
-  ];
-
-  const SPI_TYPE_OPTIONS: EnumOption[] = [
-    { value: 1, symbol: "ENC_SPI_MT6816", label: "MT6816" },
-    { value: 2, symbol: "ENC_SPI_MT6835", label: "MT6835" },
-  ];
 
   const ALL_PARAMETER_SYMBOLS = [
     PHASE_CURRENT_SYMBOL,
@@ -60,6 +51,10 @@
   let phaseState = $state<PhaseState>("idle");
   let phaseMessage = $state("");
   let pendingPhaseHandle = $state<string | null>(null);
+  let homingState = $state<HomingState>("idle");
+  let homingMessage = $state("");
+  let pendingHomingHandle = $state<string | null>(null);
+  let zeroActionBusy = $state(false);
   let generation = 0;
 
   $effect(() => {
@@ -68,6 +63,10 @@
     phaseState = "idle";
     phaseMessage = "";
     pendingPhaseHandle = null;
+    homingState = "idle";
+    homingMessage = "";
+    pendingHomingHandle = null;
+    zeroActionBusy = false;
 
     if (!activeConnection) {
       metadata = {};
@@ -98,6 +97,29 @@
     return () => {
       disposed = true;
       actionUnlisten?.();
+    };
+  });
+
+  $effect(() => {
+    let disposed = false;
+    let stopUnlisten: (() => void) | undefined;
+
+    onMotorStopIssued(() => {
+      if (phaseState === "running") {
+        pendingPhaseHandle = null;
+        phaseState = "stopped";
+        phaseMessage = "";
+      }
+    })
+      .then((stop) => {
+        if (disposed) stop();
+        else stopUnlisten = stop;
+      })
+      .catch(onError);
+
+    return () => {
+      disposed = true;
+      stopUnlisten?.();
     };
   });
 
@@ -156,15 +178,34 @@
     return !!actions[symbol];
   }
 
-  function enumOptions(symbol: string, candidates: EnumOption[]): EnumOption[] {
-    const allowedSymbols = metadata[symbol]?.allowedSymbols ?? [];
-    if (allowedSymbols.length === 0) return candidates;
-    const allowed = new Set(allowedSymbols);
-    return candidates.filter((option) => allowed.has(option.symbol));
+  function enumLabel(symbol: string): string {
+    return symbol
+      .replace(/^ENC_PROTOCOL_/, "")
+      .replace(/^ENC_SPI_/, "")
+      .replaceAll("_", " ");
+  }
+
+  function enumOptions(symbol: string): EnumOption[] {
+    const meta = metadata[symbol];
+    if (!meta || meta.allowedSymbols.length === 0) return [];
+    return meta.allowedSymbols.map((enumSymbol, index) => ({
+      symbol: enumSymbol,
+      value: meta.allowed[index] ?? index,
+      label: enumLabel(enumSymbol),
+    }));
+  }
+
+  function enumSymbolForValue(symbol: string, value: number | null): string | null {
+    if (value === null) return null;
+    return enumOptions(symbol).find((option) => option.value === value)?.symbol ?? null;
   }
 
   function isSpiProtocol(): boolean {
-    return encoderProtocolValue === 1;
+    return enumSymbolForValue(ENCODER_PROTOCOL_SYMBOL, encoderProtocolValue) === "ENC_PROTOCOL_SPI";
+  }
+
+  function isAbzProtocol(): boolean {
+    return enumSymbolForValue(ENCODER_PROTOCOL_SYMBOL, encoderProtocolValue) === "ENC_PROTOCOL_ABZ";
   }
 
   function zeroReferenceText(): string {
@@ -185,6 +226,15 @@
     if (meta.typeName === "u8") {
       if (!Number.isInteger(parsed) || parsed < 0 || parsed > 255) throw new Error(`${meta.label}: expected u8.`);
       return { type: "u8", value: parsed };
+    }
+
+    if (meta.typeName === "u32") {
+      if (!Number.isInteger(parsed) || parsed < 0 || parsed > 0xFFFFFFFF) throw new Error(`${meta.label}: expected u32.`);
+      return { type: "u32", value: parsed };
+    }
+    if (meta.typeName === "i32") {
+      if (!Number.isInteger(parsed) || parsed < -2147483648 || parsed > 2147483647) throw new Error(`${meta.label}: expected i32.`);
+      return { type: "i32", value: parsed };
     }
 
     throw new Error(`${meta.label}: Encoder page does not edit ${meta.typeName}.`);
@@ -283,6 +333,7 @@
       await writeParameter(meta.id, { type: "u8", value });
       await refreshValues();
     } catch (error) {
+      await refreshFromCache();
       onError(error);
     } finally {
       const next = new Set(writing);
@@ -301,6 +352,7 @@
       await writeParameter(meta.id, { type: "i8", value: nextValue });
       await refreshValues();
     } catch (error) {
+      await refreshFromCache();
       onError(error);
     } finally {
       const next = new Set(writing);
@@ -321,7 +373,7 @@
   }
 
   async function startPhaseSearch() {
-    if (!connection || phaseState === "running") return;
+    if (!connection || !actionAvailable(PHASE_SEARCH_ACTION) || phaseState === "running") return;
     phaseState = "running";
     phaseMessage = "";
     try {
@@ -335,15 +387,56 @@
   }
 
   function handleActionCompleted(completion: ActionCompletion) {
-    if (completion.symbol !== PHASE_SEARCH_ACTION && handleKey(completion) !== pendingPhaseHandle) return;
-    pendingPhaseHandle = null;
-    if (completion.ok) {
-      phaseState = "success";
-      phaseMessage = "";
-      void refreshValues();
-    } else {
-      phaseState = "failed";
-      phaseMessage = completion.status;
+    if (completion.symbol === PHASE_SEARCH_ACTION || handleKey(completion) === pendingPhaseHandle) {
+      pendingPhaseHandle = null;
+      if (completion.ok) {
+        phaseState = "success";
+        phaseMessage = "";
+        void refreshValues();
+      } else {
+        phaseState = "failed";
+        phaseMessage = completion.status;
+      }
+      return;
+    }
+
+    if (completion.symbol === HOMING_ACTION || handleKey(completion) === pendingHomingHandle) {
+      pendingHomingHandle = null;
+      if (completion.ok) {
+        homingState = "success";
+        homingMessage = "";
+        void refreshValues();
+      } else {
+        homingState = "failed";
+        homingMessage = completion.status;
+      }
+    }
+  }
+
+  async function setCurrentAsZero() {
+    if (!actionAvailable(SET_ZERO_ACTION) || zeroActionBusy) return;
+    zeroActionBusy = true;
+    try {
+      await startImmediateAction(SET_ZERO_ACTION);
+      await refreshValues();
+    } catch (error) {
+      onError(error);
+    } finally {
+      zeroActionBusy = false;
+    }
+  }
+
+  async function startHoming() {
+    if (!actionAvailable(HOMING_ACTION) || homingState === "running") return;
+    homingState = "running";
+    homingMessage = "";
+    try {
+      const handle = await startAction(HOMING_ACTION);
+      pendingHomingHandle = handleKey(handle);
+    } catch (error) {
+      homingState = "failed";
+      homingMessage = error instanceof Error ? error.message : String(error);
+      onError(error);
     }
   }
 </script>
@@ -370,10 +463,10 @@
                       class:ramModified={$modifiedParameterIds.has(metadata[ENCODER_PROTOCOL_SYMBOL].id)}
                       class="compact-select"
                       disabled={!isWritable(ENCODER_PROTOCOL_SYMBOL) || writing.has(ENCODER_PROTOCOL_SYMBOL) || phaseState === "running"}
-                      bind:value={encoderProtocolValue}
-                      onchange={() => encoderProtocolValue !== null && void setU8(ENCODER_PROTOCOL_SYMBOL, encoderProtocolValue)}
+                      value={encoderProtocolValue ?? ""}
+                      onchange={(event) => void setU8(ENCODER_PROTOCOL_SYMBOL, Number((event.currentTarget as HTMLSelectElement).value))}
                     >
-                      {#each enumOptions(ENCODER_PROTOCOL_SYMBOL, PROTOCOL_OPTIONS) as option}
+                      {#each enumOptions(ENCODER_PROTOCOL_SYMBOL) as option}
                         <option value={option.value}>{option.label}</option>
                       {/each}
                     </select>
@@ -390,10 +483,10 @@
                         class:ramModified={$modifiedParameterIds.has(metadata[ENCODER_SPI_TYPE_SYMBOL].id)}
                         class="compact-select"
                         disabled={!isWritable(ENCODER_SPI_TYPE_SYMBOL) || writing.has(ENCODER_SPI_TYPE_SYMBOL) || phaseState === "running"}
-                        bind:value={encoderSpiTypeValue}
-                        onchange={() => encoderSpiTypeValue !== null && void setU8(ENCODER_SPI_TYPE_SYMBOL, encoderSpiTypeValue)}
+                        value={encoderSpiTypeValue ?? ""}
+                        onchange={(event) => void setU8(ENCODER_SPI_TYPE_SYMBOL, Number((event.currentTarget as HTMLSelectElement).value))}
                       >
-                        {#each enumOptions(ENCODER_SPI_TYPE_SYMBOL, SPI_TYPE_OPTIONS) as option}
+                        {#each enumOptions(ENCODER_SPI_TYPE_SYMBOL) as option}
                           <option value={option.value}>{option.label}</option>
                         {/each}
                       </select>
@@ -403,9 +496,21 @@
                   </div>
                 {/if}
 
-                {#if metadata[ABZ_PPR_SYMBOL]}
+                {#if isAbzProtocol() && metadata[ABZ_PPR_SYMBOL]}
                   <div class="field-label">{parameterLabel(ABZ_PPR_SYMBOL, "PPR")}</div>
-                  <div class="muted">Available when ABZ protocol is exposed by firmware.</div>
+                  <div>
+                    <span class="inline-editor">
+                      <input
+                        class:ramModified={$modifiedParameterIds.has(metadata[ABZ_PPR_SYMBOL].id)}
+                        class="compact-input mono"
+                        value={drafts[ABZ_PPR_SYMBOL] ?? ""}
+                        disabled={!isWritable(ABZ_PPR_SYMBOL) || writing.has(ABZ_PPR_SYMBOL) || phaseState === "running"}
+                        oninput={(event) => drafts = { ...drafts, [ABZ_PPR_SYMBOL]: (event.currentTarget as HTMLInputElement).value }}
+                        onkeydown={(event) => handleKeydown(event, ABZ_PPR_SYMBOL)}
+                      />
+                      <span class="unit">{unitFor(ABZ_PPR_SYMBOL)}</span>
+                    </span>
+                  </div>
                 {/if}
               </div>
             </section>
@@ -437,8 +542,8 @@
                   <!-- svelte-ignore a11y_click_events_have_key_events a11y_no_static_element_interactions -->
                   <vscode-button
                     secondary
-                    disabled={phaseState === "running"}
-                    title="Start phase search"
+                    disabled={!actionAvailable(PHASE_SEARCH_ACTION) || phaseState === "running"}
+                    title={actionAvailable(PHASE_SEARCH_ACTION) ? "Start phase search" : "Phase search is not exposed by this firmware"}
                     onclick={() => void startPhaseSearch()}
                   >{actionLabel(PHASE_SEARCH_ACTION, "Start")}</vscode-button>
 
@@ -446,6 +551,8 @@
                     <span class="action-status state-running"><i class="codicon codicon-loading codicon-modifier-spin"></i> Running</span>
                   {:else if phaseState === "success"}
                     <span class="action-status state-success"><i class="codicon codicon-check"></i> Success</span>
+                  {:else if phaseState === "stopped"}
+                    <span class="action-status muted"><i class="codicon codicon-debug-stop"></i> Stopped</span>
                   {:else if phaseState === "failed"}
                     <span class="action-status state-failed" title={phaseMessage}><i class="codicon codicon-error"></i> Failed</span>
                   {/if}
@@ -458,8 +565,8 @@
                       class:ramModified={$modifiedParameterIds.has(metadata[MOTOR_DIR_SYMBOL].id)}
                       class="compact-select"
                       disabled={!isWritable(MOTOR_DIR_SYMBOL) || writing.has(MOTOR_DIR_SYMBOL) || phaseState === "running"}
-                      bind:value={motorDirectionValue}
-                      onchange={() => void setMotorDirection(motorDirectionValue)}
+                      value={motorDirectionValue}
+                      onchange={(event) => void setMotorDirection((event.currentTarget as HTMLSelectElement).value as "normal" | "reversed")}
                     >
                       <option value="normal">Normal</option>
                       <option value="reversed">Reversed</option>
@@ -481,13 +588,31 @@
               </div>
 
               <div class="reference-actions">
-                <vscode-button secondary disabled={!actionAvailable(SET_ZERO_ACTION)} title={actionAvailable(SET_ZERO_ACTION) ? "Set current position as mechanical zero" : "Firmware/Application zero action is not exposed yet"}>
+                <vscode-button
+                  secondary
+                  disabled={!actionAvailable(SET_ZERO_ACTION) || zeroActionBusy}
+                  title={actionAvailable(SET_ZERO_ACTION) ? "Set current position as mechanical zero" : "Firmware/Application zero action is not exposed yet"}
+                  onclick={() => void setCurrentAsZero()}
+                >
                   {actionLabel(SET_ZERO_ACTION, "Set Current as Zero")}
                 </vscode-button>
-                <vscode-button secondary disabled={!actionAvailable(HOMING_ACTION)} title={actionAvailable(HOMING_ACTION) ? "Start software homing" : "Firmware/Application homing action is not exposed yet"}>
+                <vscode-button
+                  secondary
+                  disabled={!actionAvailable(HOMING_ACTION) || homingState === "running"}
+                  title={actionAvailable(HOMING_ACTION) ? "Start software homing" : "Firmware/Application homing action is not exposed yet"}
+                  onclick={() => void startHoming()}
+                >
                   {actionLabel(HOMING_ACTION, "Software Homing")}
                 </vscode-button>
               </div>
+
+              {#if homingState === "running"}
+                <div class="action-status state-running"><i class="codicon codicon-loading codicon-modifier-spin"></i> Homing</div>
+              {:else if homingState === "success"}
+                <div class="action-status state-success"><i class="codicon codicon-check"></i> Homed</div>
+              {:else if homingState === "failed"}
+                <div class="action-status state-failed" title={homingMessage}><i class="codicon codicon-error"></i> Homing failed</div>
+              {/if}
 
               {#if !metadata[ZERO_VALID_SYMBOL] && !actionAvailable(SET_ZERO_ACTION) && !actionAvailable(HOMING_ACTION)}
                 <div class="future-note">Firmware unavailable</div>
