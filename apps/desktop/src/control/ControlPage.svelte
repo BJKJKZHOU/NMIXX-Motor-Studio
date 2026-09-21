@@ -3,7 +3,7 @@
   import type { ConnectionInfo } from "../connection/types";
   import {
     listParameters,
-    onParametersRefreshed,
+    onParametersChanged,
     readCachedParameters,
     readCurrentParameters,
     readParameters,
@@ -56,7 +56,7 @@
   onMount(() => {
     let disposed = false;
     let unlisten: (() => void) | undefined;
-    onParametersRefreshed(() => void refreshFromCache())
+    onParametersChanged(() => void refreshFromCache())
       .then((stop) => {
         if (disposed) stop();
         else unlisten = stop;
