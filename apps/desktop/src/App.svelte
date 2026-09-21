@@ -216,16 +216,7 @@
     globalStopping = true;
     try {
       await stopMotor();
-
-      const deadline = Date.now() + 60_000;
-      while (connection && motorState === MOTOR_RUN) {
-        await refreshGlobalStatus();
-        if (motorState !== MOTOR_RUN) break;
-        if (Date.now() >= deadline) {
-          throw new Error("Stop was accepted, but the motor remained in RUN for 60 seconds.");
-        }
-        await new Promise((resolve) => setTimeout(resolve, 50));
-      }
+      await refreshGlobalStatus();
     } catch (error) {
       setError(error);
     } finally {
