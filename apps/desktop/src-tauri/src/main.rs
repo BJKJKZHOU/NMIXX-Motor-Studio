@@ -65,6 +65,7 @@ struct ParameterRangeDto {
     exclusive_min: bool,
     exclusive_max: bool,
     max_symbol: Option<String>,
+    min_binding: Option<String>,
     max_binding: Option<String>,
     max_bindings: Vec<String>,
 }
@@ -77,6 +78,7 @@ impl From<&RangeMetadata> for ParameterRangeDto {
             exclusive_min: value.exclusive_min,
             exclusive_max: value.exclusive_max,
             max_symbol: value.max_symbol.clone(),
+            min_binding: value.min_binding.clone(),
             max_binding: value.max_binding.clone(),
             max_bindings: value.max_bindings.clone(),
         }
