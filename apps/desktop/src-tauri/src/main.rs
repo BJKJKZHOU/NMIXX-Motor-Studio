@@ -439,10 +439,17 @@ fn parameter_result(id: u16, result: Result<ParameterValue, impl ToString>) -> P
     }
 }
 
-fn emit_parameter_changes(app: &tauri::AppHandle, ids: Vec<u16>) {
-    if !ids.is_empty() {
-        let _ = app.emit("parameters-changed", ids);
-    }
+fn spawn_parameter_change_bridge(
+    app_handle: tauri::AppHandle,
+    changes: std::sync::mpsc::Receiver<Vec<u16>>,
+) {
+    std::thread::spawn(move || {
+        while let Ok(ids) = changes.recv() {
+            if !ids.is_empty() {
+                let _ = app_handle.emit("parameters-changed", ids);
+            }
+        }
+    });
 }
 
 fn spawn_action_completion(
@@ -474,13 +481,7 @@ fn spawn_action_completion(
             };
             let _ = app_handle.emit("action-completed", payload);
 
-            if let Ok(values) = application.parameter_refresh_all() {
-                let ids = values
-                    .into_iter()
-                    .filter_map(|(id, result)| result.ok().map(|_| id))
-                    .collect::<Vec<_>>();
-                emit_parameter_changes(&app_handle, ids);
-            }
+            let _ = application.parameter_refresh_all();
             break;
         }
     });
@@ -501,6 +502,7 @@ fn device_list() -> Result<Vec<String>, String> {
 
 #[tauri::command]
 async fn device_connect(
+    app_handle: tauri::AppHandle,
     state: State<'_, Mutex<DesktopState>>,
     port: String,
     schema_path: String,
@@ -537,6 +539,9 @@ async fn device_connect(
         app.parameter_read(id)
             .map_err(|error| format!("initial read of {symbol} (0x{id:04X}) failed: {error}"))?;
     }
+    let parameter_changes = app.parameter_subscribe().map_err(|error| error.to_string())?;
+    spawn_parameter_change_bridge(app_handle, parameter_changes);
+
     let capabilities = app.plot_capabilities().map_err(|error| error.to_string())?;
     let channels = capabilities
         .with_schema(app.schema())
@@ -589,50 +594,40 @@ fn parameter_list(state: State<'_, Mutex<DesktopState>>) -> Result<Vec<Parameter
 
 #[tauri::command]
 async fn parameter_read(
-    app_handle: tauri::AppHandle,
     state: State<'_, Mutex<DesktopState>>,
     id: u16,
 ) -> Result<ParameterReadDto, String> {
     let app = application(&state)?;
     let value = app.parameter_read(id).map_err(|error| error.to_string())?;
-    emit_parameter_changes(&app_handle, vec![id]);
     Ok(ParameterReadDto { id, value: value.into() })
 }
 
 #[tauri::command]
 async fn parameter_read_many(
-    app_handle: tauri::AppHandle,
     state: State<'_, Mutex<DesktopState>>,
     ids: Vec<u16>,
 ) -> Result<Vec<ParameterReadResultDto>, String> {
     let app = application(&state)?;
     let values = app.parameter_read_many(&ids).map_err(|error| error.to_string())?;
-    let mut changed = Vec::new();
-    let result = values
+    Ok(values
         .into_iter()
         .map(|(id, result)| match result {
-            Ok(value) => {
-                changed.push(id);
-                ParameterReadResultDto {
-                    id,
-                    value: Some(value.into()),
-                    error: None,
-                }
-            }
+            Ok(value) => ParameterReadResultDto {
+                id,
+                value: Some(value.into()),
+                error: None,
+            },
             Err(error) => ParameterReadResultDto {
                 id,
                 value: None,
                 error: Some(error.to_string()),
             },
         })
-        .collect();
-    emit_parameter_changes(&app_handle, changed);
-    Ok(result)
+        .collect())
 }
 
 #[tauri::command]
 async fn parameter_write(
-    app_handle: tauri::AppHandle,
     state: State<'_, Mutex<DesktopState>>,
     id: u16,
     value: ParameterValueDto,
@@ -640,7 +635,6 @@ async fn parameter_write(
     let value = application(&state)?
         .parameter_write(id, value.into())
         .map_err(|error| error.to_string())?;
-    emit_parameter_changes(&app_handle, vec![id]);
     Ok(ParameterReadDto { id, value: value.into() })
 }
 
@@ -674,7 +668,6 @@ fn parameter_cached_many(
 
 #[tauri::command]
 async fn parameter_refresh_all(
-    app_handle: tauri::AppHandle,
     state: State<'_, Mutex<DesktopState>>,
 ) -> Result<Vec<ParameterReadResultDto>, String> {
     let app = application(&state)?;
@@ -683,11 +676,6 @@ async fn parameter_refresh_all(
         .into_iter()
         .map(|(id, result)| parameter_result(id, result))
         .collect::<Vec<_>>();
-    let changed = result
-        .iter()
-        .filter_map(|item| item.value.as_ref().map(|_| item.id))
-        .collect::<Vec<_>>();
-    emit_parameter_changes(&app_handle, changed);
     Ok(result)
 }
 
