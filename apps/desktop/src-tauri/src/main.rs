@@ -439,8 +439,15 @@ fn parameter_result(id: u16, result: Result<ParameterValue, impl ToString>) -> P
     }
 }
 
+fn emit_parameter_changes(app: &tauri::AppHandle, ids: Vec<u16>) {
+    if !ids.is_empty() {
+        let _ = app.emit("parameters-changed", ids);
+    }
+}
+
 fn spawn_action_completion(
-    app: tauri::AppHandle,
+    app_handle: tauri::AppHandle,
+    application: ApplicationSession,
     events: std::sync::mpsc::Receiver<nmixx_app::SessionEvent>,
     handle: ActionHandle,
     symbol: String,
@@ -465,7 +472,15 @@ fn spawn_action_completion(
                 status: format!("{status:?}"),
                 ok: status == AxdrStatus::Ok,
             };
-            let _ = app.emit("action-completed", payload);
+            let _ = app_handle.emit("action-completed", payload);
+
+            if let Ok(values) = application.parameter_refresh_all() {
+                let ids = values
+                    .into_iter()
+                    .filter_map(|(id, result)| result.ok().map(|_| id))
+                    .collect::<Vec<_>>();
+                emit_parameter_changes(&app_handle, ids);
+            }
             break;
         }
     });
@@ -573,45 +588,60 @@ fn parameter_list(state: State<'_, Mutex<DesktopState>>) -> Result<Vec<Parameter
 }
 
 #[tauri::command]
-async fn parameter_read(state: State<'_, Mutex<DesktopState>>, id: u16) -> Result<ParameterReadDto, String> {
+async fn parameter_read(
+    app_handle: tauri::AppHandle,
+    state: State<'_, Mutex<DesktopState>>,
+    id: u16,
+) -> Result<ParameterReadDto, String> {
     let app = application(&state)?;
     let value = app.parameter_read(id).map_err(|error| error.to_string())?;
+    emit_parameter_changes(&app_handle, vec![id]);
     Ok(ParameterReadDto { id, value: value.into() })
 }
 
 #[tauri::command]
 async fn parameter_read_many(
+    app_handle: tauri::AppHandle,
     state: State<'_, Mutex<DesktopState>>,
     ids: Vec<u16>,
 ) -> Result<Vec<ParameterReadResultDto>, String> {
     let app = application(&state)?;
     let values = app.parameter_read_many(&ids).map_err(|error| error.to_string())?;
-    Ok(values
+    let mut changed = Vec::new();
+    let result = values
         .into_iter()
         .map(|(id, result)| match result {
-            Ok(value) => ParameterReadResultDto {
-                id,
-                value: Some(value.into()),
-                error: None,
-            },
+            Ok(value) => {
+                changed.push(id);
+                ParameterReadResultDto {
+                    id,
+                    value: Some(value.into()),
+                    error: None,
+                }
+            }
             Err(error) => ParameterReadResultDto {
                 id,
                 value: None,
                 error: Some(error.to_string()),
             },
         })
-        .collect())
+        .collect();
+    emit_parameter_changes(&app_handle, changed);
+    Ok(result)
 }
 
 #[tauri::command]
 async fn parameter_write(
+    app_handle: tauri::AppHandle,
     state: State<'_, Mutex<DesktopState>>,
     id: u16,
     value: ParameterValueDto,
-) -> Result<(), String> {
-    application(&state)?
+) -> Result<ParameterReadDto, String> {
+    let value = application(&state)?
         .parameter_write(id, value.into())
-        .map_err(|error| error.to_string())
+        .map_err(|error| error.to_string())?;
+    emit_parameter_changes(&app_handle, vec![id]);
+    Ok(ParameterReadDto { id, value: value.into() })
 }
 
 #[tauri::command]
@@ -653,7 +683,11 @@ async fn parameter_refresh_all(
         .into_iter()
         .map(|(id, result)| parameter_result(id, result))
         .collect::<Vec<_>>();
-    let _ = app_handle.emit("parameters-refreshed", ());
+    let changed = result
+        .iter()
+        .filter_map(|item| item.value.as_ref().map(|_| item.id))
+        .collect::<Vec<_>>();
+    emit_parameter_changes(&app_handle, changed);
     Ok(result)
 }
 
@@ -736,7 +770,7 @@ async fn identification_start(
         IdentificationStart::RequiresEnable => Ok(IdentificationStartDto::RequiresEnable),
         IdentificationStart::Started(handle) => {
             let dto = action_handle_dto(handle, symbol.to_owned());
-            spawn_action_completion(app_handle, events, handle, symbol.to_owned());
+            spawn_action_completion(app_handle, app.clone(), events, handle, symbol.to_owned());
             Ok(IdentificationStartDto::Started { handle: dto })
         }
     }
@@ -773,7 +807,7 @@ async fn action_start(
     let events = app.subscribe().map_err(|error| error.to_string())?;
     let handle = app.action_start(&key).map_err(|error| error.to_string())?;
     let result = action_handle_dto(handle, symbol.clone());
-    spawn_action_completion(app_handle, events, handle, symbol);
+    spawn_action_completion(app_handle, app.clone(), events, handle, symbol);
     Ok(result)
 }
 
@@ -787,7 +821,7 @@ fn start_async_semantic_action(
     let handle = start(&app).map_err(|error| error.to_string())?;
     let symbol = symbol.to_owned();
     let result = action_handle_dto(handle, symbol.clone());
-    spawn_action_completion(app_handle, events, handle, symbol);
+    spawn_action_completion(app_handle, app.clone(), events, handle, symbol);
     Ok(result)
 }
 
