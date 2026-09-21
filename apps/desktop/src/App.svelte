@@ -24,7 +24,6 @@
 
   const GLOBAL_SYMBOLS = ["PARAM_MOTOR_STATE", "PARAM_RUN_IQ", "PARAM_RUN_WM", "PARAM_RUN_POSITION"] as const;
   const MOTOR_DISABLED = 0;
-  const MOTOR_RUN = 2;
   const DEFAULT_SCHEMA_PATH = "../../../AxDr_L_Motor/build/host/axdr-host-schema.toml";
   const SCHEMA_PATH_STORAGE_KEY = "nmixx.connection.hostSchemaPath";
 
@@ -43,6 +42,7 @@
   let speedWm: number | null = null;
   let positionText = "—";
   let globalActionBusy = false;
+  let globalStopBusy = false;
   let parameterSaveAvailable = false;
   let saveFeedback: "idle" | "saved" = "idle";
   let saveFeedbackTimer: ReturnType<typeof setTimeout> | undefined;
@@ -115,6 +115,7 @@
     speedWm = null;
     positionText = "—";
     globalActionBusy = false;
+    globalStopBusy = false;
     parameterSaveAvailable = false;
     saveFeedback = "idle";
     if (saveFeedbackTimer) clearTimeout(saveFeedbackTimer);
@@ -209,8 +210,16 @@
   }
 
   async function stopCurrentMotorOperation() {
-    if (!connection || motorState !== MOTOR_RUN || globalActionBusy) return;
-    await startGlobalAction("ACTION_MOTOR_STOP", stopMotor);
+    if (!connection || globalStopBusy) return;
+    globalStopBusy = true;
+    try {
+      await stopMotor();
+      await refreshGlobalStatus();
+    } catch (error) {
+      setError(error);
+    } finally {
+      globalStopBusy = false;
+    }
   }
 
   async function savePersistentParameters() {
@@ -272,7 +281,7 @@
         </button>
         <button
           class="tool-button global-action stop-action"
-          disabled={!connection || motorState !== MOTOR_RUN || globalActionBusy}
+          disabled={!connection || globalStopBusy}
           onclick={() => void stopCurrentMotorOperation()}
           title="Stop current motor operation"
         >
