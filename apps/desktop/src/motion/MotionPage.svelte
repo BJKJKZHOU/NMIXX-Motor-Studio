@@ -9,6 +9,7 @@
   export let onError: (error: unknown) => void = () => undefined;
 
   let actionBusy = false;
+  let stopBusy = false;
 
   const modeLabels: Record<MotionMode, string> = {
     position: "Position",
@@ -66,7 +67,7 @@
   }
 
   async function run() {
-    if (!canRun() || actionBusy) return;
+    if (!canRun() || actionBusy || stopBusy) return;
     actionBusy = true;
     try { await executeMotion(); }
     catch (error) { onError(error); }
@@ -74,11 +75,11 @@
   }
 
   async function stop() {
-    if (!canStop() || actionBusy) return;
-    actionBusy = true;
+    if (!canStop() || stopBusy) return;
+    stopBusy = true;
     try { await stopMotionExecution(); }
     catch (error) { onError(error); }
-    finally { actionBusy = false; }
+    finally { stopBusy = false; }
   }
 
   function trajectoryNote(): string {
@@ -237,12 +238,12 @@
       <div class="motion-runbar">
         <button
           class="motion-run"
-          disabled={!canRun() || actionBusy}
+          disabled={!canRun() || actionBusy || stopBusy}
           title="Run motion"
           onclick={run}
         ><i class="codicon codicon-debug-start"></i> Run</button>
         <button
-          disabled={!canStop() || actionBusy}
+          disabled={!canStop() || stopBusy}
           title="Stop motor motion"
           onclick={stop}
         ><i class="codicon codicon-debug-stop"></i> Stop</button>
