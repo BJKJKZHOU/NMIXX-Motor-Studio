@@ -14,10 +14,11 @@
   };
 
   type PhaseState = "idle" | "running" | "success" | "stopped" | "failed";
-  type HomingState = "idle" | "running" | "success" | "failed";
+  type HomingState = "idle" | "running" | "success" | "stopped" | "failed";
   type EnumOption = { value: number; symbol: string; label: string };
 
   const PHASE_CURRENT_SYMBOL = "PARAM_PHASE_I_SEARCH";
+  const MOTOR_MODE_SYMBOL = "PARAM_MOTOR_MODE";
   const MOTOR_DIR_SYMBOL = "PARAM_MOTOR_DIR";
   const ENCODER_PROTOCOL_SYMBOL = "PARAM_ENCODER_PROTOCOL";
   const ENCODER_SPI_TYPE_SYMBOL = "PARAM_ENCODER_SPI_TYPE";
@@ -30,6 +31,7 @@
 
   const ALL_PARAMETER_SYMBOLS = [
     PHASE_CURRENT_SYMBOL,
+    MOTOR_MODE_SYMBOL,
     MOTOR_DIR_SYMBOL,
     ENCODER_PROTOCOL_SYMBOL,
     ENCODER_SPI_TYPE_SYMBOL,
@@ -110,6 +112,11 @@
         phaseState = "stopped";
         phaseMessage = "";
       }
+      if (homingState === "running") {
+        pendingHomingHandle = null;
+        homingState = "stopped";
+        homingMessage = "";
+      }
     })
       .then((stop) => {
         if (disposed) stop();
@@ -176,6 +183,12 @@
 
   function actionAvailable(symbol: string): boolean {
     return !!actions[symbol];
+  }
+
+  function phaseSearchAvailable(): boolean {
+    return !!metadata[MOTOR_MODE_SYMBOL]
+      && actionAvailable("ACTION_MOTOR_ENABLE")
+      && actionAvailable("ACTION_MOTOR_RUN");
   }
 
   function enumLabel(symbol: string): string {
@@ -373,7 +386,7 @@
   }
 
   async function startPhaseSearch() {
-    if (!connection || !actionAvailable(PHASE_SEARCH_ACTION) || phaseState === "running") return;
+    if (!connection || !phaseSearchAvailable() || phaseState === "running") return;
     phaseState = "running";
     phaseMessage = "";
     try {
@@ -387,7 +400,10 @@
   }
 
   function handleActionCompleted(completion: ActionCompletion) {
-    if (completion.symbol === PHASE_SEARCH_ACTION || handleKey(completion) === pendingPhaseHandle) {
+    if (
+      phaseState === "running"
+      && (completion.symbol === PHASE_SEARCH_ACTION || handleKey(completion) === pendingPhaseHandle)
+    ) {
       pendingPhaseHandle = null;
       if (completion.ok) {
         phaseState = "success";
@@ -400,7 +416,10 @@
       return;
     }
 
-    if (completion.symbol === HOMING_ACTION || handleKey(completion) === pendingHomingHandle) {
+    if (
+      homingState === "running"
+      && (completion.symbol === HOMING_ACTION || handleKey(completion) === pendingHomingHandle)
+    ) {
       pendingHomingHandle = null;
       if (completion.ok) {
         homingState = "success";
@@ -542,8 +561,8 @@
                   <!-- svelte-ignore a11y_click_events_have_key_events a11y_no_static_element_interactions -->
                   <vscode-button
                     secondary
-                    disabled={!actionAvailable(PHASE_SEARCH_ACTION) || phaseState === "running"}
-                    title={actionAvailable(PHASE_SEARCH_ACTION) ? "Start phase search" : "Phase search is not exposed by this firmware"}
+                    disabled={!phaseSearchAvailable() || phaseState === "running"}
+                    title={phaseSearchAvailable() ? "Start phase search" : "Required phase-search capabilities are not exposed by this firmware"}
                     onclick={() => void startPhaseSearch()}
                   >{actionLabel(PHASE_SEARCH_ACTION, "Start")}</vscode-button>
 
@@ -610,6 +629,8 @@
                 <div class="action-status state-running"><i class="codicon codicon-loading codicon-modifier-spin"></i> Homing</div>
               {:else if homingState === "success"}
                 <div class="action-status state-success"><i class="codicon codicon-check"></i> Homed</div>
+              {:else if homingState === "stopped"}
+                <div class="action-status muted"><i class="codicon codicon-debug-stop"></i> Homing stopped</div>
               {:else if homingState === "failed"}
                 <div class="action-status state-failed" title={homingMessage}><i class="codicon codicon-error"></i> Homing failed</div>
               {/if}
