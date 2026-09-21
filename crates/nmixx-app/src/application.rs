@@ -204,6 +204,10 @@ impl ApplicationSession {
         Ok(self.inner.parameters.cached(id)?)
     }
 
+    pub fn parameter_subscribe(&self) -> Result<mpsc::Receiver<Vec<u16>>, ApplicationError> {
+        Ok(self.inner.parameters.subscribe()?)
+    }
+
     pub fn parameter_refresh_all(
         &self,
     ) -> Result<Vec<(u16, Result<ParameterValue, ParameterServiceError>)>, ApplicationError> {
