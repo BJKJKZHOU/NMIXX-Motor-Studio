@@ -223,14 +223,11 @@
     const value = enumValue(symbol, mode === "Manual" ? "CTRL_TUNE_MANUAL" : "CTRL_TUNE_BANDWIDTH");
     if (!meta || value === null || locked(symbol)) return;
 
-    const previous = values[symbol] ?? null;
-    values = { ...values, [symbol]: { type: "u8", value } };
     writing = new Set(writing).add(symbol);
     try {
       await writeParameter(meta.id, { type: "u8", value });
       await refreshSymbols(refresh);
     } catch (error) {
-      values = { ...values, [symbol]: previous };
       onError(error);
     } finally {
       const next = new Set(writing);
