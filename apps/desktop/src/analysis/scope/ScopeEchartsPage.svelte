@@ -44,6 +44,7 @@
   let activeChannelId: number | undefined;
   let snapshot: ScopeSnapshot | undefined;
   let busy = false;
+  let stopping = false;
   let snapshotBusy = false;
   let configured = false;
   let configurationDirty = false;
@@ -239,20 +240,32 @@
   async function toggleRun() {
     if (busy) return;
     busy = true;
+    stopping = running;
     try {
       if (running) {
         await stopScope();
+
+        const deadline = Date.now() + 5_000;
+        do {
+          await refreshSnapshot(true);
+          if (snapshot?.state === "STOPPED") break;
+          if (Date.now() >= deadline) {
+            throw new Error("Scope stop was requested, but acquisition did not reach STOPPED within 5 seconds.");
+          }
+          await new Promise((resolve) => setTimeout(resolve, 50));
+        } while (true);
       } else {
         if (!(await ensureConfigured())) return;
         await startScope();
         followingLatest = true;
         viewRange = defaultRunRange();
         viewRevision += 1;
+        await refreshSnapshot(true);
       }
-      await refreshSnapshot(true);
     } catch (error) {
       onError(error);
     } finally {
+      stopping = false;
       busy = false;
     }
   }
@@ -589,8 +602,13 @@
   <div class="page-title">ANALYSIS / SCOPE · ECHARTS SPIKE</div>
   <div class="toolbar-actions">
     <!-- svelte-ignore a11y_click_events_have_key_events a11y_no_static_element_interactions -->
-    <vscode-button disabled={!connection || (!running && selectedIds.size === 0) || busy} onclick={() => void toggleRun()}>
-      {running ? "Stop" : "Run"}
+    <vscode-button
+      class:stopping={stopping}
+      disabled={!connection || (!running && selectedIds.size === 0) || busy}
+      onclick={() => void toggleRun()}
+    >
+      <i class={`codicon ${stopping ? "codicon-loading codicon-modifier-spin" : running ? "codicon-debug-stop" : "codicon-play"}`}></i>
+      {stopping ? "Stopping…" : running ? "Stop" : "Run"}
     </vscode-button>
   </div>
 </section>
