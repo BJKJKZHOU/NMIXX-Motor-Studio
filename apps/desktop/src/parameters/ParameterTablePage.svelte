@@ -13,7 +13,7 @@
   } from "@tanstack/svelte-table";
   import type { ColumnDef } from "@tanstack/svelte-table";
   import type { ConnectionInfo } from "../connection/types";
-  import { listParameters, onParametersChanged, readCachedParameters, readCurrentParameters, readParameter, writeParameter } from "./api";
+  import { listParameters, onParametersChanged, readCachedParameters, readCurrentParameters, writeParameter } from "./api";
   import type { ParameterMetadata, ParameterValue } from "./types";
   import { modifiedParameterIds } from "./persistence";
 
@@ -211,17 +211,6 @@
       applyReadResults(results);
     } catch (error) {
       onError(error);
-    }
-  }
-
-  async function refreshOne(row: ParameterRow) {
-    try {
-      const result = await readParameter(row.meta.id);
-      drafts = { ...drafts, [row.meta.id]: valueText(result.value) };
-      rows = rows.map((item) => item.meta.id === row.meta.id ? { ...item, value: result.value, error: null, pending: false } : item);
-    } catch (error) {
-      const message = error instanceof Error ? error.message : String(error);
-      rows = rows.map((item) => item.meta.id === row.meta.id ? { ...item, error: message, pending: false } : item);
     }
   }
 
