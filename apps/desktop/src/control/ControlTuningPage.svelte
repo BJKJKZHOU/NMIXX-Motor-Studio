@@ -423,26 +423,75 @@
     }
   }
 
+  async function commitMotionPair(primary: string, secondary: string, text: string) {
+    const primaryMeta = metadata[primary];
+    const secondaryMeta = metadata[secondary];
+    if (!primaryMeta || !secondaryMeta || locked(primary) || locked(secondary)) return;
+
+    writing = new Set(writing).add(primary).add(secondary);
+    try {
+      const primaryValue = parseValue(primaryMeta, text);
+      const secondaryValue = parseValue(secondaryMeta, text);
+
+      await writeParameter(primaryMeta.id, primaryValue);
+      await writeParameter(secondaryMeta.id, secondaryValue);
+      await refreshSymbols([primary, secondary]);
+    } catch (error) {
+      drafts = {
+        ...drafts,
+        [primary]: valueText(values[primary], primary),
+        [secondary]: valueText(values[secondary], secondary),
+      };
+      onError(error);
+    } finally {
+      const next = new Set(writing);
+      next.delete(primary);
+      next.delete(secondary);
+      writing = next;
+    }
+  }
+
   async function motionParameterKeydown(event: KeyboardEvent, symbol: string) {
     if (event.key !== "Enter") {
       keydown(event, symbol);
       return;
     }
     event.preventDefault();
+
     if (symbol === MOTION_ACCEL && copyAccelToDecel && metadata[MOTION_DECEL]) {
-      drafts = { ...drafts, [MOTION_DECEL]: drafts[MOTION_ACCEL] ?? "" };
-      await commit(MOTION_ACCEL);
-      await commit(MOTION_DECEL);
+      await commitMotionPair(MOTION_ACCEL, MOTION_DECEL, drafts[MOTION_ACCEL] ?? "");
     } else {
       await commit(symbol);
     }
     (event.currentTarget as HTMLInputElement).blur();
   }
 
-  function toggleCopyAccelToDecel(checked: boolean) {
-    copyAccelToDecel = checked;
-    if (checked && drafts[MOTION_ACCEL] !== undefined) {
-      drafts = { ...drafts, [MOTION_DECEL]: drafts[MOTION_ACCEL] };
+  async function toggleCopyAccelToDecel(checked: boolean) {
+    if (!checked) {
+      copyAccelToDecel = false;
+      drafts = { ...drafts, [MOTION_DECEL]: valueText(values[MOTION_DECEL], MOTION_DECEL) };
+      return;
+    }
+
+    const accelMeta = metadata[MOTION_ACCEL];
+    const decelMeta = metadata[MOTION_DECEL];
+    const accelValue = values[MOTION_ACCEL];
+    if (!accelMeta || !decelMeta || !accelValue || locked(MOTION_DECEL)) return;
+
+    copyAccelToDecel = true;
+    writing = new Set(writing).add(MOTION_DECEL);
+    try {
+      const accelText = valueText(accelValue, MOTION_ACCEL);
+      await writeParameter(decelMeta.id, parseValue(decelMeta, accelText));
+      await refreshSymbols([MOTION_DECEL]);
+    } catch (error) {
+      copyAccelToDecel = false;
+      drafts = { ...drafts, [MOTION_DECEL]: valueText(values[MOTION_DECEL], MOTION_DECEL) };
+      onError(error);
+    } finally {
+      const next = new Set(writing);
+      next.delete(MOTION_DECEL);
+      writing = next;
     }
   }
 
@@ -912,7 +961,7 @@
               {#if activeMotionMode() === "position" || activeMotionMode() === "speed" || activeMotionMode() === "sensorless-speed"}
                 <label class="copy-decel">
                   <input type="checkbox" checked={copyAccelToDecel} disabled={motionLocked()}
-                    onchange={(event) => toggleCopyAccelToDecel((event.currentTarget as HTMLInputElement).checked)} />
+                    onchange={(event) => void toggleCopyAccelToDecel((event.currentTarget as HTMLInputElement).checked)} />
                   Copy Accel to Decel
                 </label>
               {:else}
