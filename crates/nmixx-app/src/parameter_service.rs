@@ -115,6 +115,14 @@ impl ParameterService {
     }
 
     pub fn write(&self, id: u16, value: ParameterValue) -> Result<(), ParameterServiceError> {
+        self.write_readback(id, value).map(|_| ())
+    }
+
+    pub fn write_readback(
+        &self,
+        id: u16,
+        value: ParameterValue,
+    ) -> Result<ParameterValue, ParameterServiceError> {
         let metadata = self.metadata(id)?;
         if !metadata.access.contains('w') {
             return Err(ParameterServiceError::ReadOnly(id));
@@ -133,12 +141,8 @@ impl ParameterService {
         validate_static_constraints(metadata, &value)?;
         self.validate_write_state(metadata)?;
 
-        self.session.parameter_write(id, value.clone())?;
-        self.cache
-            .write()
-            .map_err(|_| ParameterServiceError::CachePoisoned)?
-            .insert(id, value);
-        Ok(())
+        self.session.parameter_write(id, value)?;
+        self.read(id)
     }
     fn validate_write_state(
         &self,
