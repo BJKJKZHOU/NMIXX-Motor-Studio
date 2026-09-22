@@ -150,19 +150,14 @@ impl MotionService {
         }
 
         let state = read_u8(parameters, "PARAM_MOTOR_STATE")?;
-        if state != 0 && state != 1 {
-            return Err("motor must be DISABLED or ENABLED before Run".to_owned());
+        if state != 1 {
+            return Err("motor must be ENABLED before Run".to_owned());
         }
 
         let desired_mode = mode_wire_value(config.mode)?;
-
-        if state == 0 {
-            write_by_symbol(parameters, "PARAM_MOTOR_MODE", ParameterValue::U8(desired_mode))?;
-        } else {
-            let active_mode = read_u8(parameters, "PARAM_MOTOR_MODE")?;
-            if active_mode != desired_mode {
-                return Err("changing Motion mode requires the motor to be DISABLED".to_owned());
-            }
+        let active_mode = read_u8(parameters, "PARAM_MOTOR_MODE")?;
+        if active_mode != desired_mode {
+            return Err("changing Motion mode requires the motor to be DISABLED".to_owned());
         }
 
         match config.mode {
@@ -213,10 +208,6 @@ impl MotionService {
             MotionMode::Mit => {
                 return Err("MIT is not supported by the connected device".to_owned());
             }
-        }
-
-        if state == 0 {
-            start_action(parameters, session, "ACTION_MOTOR_ENABLE")?;
         }
 
         start_action(parameters, session, "ACTION_MOTOR_RUN")

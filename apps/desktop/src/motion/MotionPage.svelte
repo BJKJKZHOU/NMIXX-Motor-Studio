@@ -9,6 +9,7 @@
   export let onError: (error: unknown) => void = () => undefined;
 
   let actionBusy = false;
+  let stopBusy = false;
 
   const modeLabels: Record<MotionMode, string> = {
     position: "Position",
@@ -61,8 +62,12 @@
     return !hasTrajectory() || trajectorySupported($motionState.trajectory);
   }
 
+  function canStop(): boolean {
+    return !!capabilities?.stop;
+  }
+
   async function run() {
-    if (!canRun() || actionBusy) return;
+    if (!canRun() || actionBusy || stopBusy) return;
     actionBusy = true;
     try { await executeMotion(); }
     catch (error) { onError(error); }
@@ -70,11 +75,11 @@
   }
 
   async function stop() {
-    if (!capabilities?.stop || actionBusy) return;
-    actionBusy = true;
+    if (!canStop() || stopBusy) return;
+    stopBusy = true;
     try { await stopMotionExecution(); }
     catch (error) { onError(error); }
-    finally { actionBusy = false; }
+    finally { stopBusy = false; }
   }
 
   function trajectoryNote(): string {
@@ -231,8 +236,17 @@
       {/if}
 
       <div class="motion-runbar">
-        <button class="motion-run" disabled={!canRun() || actionBusy} onclick={run}><i class="codicon codicon-debug-start"></i> Run</button>
-        <button disabled={!capabilities?.stop || actionBusy} onclick={stop}><i class="codicon codicon-debug-stop"></i> Stop</button>
+        <button
+          class="motion-run"
+          disabled={!canRun() || actionBusy || stopBusy}
+          title="Run motion"
+          onclick={run}
+        ><i class="codicon codicon-debug-start"></i> Run</button>
+        <button
+          disabled={!canStop() || stopBusy}
+          title="Stop motor motion"
+          onclick={stop}
+        ><i class="codicon codicon-debug-stop"></i> Stop</button>
       </div>
     </div>
 

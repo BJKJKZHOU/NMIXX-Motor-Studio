@@ -17,6 +17,10 @@ export function startAction(key: string): Promise<ActionHandle> {
   return invoke<ActionHandle>("action_start", { key });
 }
 
+export function startImmediateAction(key: string): Promise<ActionHandle> {
+  return invoke<ActionHandle>("action_start_immediate", { key });
+}
+
 export function enableMotor(): Promise<ActionHandle> {
   return invoke<ActionHandle>("motor_enable");
 }
@@ -39,6 +43,10 @@ export function saveParameters(): Promise<ActionHandle> {
 
 export function onActionCompleted(handler: (completion: ActionCompletion) => void): Promise<UnlistenFn> {
   return listen<ActionCompletion>("action-completed", (event) => handler(event.payload));
+}
+
+export function onMotorStopIssued(handler: () => void): Promise<UnlistenFn> {
+  return listen("motor-stop-issued", () => handler());
 }
 
 export function startIdentification(

@@ -41,13 +41,18 @@ export async function refreshAllParameters(): Promise<ParameterReadResult[]> {
   return results;
 }
 
-export function onParametersRefreshed(handler: () => void): Promise<UnlistenFn> {
-  return listen("parameters-refreshed", () => handler());
+export function onParametersChanged(handler: (ids: number[]) => void): Promise<UnlistenFn> {
+  return listen<number[]>("parameters-changed", (event) => handler(event.payload));
 }
 
-export async function writeParameter(id: number, value: ParameterValue): Promise<void> {
-  await invoke<void>("parameter_write", { id, value });
-  observeParameterValue(id, value);
+export function onParametersRefreshed(handler: () => void): Promise<UnlistenFn> {
+  return onParametersChanged(() => handler());
+}
+
+export async function writeParameter(id: number, value: ParameterValue): Promise<ParameterRead> {
+  const result = await invoke<ParameterRead>("parameter_write", { id, value });
+  observeParameterValue(result.id, result.value);
+  return result;
 }
 
 export async function initializePersistenceBaseline(ids: number[]): Promise<void> {
