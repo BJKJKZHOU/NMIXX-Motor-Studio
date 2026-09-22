@@ -130,7 +130,7 @@ impl ParameterService {
             })();
             (id, result)
         }).collect::<Vec<_>>();
-        let entries = results.iter().map(|(id, result)| {
+        let entries = results.iter().filter(|(id, _)| self.schema.parameter_by_id(*id).is_some()).map(|(id, result)| {
             (*id, result.as_ref().cloned().map_err(ToString::to_string))
         }).collect::<Vec<_>>();
         let changed = {
