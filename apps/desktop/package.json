@@ -5,10 +5,13 @@
   "type": "module",
   "scripts": {
     "dev": "vite --host 127.0.0.1 --port 1420",
-    "build": "vite build",
+    "check": "npm exec --yes --package=svelte-check@4.7.6 -- svelte-check --tsconfig ./tsconfig.json",
+    "build": "npm run check && vite build",
     "tauri": "tauri",
     "test:parameters": "node scripts/test-parameters.mjs",
-    "check:parameter-syntax": "node scripts/check-parameter-syntax.mjs"
+    "check:parameter-syntax": "node scripts/check-parameter-syntax.mjs",
+    "test:startup": "python3 scripts/test-startup.py",
+    "test:plots": "node --test tests/scope-window.test.cjs tests/motion-plot.test.cjs"
   },
   "dependencies": {
     "@tanstack/svelte-table": "9.2.4",

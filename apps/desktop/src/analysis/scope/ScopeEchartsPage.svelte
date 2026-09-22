@@ -321,6 +321,60 @@
       : clampViewRange(viewRange, recordedSeconds);
   }
 
+  // Acquisition-window scheduling belongs to the page; ECharts rendering stays
+  // in ScopeEchartsView. These callbacks must also exist while Scope is hidden.
+  async function refreshSnapshot(allowWhileBusy = false) {
+    if (!connection || !configured || snapshotBusy || (busy && !allowWhileBusy)) return;
+    snapshotBusy = true;
+    const revision = viewRevision;
+    const requestedFollowingLatest = followingLatest;
+    const requestedRange = requestedFollowingLatest
+      ? latestRange(undefined, viewSpan(viewRange))
+      : clampViewRange(viewRange);
+    const windowSeconds = requestedRange[1] - requestedRange[0];
+    const endOffsetSeconds = requestedFollowingLatest ? 0 : Math.max(0, -requestedRange[1]);
+    try {
+      const next = await readScopeSnapshot(windowSeconds, endOffsetSeconds, maxGraphPoints);
+      if (revision !== viewRevision || requestedFollowingLatest !== followingLatest) return;
+      snapshot = next;
+      viewRange = requestedFollowingLatest
+        ? latestRange(next.recordedSeconds, viewSpan(requestedRange))
+        : clampViewRange(requestedRange, next.recordedSeconds);
+    } catch (error) {
+      if (revision === viewRevision) onError(error);
+    } finally {
+      snapshotBusy = false;
+    }
+  }
+
+  function scheduleViewRefresh(delay = 80) {
+    if (viewRefreshTimer) clearTimeout(viewRefreshTimer);
+    viewRefreshTimer = setTimeout(() => {
+      viewRefreshTimer = undefined;
+      if (!connection || !configured) return;
+      if (snapshotBusy || busy) {
+        scheduleViewRefresh(50);
+        return;
+      }
+      void refreshSnapshot();
+    }, delay);
+  }
+
+  function navigateToRange(range: [number, number]) {
+    followingLatest = false;
+    viewRange = clampViewRange(range);
+    viewRevision += 1;
+    scheduleViewRefresh();
+  }
+
+  function returnToLatest() {
+    const span = viewSpan(viewRange);
+    followingLatest = true;
+    viewRange = latestRange(undefined, span);
+    viewRevision += 1;
+    scheduleViewRefresh(0);
+  }
+
   onMount(() => {
     refreshUnsubscribe = subscribeRefresh(refreshIntervalMs, () => {
       if (active && running && followingLatest) void refreshSnapshot();
@@ -328,6 +382,8 @@
   });
 
   onDestroy(() => {
+    configured = false;
+    viewRevision += 1;
     refreshUnsubscribe?.();
     if (reconfigureTimer) clearTimeout(reconfigureTimer);
     if (viewRefreshTimer) clearTimeout(viewRefreshTimer);

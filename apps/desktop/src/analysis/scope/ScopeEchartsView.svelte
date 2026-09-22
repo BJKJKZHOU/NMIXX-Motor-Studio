@@ -2,14 +2,15 @@
   import { onDestroy, onMount } from "svelte";
   import { LineChart } from "echarts/charts";
   import { DataZoomComponent, GridComponent, LegendComponent, TooltipComponent } from "echarts/components";
-  import { init, use, type ECharts, type EChartsOption } from "echarts/core";
+  import { init, use, type ECharts } from "echarts/core";
+  import type { EChartsOption } from "echarts";
   import { CanvasRenderer } from "echarts/renderers";
   import type { ScopeSnapshot } from "./types";
 
   type ScopeDisplayChannel = {
     id: number;
     label: string;
-    unit?: string;
+    unit?: string | null;
   };
 
   export let channels: ScopeDisplayChannel[] = [];
@@ -106,7 +107,6 @@
         yAxisIndex: index,
         showSymbol: false,
         symbol: "none",
-        sampling: "none",
         animation: false,
         lineStyle: { color, width: channel.id === visibleAxisChannel?.id ? 1.5 : 1.1 },
         itemStyle: { color },
