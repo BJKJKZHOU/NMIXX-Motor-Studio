@@ -39,6 +39,34 @@ The GUI uses two different low-intensity visual states:
 
 These are source/selection states, not success/error colors.
 
+## Bus voltage safety window
+
+DC-bus voltage protection is shown as a separate safety window rather than as another User/Hardware operating-limit source.
+
+```text
+Bus Voltage
+
+Minimum                  Actual                   Maximum
+[ 8.0 ] V                14.5 V                   [ 30.0 ] V
+Undervoltage limit       DC bus voltage           Overvoltage limit
+```
+
+The three values have distinct ownership:
+
+- **Minimum** is the persistent firmware undervoltage software-protection threshold.
+- **Actual** is the read-only sampled DC-bus voltage (`Vbus`).
+- **Maximum** is the persistent firmware overvoltage software-protection threshold.
+
+The GUI may visually indicate when Actual is outside the configured window, but it does not own the protection decision. Firmware `Protection` remains authoritative for rejecting Enable and for latching undervoltage/overvoltage Stop faults while enabled or running.
+
+Threshold writes are allowed only while the motor is `DISABLED`, and firmware enforces:
+
+```text
+0 < VbusMin < VbusMax
+```
+
+A missing or low bus voltage while already `DISABLED` does not by itself latch an undervoltage fault. Instead, Enable is rejected while Actual is outside the valid window. Once the motor is enabled/running, a sustained out-of-window voltage becomes the corresponding protection Stop condition.
+
 ## Motion profile is not a limit source
 
 `Motion_Config.Wm_Max`, acceleration, and deceleration describe how a requested motion should be generated. They are command/profile settings rather than independent safety boundaries.
@@ -171,7 +199,7 @@ This is an intentional capability placeholder rather than a simulated implementa
 
 ## Current firmware gaps
 
-Several firmware changes remain deferred:
+Bus-voltage minimum/actual/maximum support is now defined by the page contract above. Remaining deferred firmware work:
 
 - expose hardware current and speed limits as read-only Parameters;
 - allow a user limit to exceed the hardware limit without rejecting the write solely for that reason;

@@ -94,6 +94,8 @@ pub struct RangeMetadata {
     #[serde(default)]
     pub max_symbol: Option<String>,
     #[serde(default)]
+    pub min_binding: Option<String>,
+    #[serde(default)]
     pub max_binding: Option<String>,
     #[serde(default)]
     pub max_bindings: Vec<String>,
