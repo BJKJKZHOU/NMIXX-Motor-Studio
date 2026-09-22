@@ -125,7 +125,44 @@ vscode-button { --vscode-button-border: transparent; }
 .app-error { position: absolute; left: 10px; right: 10px; bottom: 10px; z-index: 20; }
 
 .channel-list { display: flex; flex-direction: column; }
+.channel-entry { border-bottom: 1px solid #232323; }
+.channel-entry:last-child { border-bottom: 0; }
 .channel-row { min-height: 30px; display: grid; grid-template-columns: 24px minmax(0, 1fr) 42px 62px; gap: 4px; align-items: center; padding: 0 7px; cursor: default; }
+.channel-y-controls {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 6px;
+  padding: 1px 7px 7px 31px;
+}
+.channel-y-field {
+  min-width: 0;
+  display: grid;
+  grid-template-columns: auto minmax(0, 1fr) auto;
+  gap: 4px;
+  align-items: center;
+  color: #7f7f7f;
+  font-size: 9.5px;
+}
+.channel-y-field input {
+  width: 100%;
+  min-width: 0;
+  height: 22px;
+  padding: 1px 5px;
+  border: 1px solid #343434;
+  border-radius: 2px;
+  outline: none;
+  color: #c9c9c9;
+  background: #222325;
+  font-family: "SFMono-Regular", Consolas, "Liberation Mono", monospace;
+  font-size: 10px;
+}
+.channel-y-field input:focus { border-color: var(--vscode-focusBorder); }
+.channel-y-field em {
+  color: #696969;
+  font-style: normal;
+  white-space: nowrap;
+  font-size: 9px;
+}
 .channel-row:hover { background: #242424; }
 .channel-row.disabled-row { opacity: .58; }
 .channel-name { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; color: #d0d0d0; font-family: "SFMono-Regular", Consolas, "Liberation Mono", monospace; font-size: 12px; }
@@ -136,6 +173,9 @@ vscode-button { --vscode-button-border: transparent; }
 .channel-row.active-channel { background: #272727; }
 .channel-select {
   min-width: 0;
+  display: flex;
+  align-items: center;
+  gap: 6px;
   padding: 0;
   border: 0;
   outline: none;
@@ -147,6 +187,19 @@ vscode-button { --vscode-button-border: transparent; }
   cursor: pointer;
 }
 .channel-select:hover { color: #fff; }
+.channel-color-mark {
+  width: 13px;
+  height: 3px;
+  flex: 0 0 auto;
+  border-radius: 1px;
+}
+.channel-color-mark.inactive { background: #4a4a4a; }
+.channel-label {
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
 .scope-control-grid {
   display: grid;
   grid-template-columns: repeat(2, minmax(0, 1fr));
@@ -185,6 +238,29 @@ vscode-button { --vscode-button-border: transparent; }
   width: calc(100% - 18px);
   margin: 0 9px 9px;
 }
+.scope-position-readout {
+  min-width: 0;
+  height: 26px;
+  display: flex;
+  align-items: center;
+  gap: 6px;
+}
+.scope-position-readout strong {
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.scope-latest-button {
+  flex: 0 0 auto;
+  padding: 0;
+  border: 0;
+  color: #8fa4c2;
+  background: transparent;
+  font-size: 10px;
+  cursor: pointer;
+}
+.scope-latest-button:hover { color: #b8c8df; }
 .scope-active-channel {
   display: flex;
   align-items: center;
@@ -216,16 +292,52 @@ vscode-button { --vscode-button-border: transparent; }
   font-size: 9.5px;
 }
 .scope-tool-active { outline: 1px solid #74859e; }
-.trace-key-button {
-  padding: 0;
-  border: 0;
-  color: inherit;
-  background: transparent;
-  font: inherit;
-  cursor: pointer;
+.scope-cursor-readouts {
+  margin: 4px 9px 2px;
+  border-top: 1px solid #2b2b2b;
+  font-size: 9.5px;
 }
-.trace-key-button:hover { color: #d6d6d6; }
-.scope-plot-interactive { cursor: crosshair; }
+.scope-cursor-readout-header,
+.scope-cursor-readout-row {
+  min-height: 23px;
+  display: grid;
+  grid-template-columns: minmax(72px, 1.25fr) repeat(3, minmax(68px, 1fr));
+  gap: 6px;
+  align-items: center;
+}
+.scope-cursor-readout-header {
+  color: #6f6f6f;
+  border-bottom: 1px solid #262626;
+}
+.scope-cursor-readout-row { color: #969696; }
+.scope-cursor-readout-row strong {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  color: #bdbdbd;
+  font-family: "SFMono-Regular", Consolas, "Liberation Mono", monospace;
+  font-size: 9.5px;
+  font-weight: 400;
+  white-space: nowrap;
+}
+.scope-cursor-channel {
+  min-width: 0;
+  display: flex;
+  align-items: center;
+  gap: 5px;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.scope-cursor-channel i {
+  width: 9px;
+  height: 2px;
+  flex: 0 0 auto;
+}
+.scope-plot-interactive {
+  cursor: grab;
+  user-select: none;
+}
+.scope-plot-interactive .u-over { touch-action: none; }
 .empty-hint { padding: 5px 10px 9px; color: #757575; font-size: 11px; line-height: 1.45; }
 .property-grid { display: grid; grid-template-columns: 1fr auto; gap: 8px 12px; padding: 2px 11px 8px; color: #858585; font-size: 12px; }
 .property-grid strong { color: #c7c7c7; font-family: "SFMono-Regular", Consolas, "Liberation Mono", monospace; font-size: 11px; font-weight: 400; }

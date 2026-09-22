@@ -81,6 +81,16 @@ Device: AxDr_L · Connected       Motor: ENABLED   [ Disable ] [ Stop ]
 
 The left side is the experiment waveform area. The lower-left area defines the motion for the next experiment. The right side contains the compact primary tuning set and the actual controller gains used by firmware. Current and speed loops expose both Bandwidth and Manual gain ownership; the active source is visible and editable.
 
+The page skeleton is stable. Waveform-related configuration must remain inside the existing Experiment Waveform panel; it must not move Motion Command or the right-side tuning parameter column.
+
+Inside the Experiment Waveform panel, three browser-style sub-tabs share the same bounded content area:
+
+- **Waveform** — the captured multi-channel time plot;
+- **Channels** — capture channel/rate selection;
+- **Scale** — per-channel display multiplier.
+
+Switching tabs replaces the waveform content area rather than expanding an extra settings panel above the waveform. This preserves the existing page proportions.
+
 The page deliberately does not reproduce the complete control diagram. Structural configuration such as controller type, filter mode/frequency, feedback source, feedforward and algorithm-specific block options belongs to the corresponding Current / Speed / Position child page under Control Architecture even when those values ultimately affect the same loop.
 
 The page does not duplicate Connect/Disconnect controls or motor Enable/Disable/Stop controls inside its own content area.
@@ -267,17 +277,20 @@ The initial lifecycle uses:
 - Position with Repeat disabled: run for the calculated trajectory duration, keep a short settling interval, then issue the normal controlled Stop;
 - Speed / Sensorless Speed / Torque and repeated Position: continue until the user presses local or global Stop;
 - post-stop capture: 0.75 s after the motor leaves RUN;
-- rolling history: 15 s, with a shorter live view while the experiment is running.
+- one finite non-overwriting raw capture for the complete experiment, bounded by a 128 MiB RAM protection budget;
+- a shorter live preview window while the experiment is running.
 
-The post-stop interval is important because position/speed tuning must show the stop transient, residual vibration and settling. A long manually controlled experiment may overwrite the oldest samples in the rolling history; the most recent response through Stop and post-capture is retained.
+The post-stop interval is important because position/speed tuning must show the stop transient, residual vibration and settling. Control Tuning does not silently roll over or overwrite the beginning of an experiment. The Application converts the selected FAST/NORMAL channel rates into the maximum finite capture duration that fits the 128 MiB raw-sample budget. As the capture approaches that limit, it issues a controlled Stop early enough to preserve the post-capture interval, retains the samples already recorded, and reports that the recording limit was reached.
 
 The waveform remains on screen after capture ends so the user can inspect the complete response before changing the next parameter set.
 
 If the experiment is stopped early, the capture/task layer should still finish the record coherently rather than leaving the plotting service in an unrelated running state.
 
-## Default waveform groups
+## Default waveform channels
 
-Every Control Tuning experiment always captures the q-axis current command and feedback at the FAST rate:
+Control Tuning provides a recommended channel set for each Motion mode, but the set is a default rather than a mandatory fixed group. Before Run, the user may add/remove any Plot-capable channel and choose FAST/NORMAL where the firmware supports both. The configured selection is locked while one experiment is active.
+
+The recommended defaults always include the q-axis current command and feedback at the FAST rate:
 
 - **Iq Ref** — FAST, device current-loop rate (20 kHz on the current AxDr_L firmware);
 - **Iq** — FAST, same rate.
@@ -311,9 +324,38 @@ Motion reference/feedback channels use NORMAL rate (1 kHz on the current AxDr_L 
 - Iq Ref — FAST;
 - Iq — FAST.
 
-Additional diagnostics such as encoder-difference speed, Mechanical ESO state or disturbance torque may be added later by the user, but they are not part of the minimal default group. Three-phase currents are intentionally left to the general Scope workflow rather than added to Control Tuning defaults.
+Additional diagnostics such as encoder-difference speed, Mechanical ESO state or disturbance torque may be selected by the user without changing the default set.
 
-FAST and NORMAL samples keep their native sample rates. The GUI does not upsample 1 kHz motion signals to 20 kHz; waveform presentation groups signals with the same engineering unit/rate and aligns them on the experiment time axis.
+FAST and NORMAL samples keep their native sample rates. The GUI does not upsample 1 kHz motion signals to 20 kHz. All captured tuning signals are aligned on one shared experiment time axis and rendered in one waveform area rather than separate Current / Speed / Position charts.
+
+### Waveform interaction
+
+The tuning waveform is intentionally simpler than the general Scope page.
+
+It supports:
+
+- one shared horizontal time axis;
+- mouse-wheel Time/div changes;
+- horizontal drag within the finite captured record;
+- stable per-channel color identity within the capture;
+- one positive display multiplier per selected channel.
+
+The Scale tab edits the multiplier directly as `×N`. The rendering rule is exactly `display_y = raw_sample × multiplier`. With `×1`, the plotted curve is the original floating-point sample value without per-channel normalization or per-channel auto-ranging. All tuning curves share one display Y scale, so relative numeric magnitude is preserved unless the user explicitly changes a multiplier. The multiplier is display-only: raw capture values, exports and future measurements continue to use the original physical values. The tuning waveform does not expose Y offset, Y-position markers, cursors, trigger controls, Follow Latest, or the full Scope acquisition controls.
+
+The intended workflow is to configure channels and display multipliers infrequently, then repeatedly change tuning parameters, Run the same motion, inspect the waveform, and tune again.
+
+### Waveform LOD
+
+The retained tuning capture remains raw engineering-value data. Display reduction is performed only for the currently visible time window.
+
+- When the visible window contains a manageable number of samples, the GUI receives the raw samples directly.
+- When the visible window is much denser than the plot width, the Application/Tauri boundary groups samples into time buckets.
+- Each bucket returns a representative mean value for the trend line plus the bucket minimum and maximum for an envelope.
+- The envelope is drawn as a vertical min/max range at the bucket time. Min/max endpoints are not connected to one another as a zig-zag line.
+- Zooming in naturally reduces samples per pixel; once the requested window is small enough, the response switches back to raw samples.
+- Horizontal panning requests only the corresponding raw source window. It must not clone or transfer the entire retained capture first.
+
+This preserves short spikes and overshoot in overview views while avoiding the false visual impression of high-frequency oscillation that results from connecting alternating extrema. LOD never changes the stored raw capture or future exported/measurement values.
 
 ## Motion Command
 

@@ -3,7 +3,10 @@
   import Split from "split.js";
   import uPlot from "uplot";
   import type { ConnectionInfo, PlotChannel } from "../../connection/types";
+  import { subscribeRefresh } from "../../refreshScheduler";
   import { configureScope, readScopeSnapshot, startScope, stopScope } from "./api";
+  import { loadScopeViewSettings, saveScopeViewSettings, type ScopeViewSettings } from "./viewSettings";
+  import { scopeNavigationPlugin } from "./uplotNavigation";
   import type { ScopeConfig, ScopeRate, ScopeSnapshot, ScopeSummary } from "./types";
 
   export let connection: ConnectionInfo | undefined;
@@ -18,14 +21,22 @@
     1e-3, 2e-3, 5e-3, 10e-3, 20e-3, 50e-3,
     100e-3, 200e-3, 500e-3, 1,
   ];
-  const traceColors = ["#7aa2c8", "#c8b77a", "#9b8ac8", "#7fa68a", "#c28b73", "#aa829a", "#79a6ad", "#91a77b"];
+  const traceColors = [
+    "#7aa2c8", "#c8b77a", "#9b8ac8", "#7fa68a",
+    "#c28b73", "#aa829a", "#79a6ad", "#91a77b",
+    "#b68f6a", "#6f9ca8", "#a47f86", "#8398b5",
+  ];
+  const cursorColors = ["#c9c9c9", "#c8b77a"];
+  const markerHitPixels = 10;
 
   let plotHost: HTMLDivElement;
   let plot: uPlot | undefined;
   let split: Split.Instance | undefined;
   let resizeObserver: ResizeObserver | undefined;
-  let refreshTimer: ReturnType<typeof setInterval> | undefined;
+  let refreshUnsubscribe: (() => void) | undefined;
   let reconfigureTimer: ReturnType<typeof setTimeout> | undefined;
+  let interactionRefreshTimer: ReturnType<typeof setTimeout> | undefined;
+  let scopeViewSaveTimer: ReturnType<typeof setTimeout> | undefined;
 
   let snapshotBusy = false;
   let commandBusy = false;
@@ -39,10 +50,10 @@
   let channelRates = new Map<number, ScopeRate>();
   let verticalScale = new Map<number, number>();
   let verticalOffset = new Map<number, number>();
+  let channelColors = new Map<number, number>();
   let plotChannels: PlotChannel[] = [];
   let visibleChannels: PlotChannel[] = [];
   let snapshot: ScopeSnapshot | undefined;
-  let latestValues: string[] = [];
   let fastSelected = 0;
   let normalSelected = 0;
   let activeChannelId: number | undefined;
@@ -53,8 +64,29 @@
   let cursorEnabled = false;
   let cursorA: number | undefined;
   let cursorB: number | undefined;
-  let nextCursor: "a" | "b" = "a";
   let isRunning = false;
+  let viewNavigationActive = false;
+  let followLatest = true;
+  let hoverTime: number | undefined;
+  let cursorGroupHit: { left: number; right: number; top: number; bottom: number } | undefined;
+
+  type DragState =
+    | { kind: "vertical"; pointerId: number; id: number; startClientY: number; startOffset: number }
+    | { kind: "cursor"; pointerId: number; cursor: "a" | "b" }
+    | { kind: "cursor-group"; pointerId: number; startClientX: number; startA: number; startB: number };
+
+  type CursorReadout = {
+    id: number;
+    label: string;
+    unit: string;
+    color: string;
+    a?: number;
+    b?: number;
+    delta?: number;
+  };
+
+  let dragState: DragState | undefined;
+  let cursorReadouts: CursorReadout[] = [];
 
   $: if (connection !== activeConnection) {
     activeConnection = connection;
@@ -62,17 +94,39 @@
   }
   $: onSummary({ state: snapshot?.state ?? "STOPPED", selectedChannels: selectedIds.size, lostFrames: snapshot?.lostFrames ?? 0 });
   $: visibleChannels = plotChannels.filter((channel) => selectedIds.has(channel.id));
-  $: latestValues = visibleChannels.map((channel) => {
-    const values = snapshot?.series.find((series) => series.id === channel.id)?.values;
-    if (!values?.length) return "—";
-    const unit = channel.unit ?? "";
-    return `${values[values.length - 1].toFixed(3)}${unit ? ` ${unit}` : ""}`;
-  });
   $: fastSelected = Array.from(selectedIds).filter((id) => channelRates.get(id) === "fast").length;
   $: normalSelected = Array.from(selectedIds).filter((id) => channelRates.get(id) === "normal").length;
   $: isRunning = snapshot?.state === "LIVE";
+  $: followLatest = horizontalOffset <= 1e-12;
+  $: cursorReadouts = cursorEnabled
+    ? visibleChannels.map((channel) => {
+        const a = cursorA === undefined ? undefined : sampleAtTime(channel.id, cursorA);
+        const b = cursorB === undefined ? undefined : sampleAtTime(channel.id, cursorB);
+        return {
+          id: channel.id,
+          label: channel.label,
+          unit: channel.unit ?? "",
+          color: traceColor(channel),
+          a,
+          b,
+          delta: a === undefined || b === undefined ? undefined : b - a,
+        };
+      })
+    : [];
   $: if (activeChannelId !== undefined && !selectedIds.has(activeChannelId)) {
     activeChannelId = visibleChannels[0]?.id;
+  }
+
+  $: if (connection && plotChannels.length > 0) {
+    selectedIds;
+    channelRates;
+    channelColors;
+    verticalScale;
+    verticalOffset;
+    timePerDiv;
+    cursorEnabled;
+    activeChannelId;
+    scheduleScopeViewSave();
   }
 
   function windowSeconds(): number {
@@ -83,8 +137,12 @@
     return scopeConfig?.historySeconds ?? 10;
   }
 
+  function recordedSeconds(): number {
+    return snapshot?.recordedSeconds ?? 0;
+  }
+
   function maxHorizontalOffset(): number {
-    return Math.max(0, historySeconds() - windowSeconds());
+    return Math.max(0, recordedSeconds() - windowSeconds());
   }
 
   function defaultRate(channel: PlotChannel): ScopeRate {
@@ -126,6 +184,157 @@
     return 1;
   }
 
+  type EngineeringScale = { value: number; unit: string; factor: number };
+
+  function engineeringScale(value: number, unit: string): EngineeringScale {
+    const abs = Math.abs(value);
+    const prefixes = [
+      { factor: 1e-6, prefix: "µ" },
+      { factor: 1e-3, prefix: "m" },
+      { factor: 1, prefix: "" },
+      { factor: 1e3, prefix: "k" },
+    ];
+
+    let selected = prefixes[2];
+    if (abs > 0 && abs < 1e-3) selected = prefixes[0];
+    else if (abs > 0 && abs < 1) selected = prefixes[1];
+    else if (abs >= 1e3) selected = prefixes[3];
+
+    const displayed = value / selected.factor;
+    return {
+      value: Number(displayed.toPrecision(6)),
+      unit: `${selected.prefix}${unit}`,
+      factor: selected.factor,
+    };
+  }
+
+  function scaleCandidates(value: number): number[] {
+    const safe = Math.max(Math.abs(value), 1e-15);
+    const exponent = Math.floor(Math.log10(safe));
+    const values: number[] = [];
+    for (let power = exponent - 2; power <= exponent + 2; power += 1) {
+      const decade = 10 ** power;
+      values.push(decade, 2 * decade, 5 * decade);
+    }
+    return values.sort((a, b) => a - b);
+  }
+
+  function step125(value: number, direction: -1 | 1): number {
+    const candidates = scaleCandidates(value);
+    const epsilon = Math.max(Math.abs(value) * 1e-9, 1e-15);
+    if (direction > 0) {
+      return candidates.find((candidate) => candidate > value + epsilon) ?? value * 2;
+    }
+    return [...candidates].reverse().find((candidate) => candidate < value - epsilon) ?? value / 2;
+  }
+
+  function ceil125(value: number): number {
+    if (!Number.isFinite(value) || value <= 0) return 1;
+    const candidates = scaleCandidates(value);
+    return candidates.find((candidate) => candidate >= value * (1 - 1e-12)) ?? value;
+  }
+
+  function stepVerticalScale(id: number, direction: -1 | 1) {
+    const current = verticalScale.get(id) ?? 1;
+    updateVerticalScale(id, step125(current, direction));
+  }
+
+  function commitEngineeringScale(id: number, displayed: string, factor: number) {
+    const value = Number(displayed);
+    if (!Number.isFinite(value) || value <= 0) return;
+    updateVerticalScale(id, value * factor);
+  }
+
+  function scopeViewSettings(): ScopeViewSettings {
+    return {
+      version: 1,
+      timePerDiv,
+      cursorEnabled,
+      activeChannelId,
+      channels: plotChannels.map((channel) => ({
+        id: channel.id,
+        selected: selectedIds.has(channel.id),
+        rate: channelRates.get(channel.id),
+        color: channelColors.get(channel.id),
+        scalePerDiv: verticalScale.get(channel.id),
+        yPosition: verticalOffset.get(channel.id),
+      })),
+    };
+  }
+
+  function scheduleScopeViewSave() {
+    if (!connection || plotChannels.length === 0) return;
+    if (scopeViewSaveTimer) clearTimeout(scopeViewSaveTimer);
+    scopeViewSaveTimer = setTimeout(() => {
+      scopeViewSaveTimer = undefined;
+      saveScopeViewSettings(plotChannels, scopeViewSettings());
+    }, 250);
+  }
+
+  function validTimePerDiv(value: number | undefined): value is number {
+    return value !== undefined && Number.isFinite(value) && timeDivOptions.includes(value);
+  }
+
+  function validVerticalScale(value: number | undefined): value is number {
+    return value !== undefined && Number.isFinite(value) && value > 0;
+  }
+
+  function restoreScopeView(): boolean {
+    const saved = loadScopeViewSettings(plotChannels);
+    if (!saved) return false;
+
+    const knownIds = new Set(plotChannels.map((channel) => channel.id));
+    const selected = new Set<number>();
+    const rates = new Map<number, ScopeRate>();
+    const colors = new Map<number, number>();
+    const scales = new Map(verticalScale);
+    const offsets = new Map(verticalOffset);
+
+    for (const setting of saved.channels) {
+      if (!knownIds.has(setting.id)) continue;
+      const channel = plotChannels.find((candidate) => candidate.id === setting.id);
+      if (!channel) continue;
+
+      if (setting.selected) selected.add(setting.id);
+      if (setting.rate && rateAllowed(channel, setting.rate)) rates.set(setting.id, setting.rate);
+      if (setting.color !== undefined && Number.isInteger(setting.color) && setting.color >= 0) {
+        colors.set(setting.id, setting.color % traceColors.length);
+      }
+      if (validVerticalScale(setting.scalePerDiv)) scales.set(setting.id, setting.scalePerDiv);
+      if (setting.yPosition !== undefined && Number.isFinite(setting.yPosition)) offsets.set(setting.id, setting.yPosition);
+    }
+
+    if (selected.size === 0) return false;
+
+    for (const id of selected) {
+      const channel = plotChannels.find((candidate) => candidate.id === id);
+      if (!channel) continue;
+      if (!rates.has(id)) rates.set(id, defaultRate(channel));
+    }
+
+    selectedIds = selected;
+    channelRates = rates;
+    channelColors = colors;
+    verticalScale = scales;
+    verticalOffset = offsets;
+    timePerDiv = validTimePerDiv(saved.timePerDiv) ? saved.timePerDiv : timePerDiv;
+    cursorEnabled = Boolean(saved.cursorEnabled);
+    activeChannelId = saved.activeChannelId !== undefined && selected.has(saved.activeChannelId)
+      ? saved.activeChannelId
+      : plotChannels.find((channel) => selected.has(channel.id))?.id;
+
+    for (const id of selected) ensureChannelColor(id, selected);
+    return true;
+  }
+
+  function initializeCursorPositions() {
+    if (!cursorEnabled) return;
+    const end = -horizontalOffset;
+    const start = end - windowSeconds();
+    cursorA = start + windowSeconds() * 0.3;
+    cursorB = start + windowSeconds() * 0.7;
+  }
+
   function resetScope() {
     snapshotRevision += 1;
     configurationDirty = false;
@@ -143,7 +352,11 @@
     channelRates = new Map(defaults.map((channel) => [channel.id, defaultRate(channel)]));
     verticalScale = new Map(plotChannels.map((channel) => [channel.id, defaultVerticalScale(channel)]));
     verticalOffset = new Map(plotChannels.map((channel) => [channel.id, 0]));
+    channelColors = new Map(defaults.map((channel, index) => [channel.id, index % traceColors.length]));
     activeChannelId = defaults[0]?.id;
+    const restoredView = restoreScopeView();
+    initialVerticalFit = !restoredView;
+    initializeCursorPositions();
     rebuildPlot();
   }
 
@@ -167,6 +380,7 @@
       }
       next.add(id);
       rates.set(id, rate);
+      ensureChannelColor(id, next);
       activeChannelId = id;
     }
 
@@ -211,6 +425,7 @@
 
   async function hotReconfigure() {
     if (!scopeConfig || !isRunning || commandBusy || !configurationDirty) return;
+    snapshotRevision += 1;
     commandBusy = true;
     try {
       const configured = await configureScope(
@@ -236,13 +451,29 @@
     timePerDiv = value;
     horizontalOffset = Math.min(horizontalOffset, maxHorizontalOffset());
     applyHorizontalScale();
-    void refreshSnapshot();
+    scheduleViewRefresh();
   }
 
   function updateHorizontalOffset(value: number) {
     horizontalOffset = Math.min(Math.max(0, value), maxHorizontalOffset());
     applyHorizontalScale();
-    void refreshSnapshot();
+    scheduleViewRefresh();
+  }
+
+  function goLatest() {
+    horizontalOffset = 0;
+    applyHorizontalScale();
+    scheduleViewRefresh();
+  }
+
+  function scheduleViewRefresh(delay = 80) {
+    viewNavigationActive = true;
+    if (interactionRefreshTimer) clearTimeout(interactionRefreshTimer);
+    interactionRefreshTimer = setTimeout(() => {
+      interactionRefreshTimer = undefined;
+      viewNavigationActive = false;
+      void refreshSnapshot();
+    }, delay);
   }
 
   function applyHorizontalScale() {
@@ -421,7 +652,7 @@
       const center = (min + max) / 2;
       const span = Math.max(max - min, Math.abs(center) * 0.1, 1e-6);
       offsets.set(channel.id, center);
-      scales.set(channel.id, span / (verticalDivisions * 0.75));
+      scales.set(channel.id, ceil125(span / (verticalDivisions * 0.75)));
     }
 
     verticalScale = scales;
@@ -502,6 +733,7 @@
       if (!(await ensureConfigured())) return;
       await startScope();
       horizontalOffset = 0;
+      initializeCursorPositions();
       configuring = false;
       await refreshSnapshot();
     } catch (error) { onError(error); }
@@ -526,25 +758,13 @@
 
 
   function alignedPlotData(next: ScopeSnapshot): uPlot.AlignedData {
-    const timeKeys = new Map<string, number>();
-    for (const series of next.series) {
-      for (const time of series.times) timeKeys.set(time.toFixed(7), time);
-    }
-    const times = Array.from(timeKeys.values()).sort((a, b) => a - b);
-    const indexByKey = new Map(times.map((time, index) => [time.toFixed(7), index]));
-
-    const values = plotChannels.map((channel) => {
-      const output: Array<number | null> = times.map(() => null);
+    const tables = plotChannels.map((channel) => {
       const source = next.series.find((series) => series.id === channel.id);
-      if (!source) return output;
-      for (let index = 0; index < source.times.length; index += 1) {
-        const target = indexByKey.get(source.times[index].toFixed(7));
-        if (target !== undefined) output[target] = source.values[index];
-      }
-      return output;
+      return source
+        ? [source.times, source.values] as uPlot.AlignedData
+        : [[], []] as uPlot.AlignedData;
     });
-
-    return [times, ...values] as uPlot.AlignedData;
+    return uPlot.join(tables);
   }
 
   async function refreshSnapshot() {
@@ -569,9 +789,63 @@
     finally { snapshotBusy = false; }
   }
 
+  function ensureChannelColor(id: number, selected = selectedIds): number {
+    const preferred = channelColors.get(id);
+    const used = new Set(
+      Array.from(selected)
+        .filter((selectedId) => selectedId !== id)
+        .map((selectedId) => channelColors.get(selectedId))
+        .filter((index): index is number => index !== undefined),
+    );
+
+    if (preferred !== undefined && !used.has(preferred)) return preferred;
+
+    const available = traceColors.findIndex((_, index) => !used.has(index));
+    const assigned = available >= 0 ? available : (preferred ?? 0);
+    channelColors = new Map(channelColors).set(id, assigned);
+    return assigned;
+  }
+
   function traceColor(channel: PlotChannel): string {
-    const index = connection?.channels.findIndex((candidate) => candidate.id === channel.id) ?? 0;
-    return traceColors[Math.max(0, index) % traceColors.length];
+    const index = channelColors.get(channel.id);
+    if (index === undefined) return "#666666";
+    return traceColors[index % traceColors.length];
+  }
+
+  function sampleAtTime(id: number, time: number): number | undefined {
+    const series = snapshot?.series.find((item) => item.id === id);
+    if (!series || series.times.length === 0 || series.times.length !== series.values.length) return undefined;
+
+    let low = 0;
+    let high = series.times.length - 1;
+    if (time <= series.times[low]) return series.values[low];
+    if (time >= series.times[high]) return series.values[high];
+
+    while (high - low > 1) {
+      const middle = Math.floor((low + high) / 2);
+      if (series.times[middle] <= time) low = middle;
+      else high = middle;
+    }
+    return Math.abs(series.times[low] - time) <= Math.abs(series.times[high] - time)
+      ? series.values[low]
+      : series.values[high];
+  }
+
+  function formatCursorValue(value: number | undefined, unit: string): string {
+    if (value === undefined || !Number.isFinite(value)) return "—";
+    return `${value.toFixed(3)}${unit ? ` ${unit}` : ""}`;
+  }
+
+  function formatFrequency(value: number): string {
+    if (!Number.isFinite(value) || value <= 0) return "—";
+    if (value >= 1000) return `${(value / 1000).toFixed(value >= 10_000 ? 1 : 2)} kHz`;
+    return `${value.toFixed(value >= 100 ? 1 : 2)} Hz`;
+  }
+
+  function cursorIntervalLabel(): string | undefined {
+    if (cursorA === undefined || cursorB === undefined || cursorA === cursorB) return undefined;
+    const delta = Math.abs(cursorB - cursorA);
+    return `${formatTime(delta)} · ${formatFrequency(1 / delta)}`;
   }
 
   function cursorPlugin(): uPlot.Plugin {
@@ -579,20 +853,117 @@
       hooks: {
         draw: [
           (u) => {
-            if (!cursorEnabled) return;
             const ctx = u.ctx;
+            const px = window.devicePixelRatio || 1;
+            const marker = 7 * px;
+
             ctx.save();
-            ctx.strokeStyle = "#a7a7a7";
-            ctx.lineWidth = 1;
-            ctx.setLineDash([4, 4]);
-            for (const value of [cursorA, cursorB]) {
-              if (value === undefined) continue;
-              const x = u.valToPos(value, "x", true);
+
+            for (const channel of visibleChannels) {
+              const y = u.valToPos(0, yScaleKey(channel.id), true);
+              if (!Number.isFinite(y)) continue;
+              const top = u.bbox.top;
+              const bottom = u.bbox.top + u.bbox.height;
+              const clampedY = Math.min(Math.max(y, top + marker), bottom - marker);
+              const x = u.bbox.left;
+              ctx.fillStyle = traceColor(channel);
               ctx.beginPath();
-              ctx.moveTo(x, u.bbox.top);
-              ctx.lineTo(x, u.bbox.top + u.bbox.height);
-              ctx.stroke();
+              ctx.moveTo(x, clampedY - marker);
+              ctx.lineTo(x + marker, clampedY);
+              ctx.lineTo(x, clampedY + marker);
+              ctx.closePath();
+              ctx.fill();
             }
+
+            if (hoverTime !== undefined && !dragState) {
+              const hoverX = u.valToPos(hoverTime, "x", true);
+              const top = u.bbox.top;
+              const hoverMarker = 5 * px;
+              ctx.fillStyle = "#858585";
+              ctx.beginPath();
+              ctx.moveTo(hoverX - hoverMarker, top);
+              ctx.lineTo(hoverX + hoverMarker, top);
+              ctx.lineTo(hoverX, top + hoverMarker);
+              ctx.closePath();
+              ctx.fill();
+              ctx.font = `${9 * px}px "SFMono-Regular", Consolas, monospace`;
+              ctx.textAlign = "center";
+              ctx.textBaseline = "top";
+              ctx.fillText(formatSignedTime(hoverTime), hoverX, top + hoverMarker + 2 * px);
+            }
+
+            cursorGroupHit = undefined;
+            if (cursorEnabled) {
+              const values: Array<{ value: number | undefined; color: string; label: string }> = [
+                { value: cursorA, color: cursorColors[0], label: "X1" },
+                { value: cursorB, color: cursorColors[1], label: "X2" },
+              ];
+              for (const item of values) {
+                if (item.value === undefined) continue;
+                const x = u.valToPos(item.value, "x", true);
+                const top = u.bbox.top;
+                const bottom = u.bbox.top + u.bbox.height;
+
+                ctx.strokeStyle = item.color;
+                ctx.lineWidth = px;
+                ctx.setLineDash([4 * px, 4 * px]);
+                ctx.beginPath();
+                ctx.moveTo(x, top);
+                ctx.lineTo(x, bottom);
+                ctx.stroke();
+
+                ctx.setLineDash([]);
+                ctx.fillStyle = item.color;
+                ctx.beginPath();
+                ctx.moveTo(x - marker, top);
+                ctx.lineTo(x + marker, top);
+                ctx.lineTo(x, top + marker);
+                ctx.closePath();
+                ctx.fill();
+
+                ctx.beginPath();
+                ctx.moveTo(x - marker, bottom);
+                ctx.lineTo(x + marker, bottom);
+                ctx.lineTo(x, bottom - marker);
+                ctx.closePath();
+                ctx.fill();
+
+                ctx.font = `${9 * px}px "SFMono-Regular", Consolas, monospace`;
+                ctx.textAlign = "left";
+                ctx.textBaseline = "top";
+                ctx.fillText(item.label, x + marker + 2 * px, top + 2 * px);
+              }
+
+              const intervalLabel = cursorIntervalLabel();
+              if (intervalLabel && cursorA !== undefined && cursorB !== undefined) {
+                const cssX1 = u.valToPos(cursorA, "x");
+                const cssX2 = u.valToPos(cursorB, "x");
+                const cssMid = (cssX1 + cssX2) / 2;
+                const cssWidth = Math.max(94, intervalLabel.length * 6.2 + 18);
+                cursorGroupHit = {
+                  left: cssMid - cssWidth / 2,
+                  right: cssMid + cssWidth / 2,
+                  top: 10,
+                  bottom: 30,
+                };
+
+                const canvasMid = (u.valToPos(cursorA, "x", true) + u.valToPos(cursorB, "x", true)) / 2;
+                const canvasWidth = cssWidth * px;
+                const labelTop = u.bbox.top + 10 * px;
+                const labelHeight = 20 * px;
+                ctx.fillStyle = "rgba(30, 30, 30, 0.92)";
+                ctx.strokeStyle = "#555b64";
+                ctx.lineWidth = px;
+                ctx.fillRect(canvasMid - canvasWidth / 2, labelTop, canvasWidth, labelHeight);
+                ctx.strokeRect(canvasMid - canvasWidth / 2, labelTop, canvasWidth, labelHeight);
+                ctx.fillStyle = "#c4c4c4";
+                ctx.font = `${9 * px}px "SFMono-Regular", Consolas, monospace`;
+                ctx.textAlign = "center";
+                ctx.textBaseline = "middle";
+                ctx.fillText(intervalLabel, canvasMid, labelTop + labelHeight / 2);
+              }
+            }
+
             ctx.restore();
           },
         ],
@@ -600,22 +971,220 @@
     };
   }
 
-  function setCursorFromPlot() {
-    if (!cursorEnabled || !plot || plot.cursor.left === undefined) return;
-    const value = plot.posToVal(plot.cursor.left, "x");
-    if (nextCursor === "a") {
-      cursorA = value;
-      nextCursor = "b";
-    } else {
-      cursorB = value;
-      nextCursor = "a";
+  function plotPointerPosition(event: PointerEvent | WheelEvent) {
+    const chart = plot;
+    if (!chart) return undefined;
+    const rect = chart.over.getBoundingClientRect();
+    return {
+      x: event.clientX - rect.left,
+      y: event.clientY - rect.top,
+      width: rect.width,
+      height: rect.height,
+    };
+  }
+
+  function hitCursor(x: number): "a" | "b" | undefined {
+    if (!cursorEnabled || !plot) return undefined;
+    if (cursorA !== undefined && Math.abs(plot.valToPos(cursorA, "x") - x) <= markerHitPixels) return "a";
+    if (cursorB !== undefined && Math.abs(plot.valToPos(cursorB, "x") - x) <= markerHitPixels) return "b";
+    return undefined;
+  }
+
+  function hitCursorGroup(x: number, y: number): boolean {
+    const hit = cursorGroupHit;
+    return Boolean(hit && x >= hit.left && x <= hit.right && y >= hit.top && y <= hit.bottom);
+  }
+
+  function hitVerticalMarker(x: number, y: number): number | undefined {
+    if (!plot || x > markerHitPixels * 2) return undefined;
+    const height = plot.over.getBoundingClientRect().height;
+    for (const channel of visibleChannels) {
+      const rawY = plot.valToPos(0, yScaleKey(channel.id));
+      if (!Number.isFinite(rawY)) continue;
+      const markerY = Math.min(Math.max(rawY, markerHitPixels), Math.max(markerHitPixels, height - markerHitPixels));
+      if (Math.abs(markerY - y) <= markerHitPixels) return channel.id;
     }
-    plot.redraw(false, false);
+    return undefined;
+  }
+
+  function handlePlotPointerDown(event: PointerEvent) {
+    if (!plot || event.button !== 0) return;
+    const point = plotPointerPosition(event);
+    if (!point) return;
+
+    const cursor = hitCursor(point.x);
+    if (hitCursorGroup(point.x, point.y) && cursorA !== undefined && cursorB !== undefined) {
+      dragState = {
+        kind: "cursor-group",
+        pointerId: event.pointerId,
+        startClientX: event.clientX,
+        startA: cursorA,
+        startB: cursorB,
+      };
+      plot.over.style.cursor = "ew-resize";
+    } else if (cursor) {
+      dragState = { kind: "cursor", pointerId: event.pointerId, cursor };
+      plot.over.style.cursor = "ew-resize";
+    } else {
+      const channelId = hitVerticalMarker(point.x, point.y);
+      if (channelId !== undefined) {
+        dragState = {
+          kind: "vertical",
+          pointerId: event.pointerId,
+          id: channelId,
+          startClientY: event.clientY,
+          startOffset: verticalOffset.get(channelId) ?? 0,
+        };
+        plot.over.style.cursor = "ns-resize";
+      } else {
+        return;
+      }
+    }
+
+    plot.over.setPointerCapture(event.pointerId);
+    event.preventDefault();
+  }
+
+  function handlePlotPointerMove(event: PointerEvent) {
+    const chart = plot;
+    const point = plotPointerPosition(event);
+    if (!chart || !point) return;
+
+    if (!dragState) {
+      const nextHover = chart.posToVal(Math.min(Math.max(0, point.x), point.width), "x");
+      if (hoverTime !== nextHover) {
+        hoverTime = nextHover;
+        chart.redraw(false, false);
+      }
+      const cursor = hitCursor(point.x);
+      const group = hitCursorGroup(point.x, point.y);
+      const channelId = hitVerticalMarker(point.x, point.y);
+      chart.over.style.cursor = group || cursor ? "ew-resize" : channelId !== undefined ? "ns-resize" : "grab";
+      return;
+    }
+    if (dragState.pointerId !== event.pointerId) return;
+
+    if (dragState.kind === "cursor") {
+      const scale = chart.scales.x;
+      if (scale.min === undefined || scale.max === undefined) return;
+      const x = Math.min(Math.max(0, point.x), point.width);
+      const value = Math.min(Math.max(chart.posToVal(x, "x"), scale.min), scale.max);
+      if (dragState.cursor === "a") cursorA = value;
+      else cursorB = value;
+      chart.redraw(false, false);
+      return;
+    }
+
+    if (dragState.kind === "cursor-group") {
+      const scale = chart.scales.x;
+      if (scale.min === undefined || scale.max === undefined) return;
+      const secondsPerPixel = (scale.max - scale.min) / Math.max(point.width, 1);
+      const requested = (event.clientX - dragState.startClientX) * secondsPerPixel;
+      const low = Math.min(dragState.startA, dragState.startB);
+      const high = Math.max(dragState.startA, dragState.startB);
+      const delta = Math.min(Math.max(requested, scale.min - low), scale.max - high);
+      cursorA = dragState.startA + delta;
+      cursorB = dragState.startB + delta;
+      chart.redraw(false, false);
+      return;
+    }
+
+    if (dragState.kind === "vertical") {
+      const perDiv = verticalScale.get(dragState.id) ?? 1;
+      const unitsPerPixel = perDiv * verticalDivisions / Math.max(point.height, 1);
+      const nextOffset = dragState.startOffset + (event.clientY - dragState.startClientY) * unitsPerPixel;
+      updateVerticalOffset(dragState.id, nextOffset);
+      return;
+    }
+
+  }
+
+  function finishPlotDrag(event: PointerEvent) {
+    const chart = plot;
+    if (!chart || !dragState || dragState.pointerId !== event.pointerId) return;
+    dragState = undefined;
+    if (chart.over.hasPointerCapture(event.pointerId)) chart.over.releasePointerCapture(event.pointerId);
+    chart.over.style.cursor = "grab";
+  }
+
+  function handlePlotWheel(event: WheelEvent) {
+    const point = plotPointerPosition(event);
+    if (!point || event.deltaY === 0) return;
+
+    const verticalChannel = hitVerticalMarker(point.x, point.y);
+    if (verticalChannel === undefined) return;
+
+    event.preventDefault();
+    stepVerticalScale(verticalChannel, event.deltaY > 0 ? 1 : -1);
+  }
+
+  function navigationWheelRange(currentRange: number, direction: -1 | 1): number {
+    const currentPerDiv = currentRange / horizontalDivisions;
+    const currentIndex = timeDivOptions.reduce((best, value, index) =>
+      Math.abs(value - currentPerDiv) < Math.abs(timeDivOptions[best] - currentPerDiv) ? index : best,
+    0);
+    const nextIndex = Math.min(
+      timeDivOptions.length - 1,
+      Math.max(0, currentIndex + direction),
+    );
+    return timeDivOptions[nextIndex] * horizontalDivisions;
+  }
+
+  function applyNavigationView(min: number, max: number, committed: boolean) {
+    const range = max - min;
+    const nextPerDiv = range / horizontalDivisions;
+    const nearest = timeDivOptions.reduce((best, value) =>
+      Math.abs(value - nextPerDiv) < Math.abs(best - nextPerDiv) ? value : best,
+    timeDivOptions[0]);
+    timePerDiv = nearest;
+    horizontalOffset = Math.min(Math.max(0, -max), maxHorizontalOffset());
+    if (committed) scheduleViewRefresh(0);
+  }
+
+  function navigationBlocksPointer(u: uPlot, event: MouseEvent | WheelEvent): boolean {
+    const rect = u.over.getBoundingClientRect();
+    const x = event.clientX - rect.left;
+    const y = event.clientY - rect.top;
+    return Boolean(hitCursor(x) || hitCursorGroup(x, y) || hitVerticalMarker(x, y) !== undefined);
+  }
+
+  function handlePlotPointerLeave() {
+    if (dragState || hoverTime === undefined) return;
+    hoverTime = undefined;
+    plot?.redraw(false, false);
+  }
+
+  function bindPlotInteractions() {
+    if (!plot) return;
+    plot.over.style.cursor = "grab";
+    plot.over.addEventListener("pointerdown", handlePlotPointerDown);
+    plot.over.addEventListener("pointermove", handlePlotPointerMove);
+    plot.over.addEventListener("pointerup", finishPlotDrag);
+    plot.over.addEventListener("pointercancel", finishPlotDrag);
+    plot.over.addEventListener("pointerleave", handlePlotPointerLeave);
+    plot.over.addEventListener("wheel", handlePlotWheel, { passive: false });
+  }
+
+  function unbindPlotInteractions() {
+    if (!plot) return;
+    plot.over.removeEventListener("pointerdown", handlePlotPointerDown);
+    plot.over.removeEventListener("pointermove", handlePlotPointerMove);
+    plot.over.removeEventListener("pointerup", finishPlotDrag);
+    plot.over.removeEventListener("pointercancel", finishPlotDrag);
+    plot.over.removeEventListener("pointerleave", handlePlotPointerLeave);
+    plot.over.removeEventListener("wheel", handlePlotWheel);
   }
 
   function toggleCursor() {
     cursorEnabled = !cursorEnabled;
-    if (!cursorEnabled) {
+    if (cursorEnabled) {
+      const scale = plot?.scales.x;
+      const min = scale?.min ?? (-horizontalOffset - windowSeconds());
+      const max = scale?.max ?? -horizontalOffset;
+      const span = max - min;
+      cursorA = min + span * 0.3;
+      cursorB = min + span * 0.7;
+    } else {
       cursorA = undefined;
       cursorB = undefined;
     }
@@ -625,6 +1194,7 @@
   function rebuildPlot() {
     if (!plotHost) return;
     const rect = plotHost.getBoundingClientRect();
+    unbindPlotInteractions();
     plot?.destroy();
 
     const scales: Record<string, uPlot.Scale> = {
@@ -670,9 +1240,23 @@
       scales,
       axes,
       series,
-      plugins: [cursorPlugin()],
+      plugins: [
+        scopeNavigationPlugin({
+          panButton: 0,
+          bounds: () => [-recordedSeconds(), 0],
+          wheelRange: navigationWheelRange,
+          blockPan: navigationBlocksPointer,
+          blockWheel: navigationBlocksPointer,
+          onInteractionStart: () => {
+            viewNavigationActive = true;
+          },
+          onViewChange: applyNavigationView,
+        }),
+        cursorPlugin(),
+      ],
     }, [[], ...plotChannels.map(() => [])] as uPlot.AlignedData, plotHost);
 
+    bindPlotInteractions();
     applyHorizontalScale();
   }
 
@@ -694,20 +1278,17 @@
     rebuildPlot();
     resizeObserver = new ResizeObserver(resizePlot);
     resizeObserver.observe(plotHost);
-    let hiddenTicks = 0;
-    refreshTimer = setInterval(() => {
-      if (active) {
-        hiddenTicks = 0;
-        void refreshSnapshot();
-      } else if (++hiddenTicks >= 10) {
-        hiddenTicks = 0;
-        void refreshSnapshot();
-      }
-    }, 50);
+    refreshUnsubscribe = subscribeRefresh(50, () => {
+      if (active && !viewNavigationActive) void refreshSnapshot();
+    });
     return () => {
-      if (refreshTimer) clearInterval(refreshTimer);
+      refreshUnsubscribe?.();
+      refreshUnsubscribe = undefined;
       if (reconfigureTimer) clearTimeout(reconfigureTimer);
+      if (interactionRefreshTimer) clearTimeout(interactionRefreshTimer);
+      if (scopeViewSaveTimer) clearTimeout(scopeViewSaveTimer);
       resizeObserver?.disconnect();
+      unbindPlotInteractions();
       plot?.destroy();
       split?.destroy();
     };
@@ -735,25 +1316,62 @@
       <div class="channel-list">
         {#if connection}
           {#each plotChannels as channel}
-            <div class:active-channel={activeChannelId === channel.id} class="channel-row">
-              <input
-                id={`scope-channel-${channel.id}`}
-                class="scope-channel-checkbox"
-                type="checkbox"
-                checked={selectedIds.has(channel.id)}
-                onchange={() => toggleChannel(channel.id)}
-              />
-              <button class="channel-name channel-select" onclick={() => selectActiveChannel(channel.id)}>{channel.label}</button>
-              <span class="channel-unit">{channel.unit ?? ""}</span>
-              <select
-                class="channel-rate"
-                value={selectedRate(channel.id)}
-                disabled={commandBusy}
-                onchange={(event) => changeRate(channel.id, (event.currentTarget as HTMLSelectElement).value as ScopeRate)}
-              >
-                <option value="fast" disabled={!channel.supportsFast}>{rateLabel("fast")}</option>
-                <option value="normal" disabled={!channel.supportsNormal}>{rateLabel("normal")}</option>
-              </select>
+            <div class="channel-entry">
+              <div class:active-channel={activeChannelId === channel.id} class="channel-row">
+                <input
+                  id={`scope-channel-${channel.id}`}
+                  class="scope-channel-checkbox"
+                  type="checkbox"
+                  checked={selectedIds.has(channel.id)}
+                  onchange={() => toggleChannel(channel.id)}
+                />
+                <button class="channel-name channel-select" onclick={() => selectActiveChannel(channel.id)}>
+                  <span
+                    class:inactive={!selectedIds.has(channel.id)}
+                    class="channel-color-mark"
+                    style={selectedIds.has(channel.id) ? `background:${traceColor(channel)}` : ""}
+                  ></span>
+                  <span class="channel-label">{channel.label}</span>
+                </button>
+                <span class="channel-unit">{channel.unit ?? ""}</span>
+                <select
+                  class="channel-rate"
+                  value={selectedRate(channel.id)}
+                  disabled={commandBusy}
+                  onchange={(event) => changeRate(channel.id, (event.currentTarget as HTMLSelectElement).value as ScopeRate)}
+                >
+                  <option value="fast" disabled={!channel.supportsFast}>{rateLabel("fast")}</option>
+                  <option value="normal" disabled={!channel.supportsNormal}>{rateLabel("normal")}</option>
+                </select>
+              </div>
+              {#if selectedIds.has(channel.id)}
+                {@const scaleDisplay = engineeringScale(verticalScale.get(channel.id) ?? 1, channel.unit ?? "")}
+                <div class="channel-y-controls">
+                  <label class="channel-y-field">
+                    <span>Scale/div</span>
+                    <input
+                      type="number"
+                      min="0.000001"
+                      step="any"
+                      value={scaleDisplay.value}
+                      onfocus={() => selectActiveChannel(channel.id)}
+                      onchange={(event) => commitEngineeringScale(channel.id, (event.currentTarget as HTMLInputElement).value, scaleDisplay.factor)}
+                    />
+                    <em>{scaleDisplay.unit}/div</em>
+                  </label>
+                  <label class="channel-y-field">
+                    <span>Y Pos</span>
+                    <input
+                      type="number"
+                      step="any"
+                      value={verticalOffset.get(channel.id) ?? 0}
+                      onfocus={() => selectActiveChannel(channel.id)}
+                      oninput={(event) => updateVerticalOffset(channel.id, Number((event.currentTarget as HTMLInputElement).value))}
+                    />
+                    <em>{channel.unit ?? ""}</em>
+                  </label>
+                </div>
+              {/if}
             </div>
           {/each}
         {:else}
@@ -777,7 +1395,12 @@
         </label>
         <div class="scope-readout">
           <span>Position</span>
-          <strong>{horizontalOffset === 0 ? "Latest" : `-${formatTime(horizontalOffset)}`}</strong>
+          <div class="scope-position-readout">
+            <strong>{followLatest ? "Latest" : `-${formatTime(horizontalOffset)}`}</strong>
+            {#if horizontalOffset > 0}
+              <button class="scope-latest-button" onclick={goLatest}>Latest</button>
+            {/if}
+          </div>
         </div>
       </div>
       <input
@@ -792,59 +1415,31 @@
       />
     </section>
 
-    <section class="side-section">
-      <div class="section-heading">VERTICAL</div>
-      {#if activeChannelId !== undefined}
-        {@const activeChannel = plotChannels.find((channel) => channel.id === activeChannelId)}
-        {#if activeChannel}
-          <div class="scope-active-channel">
-            <span class="trace-mark" style={`background:${traceColor(activeChannel)}`}></span>
-            <strong>{activeChannel.label}</strong>
-            <span>{activeChannel.unit ?? ""}</span>
-          </div>
-          <div class="scope-control-grid">
-            <label>
-              <span>Scale/div</span>
-              <div class="scope-unit-input">
-                <input
-                  type="number"
-                  min="0.000001"
-                  step="any"
-                  value={verticalScale.get(activeChannelId) ?? 1}
-                  oninput={(event) => updateVerticalScale(activeChannelId!, Number((event.currentTarget as HTMLInputElement).value))}
-                />
-                <em>{activeChannel.unit ?? ""}/div</em>
-              </div>
-            </label>
-            <label>
-              <span>Offset</span>
-              <div class="scope-unit-input">
-                <input
-                  type="number"
-                  step="any"
-                  value={verticalOffset.get(activeChannelId) ?? 0}
-                  oninput={(event) => updateVerticalOffset(activeChannelId!, Number((event.currentTarget as HTMLInputElement).value))}
-                />
-                <em>{activeChannel.unit ?? ""}</em>
-              </div>
-            </label>
-          </div>
-        {/if}
-      {:else}
-        <div class="empty-hint">Select a channel to adjust its vertical scale.</div>
-      {/if}
-    </section>
-
     {#if cursorEnabled}
       <section class="side-section">
         <div class="section-heading">CURSOR</div>
         <div class="property-grid">
-          <span>X1</span><strong>{cursorA === undefined ? "—" : formatSignedTime(cursorA)}</strong>
-          <span>X2</span><strong>{cursorB === undefined ? "—" : formatSignedTime(cursorB)}</strong>
+          <span>X1</span><strong style={`color:${cursorColors[0]}`}>{cursorA === undefined ? "—" : formatSignedTime(cursorA)}</strong>
+          <span>X2</span><strong style={`color:${cursorColors[1]}`}>{cursorB === undefined ? "—" : formatSignedTime(cursorB)}</strong>
           <span>Δt</span><strong>{cursorA === undefined || cursorB === undefined ? "—" : formatTime(Math.abs(cursorB - cursorA))}</strong>
           <span>1/Δt</span><strong>{cursorA === undefined || cursorB === undefined || cursorA === cursorB ? "—" : `${(1 / Math.abs(cursorB - cursorA)).toFixed(2)} Hz`}</strong>
         </div>
-        <div class="scope-pending">Click the waveform to place X1, then X2.</div>
+        {#if cursorReadouts.length > 0}
+          <div class="scope-cursor-readouts">
+            <div class="scope-cursor-readout-header">
+              <span>Channel</span><span>X1</span><span>X2</span><span>ΔY</span>
+            </div>
+            {#each cursorReadouts as row}
+              <div class="scope-cursor-readout-row">
+                <span class="scope-cursor-channel"><i style={`background:${row.color}`}></i>{row.label}</span>
+                <strong>{formatCursorValue(row.a, row.unit)}</strong>
+                <strong>{formatCursorValue(row.b, row.unit)}</strong>
+                <strong>{formatCursorValue(row.delta, row.unit)}</strong>
+              </div>
+            {/each}
+          </div>
+        {/if}
+        <div class="scope-pending">Drag X1/X2 lines or their top/bottom markers. Drag empty plot space to browse history.</div>
       </section>
     {/if}
 
@@ -864,20 +1459,11 @@
   <section id="scope-workspace" class="scope-workspace">
     <div class="editor-tabs"><div class="editor-tab active"><i class="codicon codicon-graph-line"></i> Scope</div></div>
     <div class="plot-header">
-      {#if visibleChannels.length > 0}
-        {#each visibleChannels as channel, index}
-          <button class="trace-key trace-key-button" onclick={() => selectActiveChannel(channel.id)}>
-            <span class="trace-mark" style={`background:${traceColor(channel)}`}></span>
-            {channel.label}
-            <span class="value">{latestValues[index] ?? "—"}</span>
-          </button>
-        {/each}
-      {:else}
+      {#if visibleChannels.length === 0}
         <div class="plot-placeholder">{connection ? "Select channels and press Run." : "Connect a device before using Scope."}</div>
       {/if}
-      <div class="plot-meta">{snapshot?.sampleCount ?? 0} samples · loss {snapshot?.lostFrames ?? 0}</div>
+      <div class="plot-meta">{snapshot ? snapshot.recordedSeconds.toFixed(3) + " s recorded" : "0.000 s recorded"} · loss {snapshot?.lostFrames ?? 0}</div>
     </div>
-    <!-- svelte-ignore a11y_click_events_have_key_events a11y_no_static_element_interactions -->
-    <div bind:this={plotHost} class="plot-host scope-plot-interactive" onclick={setCursorFromPlot}></div>
+    <div bind:this={plotHost} class="plot-host scope-plot-interactive"></div>
   </section>
 </div>
