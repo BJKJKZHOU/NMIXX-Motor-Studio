@@ -6,7 +6,6 @@
     listParameters,
     onParametersChanged,
     readCachedParameters,
-    readCurrentParameters,
     readParameters,
     writeParameter,
   } from "../parameters/api";
@@ -270,8 +269,17 @@
       metadata = Object.fromEntries(entries.map((item) => [item.symbol, item]));
 
       const readable = entries.filter((item) => item.access.toLowerCase().includes("r"));
-      const results = await readCurrentParameters(readable.map((item) => item.id));
+      const results = await readCachedParameters(readable.map((item) => item.id));
       if (token !== generation || connection !== activeConnection) return;
+
+      const missing = results.filter((item) => item.value === null);
+      if (missing.length > 0) {
+        const symbols = missing
+          .map((item) => readable.find((entry) => entry.id === item.id)?.symbol ?? `0x${item.id.toString(16).padStart(4, "0")}`)
+          .join(", ");
+        throw new Error(`Shared Parameter cache is missing: ${symbols}`);
+      }
+
       applyValues(readable, results);
     } catch (error) {
       if (token === generation) onError(error);
