@@ -1,9 +1,10 @@
 <script lang="ts">
   import { onMount, untrack } from "svelte";
   import type { ConnectionInfo } from "../connection/types";
+  import { subscribeRefresh } from "../refreshScheduler";
   import {
     listParameters,
-    onParametersRefreshed,
+    onParametersChanged,
     readCachedParameters,
     readCurrentParameters,
     readParameters,
@@ -22,11 +23,13 @@
     readTuningExperimentSnapshot,
     startTuningExperiment,
     stopTuningExperiment,
+    tuningExperimentDefaults,
     tuningExperimentStatus,
   } from "./tuningExperiment";
   import type {
     TuningExperimentSnapshot,
     TuningExperimentState,
+    TuningExperimentSelection,
   } from "./tuningExperiment";
 
   type Props = {
@@ -89,23 +92,29 @@
   let writing = $state<Set<string>>(new Set());
   let loading = $state(false);
   let motionActionBusy = $state(false);
+  let stopActionBusy = $state(false);
   let copyAccelToDecel = $state(false);
   let experimentState = $state<TuningExperimentState>("IDLE");
   let experimentMessage = $state("");
   let experimentSnapshot = $state<TuningExperimentSnapshot | undefined>(undefined);
   let experimentRefreshBusy = false;
-  let experimentTimer: ReturnType<typeof setInterval> | undefined;
+  let experimentRefreshUnsubscribe: (() => void) | undefined;
   let generation = 0;
+  let waveformTab = $state<"waveform" | "channels" | "scale">("waveform");
+  let tuningSelections = $state<Record<number, "fast" | "normal">>({});
+  let displayMultipliers = $state<Record<number, number>>({});
+  let tuningSelectionMode = $state<MotionMode | undefined>(undefined);
+  let tuningTimePerDiv = $state(20e-3);
 
   onMount(() => {
     void initializeMotion().catch(onError);
     void refreshExperiment();
 
-    experimentTimer = setInterval(() => void refreshExperiment(), 100);
+    experimentRefreshUnsubscribe = subscribeRefresh(50, () => void refreshExperiment());
 
     let disposed = false;
     let unlisten: (() => void) | undefined;
-    onParametersRefreshed(() => void refreshFromCache())
+    onParametersChanged(() => void refreshFromCache())
       .then((stop) => {
         if (disposed) stop();
         else unlisten = stop;
@@ -114,16 +123,19 @@
     return () => {
       disposed = true;
       unlisten?.();
-      if (experimentTimer) clearInterval(experimentTimer);
-      experimentTimer = undefined;
+      experimentRefreshUnsubscribe?.();
+      experimentRefreshUnsubscribe = undefined;
     };
   });
 
   $effect(() => {
     const activeConnection = connection;
     const token = ++generation;
+    tuningSelectionMode = undefined;
 
     if (!activeConnection) {
+      tuningSelections = {};
+      displayMultipliers = {};
       metadata = {};
       values = {};
       drafts = {};
@@ -136,6 +148,14 @@
     }
 
     untrack(() => void load(activeConnection, token));
+  });
+
+  $effect(() => {
+    if (!connection) return;
+    const mode = $motionState.mode;
+    if (tuningSelectionMode === mode) return;
+    tuningSelectionMode = mode;
+    untrack(() => void loadTuningDefaults());
   });
 
   function valueText(value: ParameterValue | null | undefined): string {
@@ -283,14 +303,11 @@
     const value = enumValue(symbol, enumSymbol);
     if (!meta || value === null || locked(symbol)) return;
 
-    const previous = values[symbol] ?? null;
-    values = { ...values, [symbol]: { type: "u8", value } };
     writing = new Set(writing).add(symbol);
     try {
       await writeParameter(meta.id, { type: "u8", value });
       await refreshSymbols(refresh);
     } catch (error) {
-      values = { ...values, [symbol]: previous };
       onError(error);
     } finally {
       const next = new Set(writing);
@@ -354,6 +371,75 @@
     if (checked) updateMotionField("deceleration", $motionState.acceleration);
   }
 
+  function selectedTuningEntries(): TuningExperimentSelection[] {
+    return Object.entries(tuningSelections)
+      .map(([id, rate]) => ({ id: Number(id), rate }))
+      .filter((entry) => Number.isFinite(entry.id));
+  }
+
+  function selectedFastCount(): number {
+    return selectedTuningEntries().filter((entry) => entry.rate === "fast").length;
+  }
+
+  function selectedNormalCount(): number {
+    return selectedTuningEntries().filter((entry) => entry.rate === "normal").length;
+  }
+
+  function selectionWithinLimits(): boolean {
+    if (!connection) return false;
+    return selectedFastCount() <= connection.fastMaxChannels
+      && selectedNormalCount() <= connection.normalMaxChannels;
+  }
+
+  async function loadTuningDefaults() {
+    try {
+      const defaults = await tuningExperimentDefaults();
+      const next: Record<number, "fast" | "normal"> = {};
+      const nextMultipliers = { ...displayMultipliers };
+      for (const selection of defaults) {
+        next[selection.id] = selection.rate;
+        if (!(selection.id in nextMultipliers)) nextMultipliers[selection.id] = 1;
+      }
+      tuningSelections = next;
+      displayMultipliers = nextMultipliers;
+    } catch (error) {
+      onError(error);
+    }
+  }
+
+  function toggleTuningChannel(id: number, checked: boolean) {
+    if (experimentActive()) return;
+    const next = { ...tuningSelections };
+    if (checked) {
+      const channel = connection?.channels.find((item) => item.id === id);
+      if (!channel) return;
+      next[id] = channel.supportsFast ? "fast" : "normal";
+      if (!(id in displayMultipliers)) displayMultipliers = { ...displayMultipliers, [id]: 1 };
+    } else {
+      delete next[id];
+    }
+    tuningSelections = next;
+  }
+
+  function setTuningRate(id: number, rate: "fast" | "normal") {
+    const channel = connection?.channels.find((item) => item.id === id);
+    if (!channel || experimentActive()) return;
+    if (rate === "fast" && !channel.supportsFast) return;
+    if (rate === "normal" && !channel.supportsNormal) return;
+    tuningSelections = { ...tuningSelections, [id]: rate };
+  }
+
+  function setDisplayMultiplier(id: number, value: number) {
+    if (!Number.isFinite(value) || value <= 0) return;
+    displayMultipliers = { ...displayMultipliers, [id]: value };
+  }
+
+  function resetDisplayMultipliers() {
+    const next = { ...displayMultipliers };
+    for (const id of Object.keys(tuningSelections)) next[Number(id)] = 1;
+    displayMultipliers = next;
+  }
+
   function experimentActive(): boolean {
     return experimentState === "PREPARING"
       || experimentState === "RUNNING"
@@ -361,19 +447,26 @@
   }
 
   function motionLocked(): boolean {
-    return motorState === MOTOR_RUN || motionActionBusy || experimentActive();
+    return motorState === MOTOR_RUN || motionActionBusy || stopActionBusy || experimentActive();
   }
 
   async function refreshExperiment() {
     if (!connection || experimentRefreshBusy) return;
     experimentRefreshBusy = true;
     try {
+      const previousState = experimentState;
       const status = await tuningExperimentStatus();
       experimentState = status.state;
       experimentMessage = status.message ?? "";
 
-      if (status.state !== "IDLE") {
-        experimentSnapshot = await readTuningExperimentSnapshot();
+      const active = status.state === "PREPARING"
+        || status.state === "RUNNING"
+        || status.state === "STOPPING";
+      const finalTransition = (status.state === "COMPLETED" || status.state === "FAILED")
+        && (previousState !== status.state || !experimentSnapshot);
+
+      if (active || finalTransition) {
+        experimentSnapshot = await readTuningExperimentSnapshot(tuningTimePerDiv * 10, 0);
       }
     } catch (error) {
       if (experimentState !== "IDLE") onError(error);
@@ -386,16 +479,18 @@
     return !!connection
       && motorState === MOTOR_ENABLED
       && !motionActionBusy
+      && !stopActionBusy
       && !experimentActive()
       && !hasDirtyDraft()
       && connection.motion.run
+      && selectedTuningEntries().length > 0
+      && selectionWithinLimits()
       && motionModeSupported($motionState.mode);
   }
 
   function canStopMotion(): boolean {
     return !!connection
-      && experimentActive()
-      && !motionActionBusy
+      && !stopActionBusy
       && connection.motion.stop;
   }
 
@@ -403,10 +498,11 @@
     if (!canRunMotion()) return;
     motionActionBusy = true;
     try {
-      const status = await startTuningExperiment();
+      const status = await startTuningExperiment(selectedTuningEntries());
       experimentState = status.state;
       experimentMessage = status.message ?? "";
-      experimentSnapshotState = undefined;
+      experimentSnapshot = undefined;
+      waveformTab = "waveform";
       await refreshExperiment();
     } catch (error) {
       onError(error);
@@ -415,9 +511,25 @@
     }
   }
 
+  async function requestExperimentWindow(
+    windowSeconds: number,
+    endOffsetSeconds: number,
+    maxPoints = 3000,
+  ) {
+    if (!connection || experimentRefreshBusy) return;
+    experimentRefreshBusy = true;
+    try {
+      experimentSnapshot = await readTuningExperimentSnapshot(windowSeconds, endOffsetSeconds, maxPoints);
+    } catch (error) {
+      onError(error);
+    } finally {
+      experimentRefreshBusy = false;
+    }
+  }
+
   async function stopTuningMotion() {
     if (!canStopMotion()) return;
-    motionActionBusy = true;
+    stopActionBusy = true;
     try {
       const status = await stopTuningExperiment();
       experimentState = status.state;
@@ -426,7 +538,7 @@
     } catch (error) {
       onError(error);
     } finally {
-      motionActionBusy = false;
+      stopActionBusy = false;
     }
   }
 </script>
@@ -454,7 +566,88 @@
               </div>
             </div>
             {#if experimentMessage}<div class="experiment-message">{experimentMessage}</div>{/if}
-            <ExperimentWaveform result={experimentSnapshot} />
+
+            <div class="waveform-tabs" role="tablist" aria-label="Experiment waveform views">
+              <button class:active={waveformTab === "waveform"} onclick={() => waveformTab = "waveform"}>Waveform</button>
+              <button class:active={waveformTab === "channels"} onclick={() => waveformTab = "channels"}>
+                Channels {selectedTuningEntries().length}
+              </button>
+              <button class:active={waveformTab === "scale"} onclick={() => waveformTab = "scale"}>Scale</button>
+            </div>
+
+            <div class="waveform-tab-content">
+              {#if waveformTab === "waveform"}
+                <div class="waveform-tools">
+                  <span>Time/div</span>
+                  <strong>{tuningTimePerDiv >= 1
+                    ? `${tuningTimePerDiv.toFixed(2)} s`
+                    : tuningTimePerDiv >= 1e-3
+                      ? `${(tuningTimePerDiv * 1e3).toFixed(tuningTimePerDiv < 10e-3 ? 2 : 1)} ms`
+                      : `${Math.round(tuningTimePerDiv * 1e6)} µs`}</strong>
+                </div>
+                <ExperimentWaveform
+                  result={experimentSnapshot}
+                  multipliers={displayMultipliers}
+                  bind:timePerDiv={tuningTimePerDiv}
+                  onViewRequest={(windowSeconds, endOffsetSeconds, maxPoints) =>
+                    void requestExperimentWindow(windowSeconds, endOffsetSeconds, maxPoints)}
+                />
+              {:else if waveformTab === "channels"}
+                <div class="tuning-channel-list">
+                  {#each connection.channels as channel (channel.id)}
+                    <div class="tuning-channel-row">
+                      <label>
+                        <input
+                          type="checkbox"
+                          checked={tuningSelections[channel.id] !== undefined}
+                          disabled={experimentActive()}
+                          onchange={(event) => toggleTuningChannel(channel.id, (event.currentTarget as HTMLInputElement).checked)}
+                        />
+                        <span>{channel.label}</span>
+                        <small>{channel.unit ?? ""}</small>
+                      </label>
+                      {#if tuningSelections[channel.id] !== undefined}
+                        <select
+                          class="compact-select"
+                          value={tuningSelections[channel.id]}
+                          disabled={experimentActive()}
+                          onchange={(event) => setTuningRate(channel.id, (event.currentTarget as HTMLSelectElement).value as "fast" | "normal")}
+                        >
+                          {#if channel.supportsFast}<option value="fast">FAST</option>{/if}
+                          {#if channel.supportsNormal}<option value="normal">NORMAL</option>{/if}
+                        </select>
+                      {/if}
+                    </div>
+                  {/each}
+                  <div class="tuning-channel-limits" class:invalid={!selectionWithinLimits()}>
+                    <span>FAST {selectedFastCount()} / {connection.fastMaxChannels}</span>
+                    <span>NORMAL {selectedNormalCount()} / {connection.normalMaxChannels}</span>
+                  </div>
+                </div>
+              {:else}
+                <div class="tuning-scale-list">
+                  {#each connection.channels.filter((channel) => tuningSelections[channel.id] !== undefined) as channel (channel.id)}
+                    <label class="tuning-scale-row">
+                      <span>{channel.label}</span>
+                      <span class="scale-editor">
+                        <span>×</span>
+                        <input
+                          class="compact-input mono"
+                          type="number"
+                          min="0.000001"
+                          step="any"
+                          value={displayMultipliers[channel.id] ?? 1}
+                          onchange={(event) => setDisplayMultiplier(channel.id, Number((event.currentTarget as HTMLInputElement).value))}
+                        />
+                      </span>
+                    </label>
+                  {/each}
+                  <div class="tuning-scale-actions">
+                    <button onclick={resetDisplayMultipliers}>Reset ×1</button>
+                  </div>
+                </div>
+              {/if}
+            </div>
           </section>
 
           <section class="motion-panel">
@@ -696,7 +889,7 @@
                 <vscode-button
                   secondary
                   disabled={!canStopMotion()}
-                  title="Stop the active tuning experiment and retain its waveform"
+                  title="Stop motor motion and end the tuning experiment"
                   onclick={() => void stopTuningMotion()}
                 >Stop</vscode-button>
               </div>
@@ -867,6 +1060,136 @@
     align-items: baseline;
     justify-content: space-between;
     gap: 12px;
+  }
+
+  .waveform-tabs {
+    display: flex;
+    align-items: center;
+    gap: 14px;
+    margin-top: 8px;
+    border-bottom: 1px solid var(--vscode-panel-border);
+  }
+
+  .waveform-tabs button {
+    appearance: none;
+    border: 0;
+    border-bottom: 1px solid transparent;
+    background: transparent;
+    color: var(--vscode-descriptionForeground);
+    padding: 5px 1px 6px;
+    margin-bottom: -1px;
+    font: inherit;
+    font-size: 11px;
+    cursor: pointer;
+  }
+
+  .waveform-tabs button:hover {
+    color: var(--vscode-foreground);
+  }
+
+  .waveform-tabs button.active {
+    color: var(--vscode-foreground);
+    border-bottom-color: var(--vscode-focusBorder);
+  }
+
+  .waveform-tab-content {
+    min-width: 0;
+    min-height: 340px;
+    height: 340px;
+    padding-top: 8px;
+  }
+
+  .waveform-tools {
+    height: 20px;
+    display: flex;
+    justify-content: flex-end;
+    gap: 6px;
+    align-items: baseline;
+    color: var(--vscode-descriptionForeground);
+    font-size: 10px;
+  }
+
+  .waveform-tools strong {
+    color: var(--vscode-foreground);
+    font-weight: 500;
+  }
+
+  .tuning-channel-list,
+  .tuning-scale-list {
+    height: 100%;
+    overflow: auto;
+  }
+
+  .tuning-channel-row,
+  .tuning-scale-row {
+    min-height: 30px;
+    display: grid;
+    grid-template-columns: minmax(0, 1fr) 94px;
+    align-items: center;
+    gap: 10px;
+    border-bottom: 1px solid color-mix(in srgb, var(--vscode-panel-border) 55%, transparent);
+    font-size: 12px;
+  }
+
+  .tuning-channel-row label {
+    min-width: 0;
+    display: grid;
+    grid-template-columns: auto minmax(0, 1fr) auto;
+    align-items: center;
+    gap: 7px;
+  }
+
+  .tuning-channel-row small {
+    color: var(--vscode-descriptionForeground);
+    font-size: 10px;
+  }
+
+  .tuning-channel-limits {
+    display: flex;
+    gap: 16px;
+    padding-top: 8px;
+    color: var(--vscode-descriptionForeground);
+    font-size: 10px;
+  }
+
+  .tuning-channel-limits.invalid {
+    color: var(--nmixx-status-errorForeground);
+  }
+
+  .tuning-scale-row > span:first-child {
+    min-width: 0;
+  }
+
+  .scale-editor {
+    display: grid;
+    grid-template-columns: auto 1fr;
+    gap: 5px;
+    align-items: center;
+  }
+
+  .scale-editor input {
+    width: 72px;
+  }
+
+  .tuning-scale-actions {
+    display: flex;
+    justify-content: flex-end;
+    padding-top: 8px;
+  }
+
+  .tuning-scale-actions button {
+    appearance: none;
+    border: 0;
+    background: transparent;
+    color: var(--vscode-descriptionForeground);
+    padding: 3px 0;
+    font: inherit;
+    font-size: 11px;
+    cursor: pointer;
+  }
+
+  .tuning-scale-actions button:hover {
+    color: var(--vscode-foreground);
   }
 
   .experiment-status {

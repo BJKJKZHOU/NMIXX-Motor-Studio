@@ -19,6 +19,7 @@ export type ParameterRange = {
   exclusiveMin: boolean;
   exclusiveMax: boolean;
   maxSymbol: string | null;
+  minBinding: string | null;
   maxBinding: string | null;
   maxBindings: string[];
 };

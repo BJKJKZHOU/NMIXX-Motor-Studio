@@ -1,5 +1,5 @@
 <script lang="ts">
-  import { onDestroy } from "svelte";
+  import { onDestroy, onMount } from "svelte";
   import ConnectionPage from "./connection/ConnectionPage.svelte";
   import { disconnectDevice } from "./connection/api";
   import type { ConnectionInfo } from "./connection/types";
@@ -17,19 +17,21 @@
   import { initializePersistenceBaseline, listParameters, readParameter, refreshAllParameters as refreshParameterCache } from "./parameters/api";
   import { clearParameterPersistence, commitParameterPersistence } from "./parameters/persistence";
   import type { ParameterMetadata, ParameterValue } from "./parameters/types";
+  import { subscribeRefresh } from "./refreshScheduler";
 
   type Page = "connection" | "motor" | "encoder" | "limits" | "control" | "tuning" | "motion" | "analysis" | "parameters" | "events" | "automation";
   type ControlLoopPage = "current" | "speed" | "position";
 
   const GLOBAL_SYMBOLS = ["PARAM_MOTOR_STATE", "PARAM_RUN_IQ", "PARAM_RUN_WM", "PARAM_RUN_POSITION"] as const;
   const MOTOR_DISABLED = 0;
-  const MOTOR_RUN = 2;
+  const DEFAULT_SCHEMA_PATH = "../../../AxDr_L_Motor/build/host/axdr-host-schema.toml";
+  const SCHEMA_PATH_STORAGE_KEY = "nmixx.connection.hostSchemaPath";
 
   let activePage: Page = "connection";
   let activeControlLoop: ControlLoopPage = "current";
   let controlArchitectureExpanded = true;
   let connectionPort = "";
-  let connectionSchemaPath = "../../../AxDr_L_Motor/build/host/axdr-host-schema.toml";
+  let connectionSchemaPath = DEFAULT_SCHEMA_PATH;
   let connection: ConnectionInfo | undefined;
   let errorText = "";
   let scopeSummary: ScopeSummary = { state: "STOPPED", selectedChannels: 0, lostFrames: 0 };
@@ -40,12 +42,13 @@
   let speedWm: number | null = null;
   let positionText = "—";
   let globalActionBusy = false;
+  let globalStopBusy = false;
   let parameterSaveAvailable = false;
   let saveFeedback: "idle" | "saved" = "idle";
   let saveFeedbackTimer: ReturnType<typeof setTimeout> | undefined;
   let readingParameters = false;
   let refreshingGlobalStatus = false;
-  let globalRefreshTimer: ReturnType<typeof setInterval> | undefined;
+  let globalRefreshUnsubscribe: (() => void) | undefined;
 
   const workflowPages: Array<{ id: Page; title: string; icon: string }> = [
     { id: "connection", title: "Connection", icon: "codicon-plug" },
@@ -66,6 +69,14 @@
 
   function setError(error: unknown) {
     errorText = error instanceof Error ? error.message : String(error);
+  }
+
+  function persistConnectionSchemaPath(path: string) {
+    try {
+      localStorage.setItem(SCHEMA_PATH_STORAGE_KEY, path);
+    } catch {
+      // Keep the in-memory path usable even when WebView storage is unavailable.
+    }
   }
 
   async function setConnection(next: ConnectionInfo | undefined) {
@@ -91,15 +102,12 @@
           .map((item) => [item.symbol, item.id]),
       );
       await refreshGlobalStatus();
-      globalRefreshTimer = setInterval(() => void refreshGlobalStatus(), 500);
     } catch (error) {
       setError(error);
     }
   }
 
   function clearGlobalStatus() {
-    if (globalRefreshTimer) clearInterval(globalRefreshTimer);
-    globalRefreshTimer = undefined;
     parameterRegistry = [];
     globalIds = {};
     motorState = null;
@@ -107,6 +115,7 @@
     speedWm = null;
     positionText = "—";
     globalActionBusy = false;
+    globalStopBusy = false;
     parameterSaveAvailable = false;
     saveFeedback = "idle";
     if (saveFeedbackTimer) clearTimeout(saveFeedbackTimer);
@@ -145,8 +154,6 @@
       speedWm = numeric(values.get(globalIds.PARAM_RUN_WM) ?? null);
       positionText = position(values.get(globalIds.PARAM_RUN_POSITION) ?? null);
     } catch (error) {
-      if (globalRefreshTimer) clearInterval(globalRefreshTimer);
-      globalRefreshTimer = undefined;
       setError(error);
     } finally {
       refreshingGlobalStatus = false;
@@ -203,8 +210,16 @@
   }
 
   async function stopCurrentMotorOperation() {
-    if (!connection || motorState !== MOTOR_RUN || globalActionBusy) return;
-    await startGlobalAction("ACTION_MOTOR_STOP", stopMotor);
+    if (!connection || globalStopBusy) return;
+    globalStopBusy = true;
+    try {
+      await stopMotor();
+      await refreshGlobalStatus();
+    } catch (error) {
+      setError(error);
+    } finally {
+      globalStopBusy = false;
+    }
   }
 
   async function savePersistentParameters() {
@@ -213,7 +228,19 @@
     await startGlobalAction("ACTION_PARAMETER_SAVE", saveParameters);
   }
 
+  onMount(() => {
+    try {
+      const storedPath = localStorage.getItem(SCHEMA_PATH_STORAGE_KEY);
+      if (storedPath?.trim()) connectionSchemaPath = storedPath;
+    } catch {
+      // Fall back to the development default when WebView storage is unavailable.
+    }
+    globalRefreshUnsubscribe = subscribeRefresh(500, () => void refreshGlobalStatus());
+  });
+
   onDestroy(() => {
+    globalRefreshUnsubscribe?.();
+    globalRefreshUnsubscribe = undefined;
     clearGlobalStatus();
     disconnectDevice().catch(() => undefined);
   });
@@ -254,7 +281,7 @@
         </button>
         <button
           class="tool-button global-action stop-action"
-          disabled={!connection || motorState !== MOTOR_RUN || globalActionBusy}
+          disabled={!connection || globalStopBusy}
           onclick={() => void stopCurrentMotorOperation()}
           title="Stop current motor operation"
         >
@@ -286,7 +313,7 @@
 
     <main class="main-area">
         {#if activePage === "connection"}
-          <ConnectionPage {connection} bind:port={connectionPort} bind:schemaPath={connectionSchemaPath} onConnected={(next) => void setConnection(next)} onDisconnected={() => void setConnection(undefined)} onError={setError} />
+          <ConnectionPage {connection} bind:port={connectionPort} bind:schemaPath={connectionSchemaPath} onSchemaPathChanged={persistConnectionSchemaPath} onConnected={(next) => void setConnection(next)} onDisconnected={() => void setConnection(undefined)} onError={setError} />
         {:else if activePage === "motor"}
           <div class="domain-page-container">
             <MotorPage {connection} onError={setError} />

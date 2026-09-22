@@ -1,9 +1,10 @@
 <script lang="ts">
   import { onMount, untrack } from "svelte";
   import type { ConnectionInfo } from "../connection/types";
-  import { listParameters, onParametersRefreshed, readCachedParameters, readCurrentParameters, readParameters, writeParameter } from "../parameters/api";
+  import { listParameters, onParametersChanged, readCachedParameters, readCurrentParameters, readParameters, writeParameter } from "../parameters/api";
   import type { ParameterMetadata, ParameterValue } from "../parameters/types";
   import { modifiedParameterIds } from "../parameters/persistence";
+  import { subscribeRefresh } from "../refreshScheduler";
 
   type Props = {
     connection: ConnectionInfo | undefined;
@@ -14,6 +15,9 @@
   const SPEED_USER_SYMBOL = "PARAM_LIMIT_WM_MAX";
   const CURRENT_HARDWARE_SYMBOL = "PARAM_LIMIT_I_HARDWARE";
   const SPEED_HARDWARE_SYMBOL = "PARAM_LIMIT_WM_HARDWARE";
+  const VBUS_MIN_SYMBOL = "PARAM_LIMIT_VBUS_MIN";
+  const VBUS_ACTUAL_SYMBOL = "PARAM_ADC_VBUS";
+  const VBUS_MAX_SYMBOL = "PARAM_LIMIT_VBUS_MAX";
 
   const OPERATING_LIMITS = [
     { userSymbol: CURRENT_USER_SYMBOL, hardwareSymbol: CURRENT_HARDWARE_SYMBOL },
@@ -25,6 +29,9 @@
     SPEED_USER_SYMBOL,
     CURRENT_HARDWARE_SYMBOL,
     SPEED_HARDWARE_SYMBOL,
+    VBUS_MIN_SYMBOL,
+    VBUS_ACTUAL_SYMBOL,
+    VBUS_MAX_SYMBOL,
   ];
 
   let { connection, onError = () => undefined }: Props = $props();
@@ -34,20 +41,27 @@
   let drafts = $state<Record<string, string>>({});
   let loading = $state(false);
   let writing = $state<Set<string>>(new Set());
+  let busRefreshUnsubscribe: (() => void) | undefined;
+  let busReading = false;
   let generation = 0;
 
   onMount(() => {
     let disposed = false;
     let refreshUnlisten: (() => void) | undefined;
-    onParametersRefreshed(() => void refreshFromCache())
+    onParametersChanged(() => void refreshFromCache())
       .then((stop) => {
         if (disposed) stop();
         else refreshUnlisten = stop;
       })
       .catch(onError);
+
+    busRefreshUnsubscribe = subscribeRefresh(250, () => void refreshBusVoltage());
+
     return () => {
       disposed = true;
       refreshUnlisten?.();
+      busRefreshUnsubscribe?.();
+      busRefreshUnsubscribe = undefined;
     };
   });
 
@@ -188,6 +202,32 @@
     applyValues(readable, results);
   }
 
+  async function refreshBusVoltage() {
+    if (!connection || busReading) return;
+    const meta = metadata[VBUS_ACTUAL_SYMBOL];
+    if (!meta || !meta.access.toLowerCase().includes("r")) return;
+
+    busReading = true;
+    try {
+      const results = await readParameters([meta.id]);
+      applyValues([meta], results);
+    } catch (error) {
+      onError(error);
+    } finally {
+      busReading = false;
+    }
+  }
+
+  function busState(): "under" | "normal" | "over" | null {
+    const min = numericValue(VBUS_MIN_SYMBOL);
+    const actual = numericValue(VBUS_ACTUAL_SYMBOL);
+    const max = numericValue(VBUS_MAX_SYMBOL);
+    if (min === null || actual === null || max === null) return null;
+    if (actual < min) return "under";
+    if (actual > max) return "over";
+    return "normal";
+  }
+
   async function commit(symbol: string) {
     const meta = metadata[symbol];
     if (!meta || !isWritable(symbol) || writing.has(symbol)) return;
@@ -269,6 +309,73 @@
                 </div>
               </div>
             {/each}
+          </div>
+        </section>
+
+        <section class="limits-section bus-section">
+          <div class="section-title">Bus Voltage</div>
+          <div class="bus-grid" role="table" aria-label="Bus voltage limits">
+            <div class="bus-header" role="row">
+              <div role="columnheader">Minimum</div>
+              <div role="columnheader">Actual</div>
+              <div role="columnheader">Maximum</div>
+            </div>
+            <div class="bus-row" role="row">
+              <div class="bus-cell" role="cell">
+                {#if metadata[VBUS_MIN_SYMBOL]}
+                  <span class="inline-editor">
+                    <input
+                      class:ramModified={$modifiedParameterIds.has(metadata[VBUS_MIN_SYMBOL].id)}
+                      class="compact-input mono"
+                      value={drafts[VBUS_MIN_SYMBOL] ?? ""}
+                      disabled={!isWritable(VBUS_MIN_SYMBOL) || writing.has(VBUS_MIN_SYMBOL)}
+                      oninput={(event) => drafts = { ...drafts, [VBUS_MIN_SYMBOL]: (event.currentTarget as HTMLInputElement).value }}
+                      onkeydown={(event) => handleKeydown(event, VBUS_MIN_SYMBOL)}
+                    />
+                    <span class="unit">{unitFor(VBUS_MIN_SYMBOL)}</span>
+                  </span>
+                {:else}
+                  <span class="muted">—</span>
+                {/if}
+                <span class="bus-caption">Undervoltage limit</span>
+              </div>
+
+              <div
+                class:bus-under={busState() === "under"}
+                class:bus-over={busState() === "over"}
+                class="bus-cell bus-actual"
+                role="cell"
+              >
+                {#if metadata[VBUS_ACTUAL_SYMBOL]}
+                  <div>
+                    <span class="mono">{displayText(VBUS_ACTUAL_SYMBOL)}</span>
+                    <span class="unit">{unitFor(VBUS_ACTUAL_SYMBOL)}</span>
+                  </div>
+                {:else}
+                  <span class="muted">—</span>
+                {/if}
+                <span class="bus-caption">DC bus voltage</span>
+              </div>
+
+              <div class="bus-cell" role="cell">
+                {#if metadata[VBUS_MAX_SYMBOL]}
+                  <span class="inline-editor">
+                    <input
+                      class:ramModified={$modifiedParameterIds.has(metadata[VBUS_MAX_SYMBOL].id)}
+                      class="compact-input mono"
+                      value={drafts[VBUS_MAX_SYMBOL] ?? ""}
+                      disabled={!isWritable(VBUS_MAX_SYMBOL) || writing.has(VBUS_MAX_SYMBOL)}
+                      oninput={(event) => drafts = { ...drafts, [VBUS_MAX_SYMBOL]: (event.currentTarget as HTMLInputElement).value }}
+                      onkeydown={(event) => handleKeydown(event, VBUS_MAX_SYMBOL)}
+                    />
+                    <span class="unit">{unitFor(VBUS_MAX_SYMBOL)}</span>
+                  </span>
+                {:else}
+                  <span class="muted">—</span>
+                {/if}
+                <span class="bus-caption">Overvoltage limit</span>
+              </div>
+            </div>
           </div>
         </section>
 
@@ -433,6 +540,59 @@
   .inline-editor .compact-input {
     min-width: 0;
     width: 100%;
+  }
+
+  .bus-section {
+    max-width: 760px;
+  }
+
+  .bus-grid {
+    min-width: 650px;
+  }
+
+  .bus-header,
+  .bus-row {
+    display: grid;
+    grid-template-columns: repeat(3, minmax(180px, 1fr));
+    column-gap: 18px;
+  }
+
+  .bus-header {
+    min-height: 34px;
+    align-items: center;
+    border-bottom: 1px solid var(--vscode-panel-border);
+    color: var(--vscode-descriptionForeground);
+    font-size: 11px;
+    font-weight: 600;
+  }
+
+  .bus-row {
+    min-height: 72px;
+    border-bottom: 1px solid color-mix(in srgb, var(--vscode-panel-border) 55%, transparent);
+  }
+
+  .bus-cell {
+    display: flex;
+    flex-direction: column;
+    justify-content: center;
+    gap: 5px;
+    padding: 7px 8px;
+    margin: 3px -8px;
+    border-radius: 3px;
+  }
+
+  .bus-actual {
+    font-size: 14px;
+  }
+
+  .bus-under,
+  .bus-over {
+    background: color-mix(in srgb, var(--vscode-inputValidation-errorBorder, var(--vscode-errorForeground)) 16%, transparent);
+  }
+
+  .bus-caption {
+    color: var(--vscode-descriptionForeground);
+    font-size: 10px;
   }
 
   .position-section {

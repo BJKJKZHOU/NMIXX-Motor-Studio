@@ -18,10 +18,22 @@ export type TuningExperimentSnapshot = {
   status: TuningExperimentStatus;
   config: ScopeConfig;
   snapshot: ScopeSnapshot;
+  recordedSeconds: number;
+  windowSeconds: number;
+  endOffsetSeconds: number;
 };
 
-export function startTuningExperiment(): Promise<TuningExperimentStatus> {
-  return invoke<TuningExperimentStatus>("tuning_experiment_start");
+export type TuningExperimentSelection = {
+  id: number;
+  rate: "fast" | "normal";
+};
+
+export function tuningExperimentDefaults(): Promise<TuningExperimentSelection[]> {
+  return invoke<TuningExperimentSelection[]>("tuning_experiment_defaults");
+}
+
+export function startTuningExperiment(selections: TuningExperimentSelection[]): Promise<TuningExperimentStatus> {
+  return invoke<TuningExperimentStatus>("tuning_experiment_start", { selections });
 }
 
 export function stopTuningExperiment(): Promise<TuningExperimentStatus> {
@@ -32,6 +44,14 @@ export function tuningExperimentStatus(): Promise<TuningExperimentStatus> {
   return invoke<TuningExperimentStatus>("tuning_experiment_status");
 }
 
-export function readTuningExperimentSnapshot(maxPoints = 5000): Promise<TuningExperimentSnapshot> {
-  return invoke<TuningExperimentSnapshot>("tuning_experiment_snapshot", { maxPoints });
+export function readTuningExperimentSnapshot(
+  windowSeconds?: number,
+  endOffsetSeconds = 0,
+  maxPoints = 3000,
+): Promise<TuningExperimentSnapshot> {
+  return invoke<TuningExperimentSnapshot>("tuning_experiment_snapshot", {
+    windowSeconds,
+    endOffsetSeconds,
+    maxPoints,
+  });
 }

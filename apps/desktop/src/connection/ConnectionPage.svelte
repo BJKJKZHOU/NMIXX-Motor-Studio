@@ -7,6 +7,7 @@
   export let port: string;
   export let schemaPath: string;
   export let onConnected: (connection: ConnectionInfo) => void = () => undefined;
+  export let onSchemaPathChanged: (path: string) => void = () => undefined;
   export let onDisconnected: () => void = () => undefined;
   export let onError: (error: unknown) => void = () => undefined;
 
@@ -33,6 +34,7 @@
       return;
     }
 
+    onSchemaPathChanged(schemaPath);
     busy = true;
     try {
       onConnected(await connectDevice(port, schemaPath, 115200));
@@ -71,7 +73,7 @@
         <vscode-button secondary onclick={refreshPorts} title="Refresh ports"><i class="codicon codicon-refresh"></i></vscode-button>
       </div>
       <label for="connection-schema">HostSchema</label>
-      <input id="connection-schema" bind:value={schemaPath} class="compact-input mono" />
+      <input id="connection-schema" bind:value={schemaPath} class="compact-input mono" onchange={() => onSchemaPathChanged(schemaPath)} />
       <div class="connection-actions">
         {#if connection}
           <!-- svelte-ignore a11y_click_events_have_key_events a11y_no_static_element_interactions -->

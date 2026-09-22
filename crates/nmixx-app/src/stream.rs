@@ -232,13 +232,24 @@ impl StreamSession {
     /// This is intended for UI refreshes so the full rolling history does not
     /// need to be cloned on every frame.
     pub fn snapshot_tail(&self, max_samples: usize) -> StreamSnapshot {
-        let keep = self.sample_len.min(max_samples);
-        let skip = self.sample_len - keep;
+        self.snapshot_window(max_samples, 0)
+    }
+
+    /// Copies a logical window without first cloning the full history.
+    /// `end_offset_samples == 0` addresses the newest sample; larger offsets
+    /// move the window toward the beginning of the retained recording.
+    pub fn snapshot_window(&self, max_samples: usize, end_offset_samples: usize) -> StreamSnapshot {
+        let available = self.sample_len;
+        let end = available.saturating_sub(end_offset_samples.min(available));
+        let start = end.saturating_sub(max_samples.min(end));
+        let keep = end.saturating_sub(start);
         let mut values = Vec::with_capacity(keep * self.config.channel_count);
-        for logical in skip..self.sample_len {
+        for logical in start..end {
             let physical = (self.oldest_sample + logical) % self.capacity_samples;
-            let start = physical * self.config.channel_count;
-            values.extend_from_slice(&self.storage[start..start + self.config.channel_count]);
+            let physical_start = physical * self.config.channel_count;
+            values.extend_from_slice(
+                &self.storage[physical_start..physical_start + self.config.channel_count],
+            );
         }
         StreamSnapshot {
             config: self.config.clone(),
@@ -306,6 +317,20 @@ mod tests {
         assert_eq!(snapshot.sample_count(), 2);
         assert_eq!(snapshot.sample(0).unwrap(), &[4.0, -4.0]);
         assert_eq!(snapshot.sample(1).unwrap(), &[5.0, -5.0]);
+    }
+
+    #[test]
+    fn window_snapshot_reads_offset_range_without_full_copy_semantics() {
+        let mut stream = StreamSession::new(config()).unwrap();
+        stream.live();
+        for n in 0..6 {
+            stream.push_sample(&[n as f32, -(n as f32)]).unwrap();
+        }
+
+        let snapshot = stream.snapshot_window(2, 1);
+        assert_eq!(snapshot.sample_count(), 2);
+        assert_eq!(snapshot.sample(0).unwrap(), &[3.0, -3.0]);
+        assert_eq!(snapshot.sample(1).unwrap(), &[4.0, -4.0]);
     }
 
     #[test]

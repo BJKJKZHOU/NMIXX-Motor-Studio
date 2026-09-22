@@ -487,6 +487,8 @@ Scope, FFT and Bode are related analysis functions, but not identical workflows.
 - **FFT** analyzes acquired data in the frequency domain.
 - **Bode** may own an excitation-and-measurement workflow, while still reusing acquisition and plot infrastructure.
 
+Detailed Scope interaction rules, including mouse-centered time zoom, history pan, per-channel Y markers and draggable X cursors, are defined in `SCOPE_PAGE.md`.
+
 The GUI must not open its own transport or decode telemetry wire frames for any of these functions. Acquisition remains an Application Runtime capability.
 
 Chart interaction should use uPlot capabilities and plugins instead of recreating generic plotting behavior in Svelte. Unit metadata should drive reusable scale/axis policy rather than page-specific conditionals.

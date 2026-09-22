@@ -23,10 +23,13 @@ export type ScopeSeries = {
   sampleRateHz: number;
   times: number[];
   values: number[];
+  envelopeMin?: number[];
+  envelopeMax?: number[];
 };
 
 export type ScopeSnapshot = {
   sampleCount: number;
+  recordedSeconds: number;
   lostFrames: number;
   state: string;
   series: ScopeSeries[];

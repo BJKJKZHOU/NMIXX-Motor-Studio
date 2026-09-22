@@ -89,7 +89,7 @@ impl Default for TuningExperimentRuntime {
     }
 }
 
-const TUNING_HISTORY: Duration = Duration::from_secs(15);
+const TUNING_CAPTURE_BUDGET_BYTES: usize = 128 * 1024 * 1024;
 const TUNING_LIVE_WINDOW: Duration = Duration::from_secs(3);
 const TUNING_PRE_CAPTURE: Duration = Duration::from_millis(500);
 const TUNING_POST_CAPTURE: Duration = Duration::from_millis(750);
@@ -204,6 +204,10 @@ impl ApplicationSession {
         Ok(self.inner.parameters.cached(id)?)
     }
 
+    pub fn parameter_subscribe(&self) -> Result<mpsc::Receiver<Vec<u16>>, ApplicationError> {
+        Ok(self.inner.parameters.subscribe()?)
+    }
+
     pub fn parameter_refresh_all(
         &self,
     ) -> Result<Vec<(u16, Result<ParameterValue, ParameterServiceError>)>, ApplicationError> {
@@ -214,8 +218,8 @@ impl ApplicationSession {
         &self,
         id: u16,
         value: ParameterValue,
-    ) -> Result<(), ApplicationError> {
-        Ok(self.inner.parameters.write(id, value)?)
+    ) -> Result<ParameterValue, ApplicationError> {
+        Ok(self.inner.parameters.write_readback(id, value)?)
     }
 
     pub fn action_start(&self, key: &str) -> Result<ActionHandle, ApplicationError> {
@@ -347,10 +351,7 @@ impl ApplicationSession {
     }
 
     pub fn motion_stop(&self) -> Result<ActionHandle, ApplicationError> {
-        self.inner
-            .motion
-            .stop(&self.inner.parameters, &self.inner.session)
-            .map_err(ApplicationError::Motion)
+        self.motor_stop()
     }
 
     pub fn scope_configure(
@@ -359,12 +360,18 @@ impl ApplicationSession {
         history: Duration,
         config_id: u8,
     ) -> Result<MixedScopeConfig, ApplicationError> {
-        {
-            let slot = self.inner.scope.lock().map_err(|_| ApplicationError::Poisoned)?;
+        let old_scope = {
+            let mut slot = self.inner.scope.lock().map_err(|_| ApplicationError::Poisoned)?;
             if let Some(scope) = slot.as_ref() {
-                return Ok(scope.reconfigure(selections)?);
+                let current = scope.config()?;
+                if current.history == history {
+                    return Ok(scope.reconfigure(selections)?);
+                }
+                let _ = scope.stop();
             }
-        }
+            slot.take()
+        };
+        drop(old_scope);
 
         let plot_capabilities = self.plot_capabilities()?;
         let scope = MixedScopeSession::from_capabilities(
@@ -421,11 +428,57 @@ impl ApplicationSession {
         self.with_scope(|scope| scope.snapshot_window(window, end_offset))
     }
 
+    pub fn scope_recorded_duration(&self) -> Result<Duration, ApplicationError> {
+        self.with_scope(|scope| scope.recorded_duration())
+    }
+
     pub fn scope_config(&self) -> Result<MixedScopeConfig, ApplicationError> {
         self.with_scope(|scope| scope.config())
     }
 
-    pub fn tuning_experiment_start(&self) -> Result<TuningExperimentStatus, ApplicationError> {
+    pub fn tuning_experiment_default_selections(&self) -> Result<Vec<ScopeSelection>, ApplicationError> {
+        let motion = self.inner.motion.get();
+        self.tuning_default_selections(motion.mode)
+    }
+
+    fn tuning_capture_duration(
+        &self,
+        selections: &[ScopeSelection],
+    ) -> Result<Duration, ApplicationError> {
+        let capabilities = self.plot_capabilities()?;
+        let mut samples_per_second = 0u64;
+        for selection in selections {
+            let channel = capabilities
+                .channel(selection.id)
+                .ok_or_else(|| ApplicationError::TuningExperimentChannel(format!("0x{:04X}", selection.id)))?;
+            let rate = match selection.rate {
+                ScopeRate::Fast => capabilities.fast_rate_hz,
+                ScopeRate::Normal => capabilities.normal_rate_hz,
+            };
+            let supported = match selection.rate {
+                ScopeRate::Fast => channel.supports_fast(),
+                ScopeRate::Normal => channel.supports_normal(),
+            };
+            if !supported {
+                return Err(ApplicationError::TuningExperimentChannel(format!("0x{:04X}", selection.id)));
+            }
+            samples_per_second = samples_per_second.saturating_add(u64::from(rate));
+        }
+
+        if samples_per_second == 0 {
+            return Err(ApplicationError::TuningExperimentChannel("no capture channels selected".to_owned()));
+        }
+
+        let bytes_per_second = samples_per_second
+            .saturating_mul(std::mem::size_of::<f32>() as u64);
+        let seconds = TUNING_CAPTURE_BUDGET_BYTES as f64 / bytes_per_second as f64;
+        Ok(Duration::from_secs_f64(seconds.max(TUNING_PRE_CAPTURE.as_secs_f64() + TUNING_POST_CAPTURE.as_secs_f64())))
+    }
+
+    pub fn tuning_experiment_start(
+        &self,
+        selections: &[ScopeSelection],
+    ) -> Result<TuningExperimentStatus, ApplicationError> {
         if self.read_motor_state()? != 1 {
             return Err(ApplicationError::TuningExperimentMotorNotEnabled);
         }
@@ -447,7 +500,6 @@ impl ApplicationSession {
         }
 
         let motion = self.inner.motion.get();
-        let selections = self.tuning_default_selections(motion.mode)?;
         let preview_duration = if motion.mode == MotionMode::Position && !motion.repeat {
             self.motion_preview()?
                 .times
@@ -469,9 +521,9 @@ impl ApplicationSession {
             self.scope_stop()?;
         }
 
-        self.scope_configure(&selections, TUNING_HISTORY, 2)?;
-        self.scope_clear()?;
-        self.scope_live()?;
+        let capture_duration = self.tuning_capture_duration(selections)?;
+        self.scope_configure(selections, capture_duration, 2)?;
+        self.scope_capture(capture_duration)?;
 
         let generation = {
             let mut runtime = self
@@ -488,38 +540,33 @@ impl ApplicationSession {
 
         let app = self.clone();
         thread::spawn(move || {
-            app.run_tuning_experiment(generation, motion, preview_duration);
+            app.run_tuning_experiment(generation, motion, preview_duration, capture_duration);
         });
 
         self.tuning_experiment_status()
     }
 
     pub fn tuning_experiment_stop(&self) -> Result<TuningExperimentStatus, ApplicationError> {
-        let active = {
+        {
             let mut runtime = self
                 .inner
                 .tuning_experiment
                 .lock()
                 .map_err(|_| ApplicationError::Poisoned)?;
-            let active = matches!(
+            if matches!(
                 runtime.state,
                 TuningExperimentState::Preparing
                     | TuningExperimentState::Running
                     | TuningExperimentState::Stopping
-            );
-            if active {
+            ) {
                 runtime.stop_requested = true;
                 if runtime.state == TuningExperimentState::Running {
                     runtime.state = TuningExperimentState::Stopping;
                 }
             }
-            active
-        };
-
-        if active && self.read_motor_state()? == 2 {
-            let _ = self.motion_stop();
         }
 
+        self.motion_stop()?;
         self.tuning_experiment_status()
     }
 
@@ -675,6 +722,7 @@ impl ApplicationSession {
         generation: u64,
         motion: MotionConfig,
         preview_duration: f64,
+        capture_duration: Duration,
     ) {
         if !self.wait_tuning(generation, TUNING_PRE_CAPTURE, true) {
             let _ = self.scope_stop();
@@ -692,6 +740,8 @@ impl ApplicationSession {
 
         let auto_position = motion.mode == MotionMode::Position && !motion.repeat;
         let mut stop_sent = false;
+        let reserve_ratio = (TUNING_POST_CAPTURE.as_secs_f64() / capture_duration.as_secs_f64())
+            .clamp(0.0, 1.0);
 
         if auto_position {
             let run_window =
@@ -703,6 +753,28 @@ impl ApplicationSession {
                 if self.tuning_stop_requested(generation) {
                     completed_window = false;
                     break;
+                }
+                match self.scope_status() {
+                    Ok(status) if status.capacity_samples > 0 => {
+                        let used = status.samples as f64 / status.capacity_samples as f64;
+                        if used >= 1.0 - reserve_ratio {
+                            completed_window = false;
+                            if self.read_motor_state().ok() == Some(2) {
+                                if let Err(error) = self.motion_stop() {
+                                    self.fail_tuning_experiment(generation, error);
+                                    return;
+                                }
+                                stop_sent = true;
+                                let _ = self.set_tuning_state(generation, TuningExperimentState::Stopping);
+                            }
+                            break;
+                        }
+                    }
+                    Ok(_) => {}
+                    Err(error) => {
+                        self.fail_tuning_experiment(generation, error);
+                        return;
+                    }
                 }
                 match self.read_motor_state() {
                     Ok(2) => {}
@@ -752,6 +824,32 @@ impl ApplicationSession {
                 }
                 stop_sent = true;
                 let _ = self.set_tuning_state(generation, TuningExperimentState::Stopping);
+            }
+
+            if !stop_sent {
+                match self.scope_status() {
+                    Ok(status) if status.capacity_samples > 0 => {
+                        let used = status.samples as f64 / status.capacity_samples as f64;
+                        if used >= 1.0 - reserve_ratio {
+                            if let Err(error) = self.motion_stop() {
+                                self.fail_tuning_experiment(generation, error);
+                                return;
+                            }
+                            stop_sent = true;
+                            let _ = self.set_tuning_state(generation, TuningExperimentState::Stopping);
+                            if let Ok(mut runtime) = self.inner.tuning_experiment.lock() {
+                                if runtime.generation == generation {
+                                    runtime.message = Some("Capture stopped at the 128 MiB recording limit".to_owned());
+                                }
+                            }
+                        }
+                    }
+                    Ok(_) => {}
+                    Err(error) => {
+                        self.fail_tuning_experiment(generation, error);
+                        return;
+                    }
+                }
             }
 
             thread::sleep(TUNING_POLL);

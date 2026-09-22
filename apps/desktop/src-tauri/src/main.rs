@@ -3,7 +3,7 @@ use std::time::Duration;
 
 use nmixx_app::{
     ActionHandle, ActionMetadata, ApplicationSession, AxdrStatus, DEFAULT_USB_BAUD, HostSchema,
-    IdentificationKind, IdentificationStart, MotionCapabilities, MotionConfig, MotionPreview, MotionService,
+    IdentificationKind, IdentificationStart, MixedScopeSeries, MotionCapabilities, MotionConfig, MotionPreview, MotionService,
     ParameterMetadata, ParameterValue, PositionValue, PreflightDomain, RangeMetadata,
     SchemaNumber, ScopeRate, ScopeSelection, StreamState, TuningExperimentState,
 };
@@ -65,6 +65,7 @@ struct ParameterRangeDto {
     exclusive_min: bool,
     exclusive_max: bool,
     max_symbol: Option<String>,
+    min_binding: Option<String>,
     max_binding: Option<String>,
     max_bindings: Vec<String>,
 }
@@ -77,6 +78,7 @@ impl From<&RangeMetadata> for ParameterRangeDto {
             exclusive_min: value.exclusive_min,
             exclusive_max: value.exclusive_max,
             max_symbol: value.max_symbol.clone(),
+            min_binding: value.min_binding.clone(),
             max_binding: value.max_binding.clone(),
             max_bindings: value.max_bindings.clone(),
         }
@@ -245,7 +247,7 @@ struct ParameterReadResultDto {
     error: Option<String>,
 }
 
-#[derive(Debug, Clone, Deserialize)]
+#[derive(Debug, Clone, Deserialize, Serialize)]
 #[serde(rename_all = "camelCase")]
 struct ScopeSelectionDto {
     id: u16,
@@ -285,15 +287,96 @@ struct ScopeSeriesDto {
     sample_rate_hz: u32,
     times: Vec<f64>,
     values: Vec<f32>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    envelope_min: Option<Vec<f32>>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    envelope_max: Option<Vec<f32>>,
 }
 
 #[derive(Debug, Serialize)]
 #[serde(rename_all = "camelCase")]
 struct ScopeSnapshotDto {
     sample_count: usize,
+    recorded_seconds: f64,
     lost_frames: u64,
     state: &'static str,
     series: Vec<ScopeSeriesDto>,
+}
+
+fn scope_series_dto(
+    series: MixedScopeSeries,
+    end_offset_seconds: f64,
+    max_points: usize,
+) -> ScopeSeriesDto {
+    let sample_count = series.values.len();
+    let rate = f64::from(series.sample_rate_hz);
+
+    if sample_count <= max_points {
+        let times = (0..sample_count)
+            .map(|index| {
+                (index as f64 - sample_count.saturating_sub(1) as f64) / rate
+                    - end_offset_seconds
+            })
+            .collect();
+        return ScopeSeriesDto {
+            id: series.id,
+            sample_rate_hz: series.sample_rate_hz,
+            times,
+            values: series.values,
+            envelope_min: None,
+            envelope_max: None,
+        };
+    }
+
+    // Min/max downsampling preserves narrow spikes instead of periodically
+    // sampling one arbitrary point from each bucket.
+    let target_buckets = (max_points / 2).max(1);
+    let bucket_size = sample_count.div_ceil(target_buckets).max(1);
+    let mut times = Vec::with_capacity(target_buckets * 2);
+    let mut values = Vec::with_capacity(target_buckets * 2);
+
+    for start in (0..sample_count).step_by(bucket_size) {
+        let end = (start + bucket_size).min(sample_count);
+        let bucket = &series.values[start..end];
+        let mut min_index = start;
+        let mut max_index = start;
+        let mut min_value = f32::INFINITY;
+        let mut max_value = f32::NEG_INFINITY;
+
+        for (offset, &value) in bucket.iter().enumerate() {
+            let index = start + offset;
+            if value < min_value {
+                min_value = value;
+                min_index = index;
+            }
+            if value > max_value {
+                max_value = value;
+                max_index = index;
+            }
+        }
+
+        let mut extrema = [(min_index, min_value), (max_index, max_value)];
+        extrema.sort_by_key(|(index, _)| *index);
+        for (index, value) in extrema {
+            if times.len() >= max_points {
+                break;
+            }
+            times.push(
+                (index as f64 - sample_count.saturating_sub(1) as f64) / rate
+                    - end_offset_seconds,
+            );
+            values.push(value);
+        }
+    }
+
+    ScopeSeriesDto {
+        id: series.id,
+        sample_rate_hz: series.sample_rate_hz,
+        times,
+        values,
+        envelope_min: None,
+        envelope_max: None,
+    }
 }
 
 #[derive(Debug, Serialize)]
@@ -309,6 +392,9 @@ struct TuningExperimentSnapshotDto {
     status: TuningExperimentStatusDto,
     config: ScopeConfigDto,
     snapshot: ScopeSnapshotDto,
+    recorded_seconds: f64,
+    window_seconds: f64,
+    end_offset_seconds: f64,
 }
 
 fn stream_state_name(state: StreamState) -> &'static str {
@@ -355,8 +441,22 @@ fn parameter_result(id: u16, result: Result<ParameterValue, impl ToString>) -> P
     }
 }
 
+fn spawn_parameter_change_bridge(
+    app_handle: tauri::AppHandle,
+    changes: std::sync::mpsc::Receiver<Vec<u16>>,
+) {
+    std::thread::spawn(move || {
+        while let Ok(ids) = changes.recv() {
+            if !ids.is_empty() {
+                let _ = app_handle.emit("parameters-changed", ids);
+            }
+        }
+    });
+}
+
 fn spawn_action_completion(
-    app: tauri::AppHandle,
+    app_handle: tauri::AppHandle,
+    application: ApplicationSession,
     events: std::sync::mpsc::Receiver<nmixx_app::SessionEvent>,
     handle: ActionHandle,
     symbol: String,
@@ -381,7 +481,9 @@ fn spawn_action_completion(
                 status: format!("{status:?}"),
                 ok: status == AxdrStatus::Ok,
             };
-            let _ = app.emit("action-completed", payload);
+            let _ = app_handle.emit("action-completed", payload);
+
+            let _ = application.parameter_refresh_all();
             break;
         }
     });
@@ -402,6 +504,7 @@ fn device_list() -> Result<Vec<String>, String> {
 
 #[tauri::command]
 async fn device_connect(
+    app_handle: tauri::AppHandle,
     state: State<'_, Mutex<DesktopState>>,
     port: String,
     schema_path: String,
@@ -438,6 +541,9 @@ async fn device_connect(
         app.parameter_read(id)
             .map_err(|error| format!("initial read of {symbol} (0x{id:04X}) failed: {error}"))?;
     }
+    let parameter_changes = app.parameter_subscribe().map_err(|error| error.to_string())?;
+    spawn_parameter_change_bridge(app_handle, parameter_changes);
+
     let capabilities = app.plot_capabilities().map_err(|error| error.to_string())?;
     let channels = capabilities
         .with_schema(app.schema())
@@ -489,7 +595,10 @@ fn parameter_list(state: State<'_, Mutex<DesktopState>>) -> Result<Vec<Parameter
 }
 
 #[tauri::command]
-async fn parameter_read(state: State<'_, Mutex<DesktopState>>, id: u16) -> Result<ParameterReadDto, String> {
+async fn parameter_read(
+    state: State<'_, Mutex<DesktopState>>,
+    id: u16,
+) -> Result<ParameterReadDto, String> {
     let app = application(&state)?;
     let value = app.parameter_read(id).map_err(|error| error.to_string())?;
     Ok(ParameterReadDto { id, value: value.into() })
@@ -524,10 +633,11 @@ async fn parameter_write(
     state: State<'_, Mutex<DesktopState>>,
     id: u16,
     value: ParameterValueDto,
-) -> Result<(), String> {
-    application(&state)?
+) -> Result<ParameterReadDto, String> {
+    let value = application(&state)?
         .parameter_write(id, value.into())
-        .map_err(|error| error.to_string())
+        .map_err(|error| error.to_string())?;
+    Ok(ParameterReadDto { id, value: value.into() })
 }
 
 #[tauri::command]
@@ -560,7 +670,6 @@ fn parameter_cached_many(
 
 #[tauri::command]
 async fn parameter_refresh_all(
-    app_handle: tauri::AppHandle,
     state: State<'_, Mutex<DesktopState>>,
 ) -> Result<Vec<ParameterReadResultDto>, String> {
     let app = application(&state)?;
@@ -569,7 +678,6 @@ async fn parameter_refresh_all(
         .into_iter()
         .map(|(id, result)| parameter_result(id, result))
         .collect::<Vec<_>>();
-    let _ = app_handle.emit("parameters-refreshed", ());
     Ok(result)
 }
 
@@ -652,7 +760,7 @@ async fn identification_start(
         IdentificationStart::RequiresEnable => Ok(IdentificationStartDto::RequiresEnable),
         IdentificationStart::Started(handle) => {
             let dto = action_handle_dto(handle, symbol.to_owned());
-            spawn_action_completion(app_handle, events, handle, symbol.to_owned());
+            spawn_action_completion(app_handle, app.clone(), events, handle, symbol.to_owned());
             Ok(IdentificationStartDto::Started { handle: dto })
         }
     }
@@ -689,8 +797,25 @@ async fn action_start(
     let events = app.subscribe().map_err(|error| error.to_string())?;
     let handle = app.action_start(&key).map_err(|error| error.to_string())?;
     let result = action_handle_dto(handle, symbol.clone());
-    spawn_action_completion(app_handle, events, handle, symbol);
+    spawn_action_completion(app_handle, app.clone(), events, handle, symbol);
     Ok(result)
+}
+
+#[tauri::command]
+async fn action_start_immediate(
+    state: State<'_, Mutex<DesktopState>>,
+    key: String,
+) -> Result<ActionHandleDto, String> {
+    let app = application(&state)?;
+    let symbol = app
+        .schema()
+        .action_by_key(&key)
+        .ok_or_else(|| format!("Action '{key}' is not exposed by the HostSchema"))?
+        .symbol
+        .clone();
+    let handle = app.action_start(&key).map_err(|error| error.to_string())?;
+    let _ = app.parameter_refresh_all();
+    Ok(action_handle_dto(handle, symbol))
 }
 
 fn start_async_semantic_action(
@@ -703,7 +828,7 @@ fn start_async_semantic_action(
     let handle = start(&app).map_err(|error| error.to_string())?;
     let symbol = symbol.to_owned();
     let result = action_handle_dto(handle, symbol.clone());
-    spawn_action_completion(app_handle, events, handle, symbol);
+    spawn_action_completion(app_handle, app.clone(), events, handle, symbol);
     Ok(result)
 }
 
@@ -718,10 +843,12 @@ async fn motor_enable(
 
 #[tauri::command]
 async fn motor_stop(
+    app_handle: tauri::AppHandle,
     state: State<'_, Mutex<DesktopState>>,
 ) -> Result<ActionHandleDto, String> {
     let app = application(&state)?;
     let handle = app.motor_stop().map_err(|error| error.to_string())?;
+    let _ = app_handle.emit("motor-stop-issued", ());
     Ok(action_handle_dto(handle, "ACTION_MOTOR_STOP".to_owned()))
 }
 
@@ -793,19 +920,53 @@ async fn motion_run(state: State<'_, Mutex<DesktopState>>) -> Result<(), String>
 }
 
 #[tauri::command]
-async fn motion_stop(state: State<'_, Mutex<DesktopState>>) -> Result<(), String> {
+async fn motion_stop(
+    app_handle: tauri::AppHandle,
+    state: State<'_, Mutex<DesktopState>>,
+) -> Result<(), String> {
     application(&state)?
         .motion_stop()
-        .map(|_| ())
+        .map_err(|error| error.to_string())?;
+    let _ = app_handle.emit("motor-stop-issued", ());
+    Ok(())
+}
+
+fn scope_selection_from_dto(selection: ScopeSelectionDto) -> Result<ScopeSelection, String> {
+    let rate = match selection.rate.as_str() {
+        "fast" => ScopeRate::Fast,
+        "normal" => ScopeRate::Normal,
+        other => return Err(format!("unknown Scope rate '{other}'")),
+    };
+    Ok(ScopeSelection { id: selection.id, rate })
+}
+
+#[tauri::command]
+fn tuning_experiment_defaults(
+    state: State<'_, Mutex<DesktopState>>,
+) -> Result<Vec<ScopeSelectionDto>, String> {
+    application(&state)?
+        .tuning_experiment_default_selections()
         .map_err(|error| error.to_string())
+        .map(|selections| selections.into_iter().map(|selection| ScopeSelectionDto {
+            id: selection.id,
+            rate: match selection.rate {
+                ScopeRate::Fast => "fast".to_owned(),
+                ScopeRate::Normal => "normal".to_owned(),
+            },
+        }).collect())
 }
 
 #[tauri::command]
 async fn tuning_experiment_start(
     state: State<'_, Mutex<DesktopState>>,
+    selections: Vec<ScopeSelectionDto>,
 ) -> Result<TuningExperimentStatusDto, String> {
+    let selections = selections
+        .into_iter()
+        .map(scope_selection_from_dto)
+        .collect::<Result<Vec<_>, _>>()?;
     let status = application(&state)?
-        .tuning_experiment_start()
+        .tuning_experiment_start(&selections)
         .map_err(|error| error.to_string())?;
     Ok(TuningExperimentStatusDto {
         state: tuning_experiment_state_name(status.state),
@@ -815,11 +976,13 @@ async fn tuning_experiment_start(
 
 #[tauri::command]
 async fn tuning_experiment_stop(
+    app_handle: tauri::AppHandle,
     state: State<'_, Mutex<DesktopState>>,
 ) -> Result<TuningExperimentStatusDto, String> {
     let status = application(&state)?
         .tuning_experiment_stop()
         .map_err(|error| error.to_string())?;
+    let _ = app_handle.emit("motor-stop-issued", ());
     Ok(TuningExperimentStatusDto {
         state: tuning_experiment_state_name(status.state),
         message: status.message,
@@ -842,19 +1005,43 @@ fn tuning_experiment_status(
 #[tauri::command]
 fn tuning_experiment_snapshot(
     state: State<'_, Mutex<DesktopState>>,
+    window_seconds: Option<f64>,
+    end_offset_seconds: Option<f64>,
     max_points: Option<usize>,
 ) -> Result<TuningExperimentSnapshotDto, String> {
     let app = application(&state)?;
-    let result = app
-        .tuning_experiment_snapshot()
-        .map_err(|error| error.to_string())?;
+    let status = app.tuning_experiment_status().map_err(|error| error.to_string())?;
+    let config = app.scope_config().map_err(|error| error.to_string())?;
     let scope_status = app.scope_status().map_err(|error| error.to_string())?;
-    let max_points = max_points.unwrap_or(5000).clamp(200, 20_000);
+    let recorded = app.scope_recorded_duration().map_err(|error| error.to_string())?;
+    let recorded_seconds = recorded.as_secs_f64();
 
-    let config = ScopeConfigDto {
-        history_seconds: result.config.history.as_secs_f64(),
-        channels: result
-            .config
+    let default_window = if matches!(
+        status.state,
+        TuningExperimentState::Preparing
+            | TuningExperimentState::Running
+            | TuningExperimentState::Stopping
+    ) {
+        3.0
+    } else {
+        recorded_seconds.max(0.0005)
+    };
+    let window_seconds = window_seconds
+        .unwrap_or(default_window)
+        .clamp(0.0005, recorded_seconds.max(0.0005));
+    let max_offset = (recorded_seconds - window_seconds).max(0.0);
+    let end_offset_seconds = end_offset_seconds.unwrap_or(0.0).clamp(0.0, max_offset);
+    let snapshot = app
+        .scope_snapshot_window(
+            Duration::from_secs_f64(window_seconds),
+            Duration::from_secs_f64(end_offset_seconds),
+        )
+        .map_err(|error| error.to_string())?;
+    let max_points = max_points.unwrap_or(3000).clamp(200, 20_000);
+
+    let config_dto = ScopeConfigDto {
+        history_seconds: config.history.as_secs_f64(),
+        channels: config
             .channels
             .iter()
             .map(|channel| ScopeChannelDto {
@@ -870,44 +1057,28 @@ fn tuning_experiment_snapshot(
             .collect(),
     };
 
-    let series = result
-        .snapshot
+    let series = snapshot
         .series
         .into_iter()
-        .map(|series| {
-            let sample_count = series.values.len();
-            let stride = sample_count.div_ceil(max_points).max(1);
-            let mut times = Vec::with_capacity(sample_count.div_ceil(stride));
-            let mut values = Vec::with_capacity(sample_count.div_ceil(stride));
-
-            for index in (0..sample_count).step_by(stride) {
-                let t = (index as f64 - sample_count.saturating_sub(1) as f64)
-                    / f64::from(series.sample_rate_hz);
-                times.push(t);
-                values.push(series.values[index]);
-            }
-
-            ScopeSeriesDto {
-                id: series.id,
-                sample_rate_hz: series.sample_rate_hz,
-                times,
-                values,
-            }
-        })
+        .map(|series| scope_series_dto(series, end_offset_seconds, max_points))
         .collect();
 
     Ok(TuningExperimentSnapshotDto {
         status: TuningExperimentStatusDto {
-            state: tuning_experiment_state_name(result.status.state),
-            message: result.status.message,
+            state: tuning_experiment_state_name(status.state),
+            message: status.message,
         },
-        config,
+        config: config_dto,
         snapshot: ScopeSnapshotDto {
             sample_count: scope_status.samples,
-            lost_frames: result.snapshot.lost_frames,
-            state: stream_state_name(result.snapshot.state),
+            recorded_seconds,
+            lost_frames: snapshot.lost_frames,
+            state: stream_state_name(snapshot.state),
             series,
         },
+        recorded_seconds,
+        window_seconds,
+        end_offset_seconds,
     })
 }
 
@@ -1004,10 +1175,15 @@ fn scope_snapshot(
     max_points: Option<usize>,
 ) -> Result<ScopeSnapshotDto, String> {
     let app = application(&state)?;
-    let status = app.scope_status().map_err(|error| error.to_string())?;
-    let config = app.scope_config().map_err(|error| error.to_string())?;
-    let window = window_seconds.unwrap_or(0.5).clamp(0.0005, config.history.as_secs_f64());
-    let max_offset = (config.history.as_secs_f64() - window).max(0.0);
+    let recorded_seconds = app
+        .scope_recorded_duration()
+        .map_err(|error| error.to_string())?
+        .as_secs_f64();
+    let available_seconds = recorded_seconds.max(0.0005);
+    let window = window_seconds
+        .unwrap_or(0.5)
+        .clamp(0.0005, available_seconds);
+    let max_offset = (recorded_seconds - window).max(0.0);
     let end_offset = end_offset_seconds.unwrap_or(0.0).clamp(0.0, max_offset);
     let snapshot = app
         .scope_snapshot_window(
@@ -1016,35 +1192,21 @@ fn scope_snapshot(
         )
         .map_err(|error| error.to_string())?;
     let max_points = max_points.unwrap_or(2500).clamp(100, 10_000);
-
+    let sample_count = snapshot
+        .series
+        .iter()
+        .map(|series| series.values.len())
+        .max()
+        .unwrap_or(0);
     let series = snapshot
         .series
         .into_iter()
-        .map(|series| {
-            let sample_count = series.values.len();
-            let stride = sample_count.div_ceil(max_points).max(1);
-            let mut times = Vec::with_capacity(sample_count.div_ceil(stride));
-            let mut values = Vec::with_capacity(sample_count.div_ceil(stride));
-
-            for index in (0..sample_count).step_by(stride) {
-                let t = (index as f64 - sample_count.saturating_sub(1) as f64)
-                    / f64::from(series.sample_rate_hz)
-                    - end_offset;
-                times.push(t);
-                values.push(series.values[index]);
-            }
-
-            ScopeSeriesDto {
-                id: series.id,
-                sample_rate_hz: series.sample_rate_hz,
-                times,
-                values,
-            }
-        })
+        .map(|series| scope_series_dto(series, end_offset, max_points))
         .collect();
 
     Ok(ScopeSnapshotDto {
-        sample_count: status.samples,
+        sample_count,
+        recorded_seconds,
         lost_frames: snapshot.lost_frames,
         state: stream_state_name(snapshot.state),
         series,
@@ -1070,6 +1232,7 @@ fn main() {
             identification_apply,
             action_list,
             action_start,
+            action_start_immediate,
             motor_enable,
             motor_stop,
             motor_disable,
@@ -1081,6 +1244,7 @@ fn main() {
             motion_preview,
             motion_run,
             motion_stop,
+            tuning_experiment_defaults,
             tuning_experiment_start,
             tuning_experiment_stop,
             tuning_experiment_status,
