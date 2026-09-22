@@ -17,6 +17,20 @@
     motionState,
     updateMotion,
   } from "../motion/store";
+  import {
+    MOTION_ACCEL,
+    MOTION_DECEL,
+    MOTION_MAX_SPEED,
+    MOTION_MODE,
+    TARGET_POSITION,
+    TARGET_SPEED,
+    TARGET_TORQUE,
+    TORQUE_RAMP,
+    modeFromParameter,
+    modeParameterValue,
+    motionParameterText,
+    parseMotionParameter,
+  } from "../motion/parameters";
   import type { MotionMode, MotionState } from "../motion/types";
   import ExperimentWaveform from "./ExperimentWaveform.svelte";
   import {
@@ -45,6 +59,7 @@
     gains: string[];
   };
 
+  const MOTOR_DISABLED = 0;
   const MOTOR_ENABLED = 1;
   const MOTOR_RUN = 2;
 
@@ -82,6 +97,8 @@
     CURRENT_BW, CURRENT_SOURCE, ID_KP, ID_KI, IQ_KP, IQ_KI,
     SPEED_BW, SPEED_SOURCE, SPEED_KP, SPEED_KI,
     POSITION_KP, ESO_BW,
+    MOTION_MODE, MOTION_MAX_SPEED, MOTION_ACCEL, MOTION_DECEL,
+    TARGET_POSITION, TARGET_SPEED, TARGET_TORQUE, TORQUE_RAMP,
   ];
 
   let { connection, motorState, onError = () => undefined }: Props = $props();
@@ -105,9 +122,12 @@
   let displayMultipliers = $state<Record<number, number>>({});
   let tuningSelectionMode = $state<MotionMode | undefined>(undefined);
   let tuningTimePerDiv = $state(20e-3);
+  let incrementalDraft = $state("1");
 
   onMount(() => {
-    void initializeMotion().catch(onError);
+    void initializeMotion()
+      .then(() => incrementalDraft = formatHostNumber($motionState.incrementalDeltaTurn))
+      .catch(onError);
     void refreshExperiment();
 
     experimentRefreshUnsubscribe = subscribeRefresh(50, () => void refreshExperiment());
@@ -152,17 +172,22 @@
 
   $effect(() => {
     if (!connection) return;
-    const mode = $motionState.mode;
-    if (tuningSelectionMode === mode) return;
+    const mode = modeFromParameter(metadata[MOTION_MODE], values[MOTION_MODE]);
+    if (!mode || tuningSelectionMode === mode) return;
     tuningSelectionMode = mode;
     untrack(() => void loadTuningDefaults());
   });
 
-  function valueText(value: ParameterValue | null | undefined): string {
+  function valueText(value: ParameterValue | null | undefined, symbol?: string): string {
     if (!value) return "";
-    if (value.type === "position") return `${value.value.turns}, ${value.value.theta}`;
+    const meta = symbol ? metadata[symbol] : undefined;
+    if (meta) return motionParameterText(meta, value);
     if (value.type === "f32") return Number(value.value).toPrecision(7).replace(/(?:\.0+|(\.\d+?)0+)$/, "$1");
     return String(value.value);
+  }
+
+  function formatHostNumber(value: number): string {
+    return Number(value).toPrecision(9).replace(/(?:\.0+|(\.\d+?)0+)$/, "$1");
   }
 
   function label(symbol: string): string {
@@ -185,11 +210,12 @@
   }
 
   function dirty(symbol: string): boolean {
-    return (drafts[symbol] ?? "") !== valueText(values[symbol]);
+    return (drafts[symbol] ?? "") !== valueText(values[symbol], symbol);
   }
 
   function hasDirtyDraft(): boolean {
-    return SYMBOLS.some((symbol) => metadata[symbol] && dirty(symbol));
+    return SYMBOLS.some((symbol) => metadata[symbol] && dirty(symbol))
+      || incrementalDraft !== formatHostNumber($motionState.incrementalDeltaTurn);
   }
 
   function numeric(value: ParameterValue | null | undefined): number | null {
@@ -215,15 +241,7 @@
   }
 
   function parseValue(meta: ParameterMetadata, text: string): ParameterValue {
-    const parsed = Number(text.trim());
-    if (!Number.isFinite(parsed)) throw new Error(`${meta.label}: value must be finite.`);
-
-    if (meta.typeName === "f32") return { type: "f32", value: parsed };
-    if (meta.typeName === "u8") {
-      if (!Number.isInteger(parsed) || parsed < 0 || parsed > 255) throw new Error(`${meta.label}: expected u8.`);
-      return { type: "u8", value: parsed };
-    }
-    throw new Error(`${meta.label}: unsupported tuning type ${meta.typeName}.`);
+    return parseMotionParameter(meta, text);
   }
 
   function applyValues(entries: ParameterMetadata[], results: Awaited<ReturnType<typeof readParameters>>) {
@@ -234,7 +252,7 @@
     for (const item of entries) {
       const result = byId.get(item.id);
       nextValues[item.symbol] = result?.value ?? null;
-      if (result?.value) nextDrafts[item.symbol] = valueText(result.value);
+      if (result?.value) nextDrafts[item.symbol] = valueText(result.value, item.symbol);
     }
 
     values = nextValues;
@@ -289,7 +307,7 @@
       await writeParameter(meta.id, parseValue(meta, drafts[symbol] ?? ""));
       await refreshSymbols(refresh);
     } catch (error) {
-      drafts = { ...drafts, [symbol]: valueText(values[symbol]) };
+      drafts = { ...drafts, [symbol]: valueText(values[symbol], symbol) };
       onError(error);
     } finally {
       const next = new Set(writing);
@@ -303,11 +321,14 @@
     const value = enumValue(symbol, enumSymbol);
     if (!meta || value === null || locked(symbol)) return;
 
+    const previous = values[symbol] ?? null;
+    values = { ...values, [symbol]: { type: "u8", value } };
     writing = new Set(writing).add(symbol);
     try {
       await writeParameter(meta.id, { type: "u8", value });
       await refreshSymbols(refresh);
     } catch (error) {
+      values = { ...values, [symbol]: previous };
       onError(error);
     } finally {
       const next = new Set(writing);
@@ -322,7 +343,7 @@
       void commit(symbol, refresh);
       (event.currentTarget as HTMLInputElement).blur();
     } else if (event.key === "Escape") {
-      drafts = { ...drafts, [symbol]: valueText(values[symbol]) };
+      drafts = { ...drafts, [symbol]: valueText(values[symbol], symbol) };
       (event.currentTarget as HTMLInputElement).blur();
     }
   }
@@ -340,8 +361,11 @@
     speed: "Speed",
     "sensorless-speed": "Sensorless Speed",
     torque: "Torque",
-    mit: "MIT",
   };
+
+  function activeMotionMode(): MotionMode | undefined {
+    return modeFromParameter(metadata[MOTION_MODE], values[MOTION_MODE]);
+  }
 
   function motionModeSupported(mode: MotionMode): boolean {
     const caps = connection?.motion;
@@ -349,26 +373,78 @@
     if (mode === "position") return caps.position;
     if (mode === "speed") return caps.speed;
     if (mode === "sensorless-speed") return caps.sensorlessSpeed;
-    if (mode === "torque") return caps.torque;
-    return caps.mit;
+    return caps.torque;
   }
 
-  function motionNumber(event: Event): number {
-    return Number((event.currentTarget as HTMLInputElement).value);
+  async function setMotionMode(mode: MotionMode) {
+    const meta = metadata[MOTION_MODE];
+    const value = modeParameterValue(meta, mode);
+    if (!meta || value === undefined || motorState !== MOTOR_DISABLED || writing.has(MOTION_MODE)) return;
+    writing = new Set(writing).add(MOTION_MODE);
+    try {
+      await writeParameter(meta.id, { type: "u8", value });
+      await refreshSymbols([MOTION_MODE]);
+    } catch (error) {
+      onError(error);
+    } finally {
+      const next = new Set(writing);
+      next.delete(MOTION_MODE);
+      writing = next;
+    }
   }
 
   function updateMotionField<K extends keyof MotionState>(key: K, value: MotionState[K]) {
     void updateMotion(key, value).catch(onError);
   }
 
-  function updateAcceleration(value: number) {
-    updateMotionField("acceleration", value);
-    if (copyAccelToDecel) updateMotionField("deceleration", value);
+  async function commitIncremental() {
+    const value = Number(incrementalDraft.trim());
+    if (!Number.isFinite(value)) {
+      incrementalDraft = formatHostNumber($motionState.incrementalDeltaTurn);
+      onError("Delta position must be finite.");
+      return;
+    }
+    try {
+      await updateMotion("incrementalDeltaTurn", value);
+      incrementalDraft = formatHostNumber($motionState.incrementalDeltaTurn);
+    } catch (error) {
+      incrementalDraft = formatHostNumber($motionState.incrementalDeltaTurn);
+      onError(error);
+    }
+  }
+
+  function incrementalKeydown(event: KeyboardEvent) {
+    if (event.key === "Enter") {
+      event.preventDefault();
+      void commitIncremental();
+      (event.currentTarget as HTMLInputElement).blur();
+    } else if (event.key === "Escape") {
+      incrementalDraft = formatHostNumber($motionState.incrementalDeltaTurn);
+      (event.currentTarget as HTMLInputElement).blur();
+    }
+  }
+
+  async function motionParameterKeydown(event: KeyboardEvent, symbol: string) {
+    if (event.key !== "Enter") {
+      keydown(event, symbol);
+      return;
+    }
+    event.preventDefault();
+    if (symbol === MOTION_ACCEL && copyAccelToDecel && metadata[MOTION_DECEL]) {
+      drafts = { ...drafts, [MOTION_DECEL]: drafts[MOTION_ACCEL] ?? "" };
+      await commit(MOTION_ACCEL);
+      await commit(MOTION_DECEL);
+    } else {
+      await commit(symbol);
+    }
+    (event.currentTarget as HTMLInputElement).blur();
   }
 
   function toggleCopyAccelToDecel(checked: boolean) {
     copyAccelToDecel = checked;
-    if (checked) updateMotionField("deceleration", $motionState.acceleration);
+    if (checked && drafts[MOTION_ACCEL] !== undefined) {
+      drafts = { ...drafts, [MOTION_DECEL]: drafts[MOTION_ACCEL] };
+    }
   }
 
   function selectedTuningEntries(): TuningExperimentSelection[] {
@@ -479,13 +555,13 @@
     return !!connection
       && motorState === MOTOR_ENABLED
       && !motionActionBusy
-      && !stopActionBusy
       && !experimentActive()
       && !hasDirtyDraft()
       && connection.motion.run
       && selectedTuningEntries().length > 0
       && selectionWithinLimits()
-      && motionModeSupported($motionState.mode);
+      && !!activeMotionMode()
+      && motionModeSupported(activeMotionMode()!);
   }
 
   function canStopMotion(): boolean {
@@ -658,120 +734,117 @@
                 <span>Mode</span>
                 <select
                   class="compact-select motion-mode-select"
-                  value={$motionState.mode}
-                  disabled={motionLocked()}
-                  onchange={(event) => updateMotionField("mode", (event.currentTarget as HTMLSelectElement).value as MotionMode)}
+                  value={activeMotionMode() ?? ""}
+                  disabled={motionLocked() || motorState !== MOTOR_DISABLED || writing.has(MOTION_MODE)}
+                  title={motorState === MOTOR_DISABLED ? "Select motor mode" : "Disable the motor before changing mode"}
+                  onchange={(event) => void setMotionMode((event.currentTarget as HTMLSelectElement).value as MotionMode)}
                 >
                   {#each Object.entries(motionModeLabels) as [value, labelText]}
-                    <option value={value} disabled={!motionModeSupported(value as MotionMode)}>{labelText}</option>
+                    {#if motionModeSupported(value as MotionMode)}
+                      <option value={value}>{labelText}</option>
+                    {/if}
                   {/each}
                 </select>
               </label>
 
-              {#if $motionState.mode === "position"}
+              {#if activeMotionMode() === "position"}
                 <div class="position-mode-options" aria-label="Position command mode">
                   <label>
-                    <input
-                      type="radio"
-                      name="tuning-position-command"
+                    <input type="radio" name="tuning-position-command"
                       checked={$motionState.positionCommand === "incremental"}
                       disabled={motionLocked()}
-                      onchange={() => updateMotionField("positionCommand", "incremental")}
-                    />
+                      onchange={() => updateMotionField("positionCommand", "incremental")} />
                     Incremental
                   </label>
                   <label>
-                    <input
-                      type="radio"
-                      name="tuning-position-command"
+                    <input type="radio" name="tuning-position-command"
                       checked={$motionState.positionCommand === "absolute"}
                       disabled={motionLocked()}
-                      onchange={() => updateMotionField("positionCommand", "absolute")}
-                    />
+                      onchange={() => updateMotionField("positionCommand", "absolute")} />
                     Absolute
                   </label>
                   <label>
-                    <input
-                      type="checkbox"
-                      checked={$motionState.repeat}
-                      disabled={motionLocked()}
-                      onchange={(event) => updateMotionField("repeat", (event.currentTarget as HTMLInputElement).checked)}
-                    />
+                    <input type="checkbox" checked={$motionState.repeat} disabled={motionLocked()}
+                      onchange={(event) => updateMotionField("repeat", (event.currentTarget as HTMLInputElement).checked)} />
                     Repeat
                   </label>
                 </div>
               {/if}
             </div>
 
-            {#if $motionState.mode === "position"}
+            {#if activeMotionMode() === "position"}
               <div class="motion-grid">
                 <label>
-                  <span>Position</span>
+                  <span>{$motionState.positionCommand === "absolute" ? "Position" : "Delta"}</span>
                   <span class="motion-editor">
-                    <input
-                      class="compact-input mono"
-                      type="number"
-                      value={$motionState.positionTargetTurn}
-                      disabled={motionLocked()}
-                      oninput={(event) => updateMotionField("positionTargetTurn", motionNumber(event))}
-                    />
+                    {#if $motionState.positionCommand === "absolute"}
+                      <input class:ramModified={!!metadata[TARGET_POSITION] && $modifiedParameterIds.has(metadata[TARGET_POSITION].id)}
+                        class:dirty={dirty(TARGET_POSITION)} class="compact-input mono"
+                        value={drafts[TARGET_POSITION] ?? ""} disabled={motionLocked()}
+                        oninput={(event) => drafts = { ...drafts, [TARGET_POSITION]: event.currentTarget.value }}
+                        onkeydown={(event) => motionParameterKeydown(event, TARGET_POSITION)}
+                        onblur={() => drafts = { ...drafts, [TARGET_POSITION]: valueText(values[TARGET_POSITION], TARGET_POSITION) }} />
+                    {:else}
+                      <input class:dirty={incrementalDraft !== formatHostNumber($motionState.incrementalDeltaTurn)}
+                        class="compact-input mono" value={incrementalDraft} disabled={motionLocked()}
+                        oninput={(event) => incrementalDraft = event.currentTarget.value}
+                        onkeydown={incrementalKeydown}
+                        onblur={() => incrementalDraft = formatHostNumber($motionState.incrementalDeltaTurn)} />
+                    {/if}
                     <span class="unit">turn</span>
                   </span>
                 </label>
                 <label>
                   <span>Max Speed</span>
                   <span class="motion-editor">
-                    <input
-                      class="compact-input mono"
-                      type="number"
-                      value={$motionState.positionMaxSpeed}
-                      disabled={motionLocked()}
-                      oninput={(event) => updateMotionField("positionMaxSpeed", motionNumber(event))}
-                    />
+                    <input class:ramModified={!!metadata[MOTION_MAX_SPEED] && $modifiedParameterIds.has(metadata[MOTION_MAX_SPEED].id)}
+                      class:dirty={dirty(MOTION_MAX_SPEED)} class="compact-input mono"
+                      value={drafts[MOTION_MAX_SPEED] ?? ""} disabled={motionLocked()}
+                      oninput={(event) => drafts = { ...drafts, [MOTION_MAX_SPEED]: event.currentTarget.value }}
+                      onkeydown={(event) => motionParameterKeydown(event, MOTION_MAX_SPEED)}
+                      onblur={() => drafts = { ...drafts, [MOTION_MAX_SPEED]: valueText(values[MOTION_MAX_SPEED], MOTION_MAX_SPEED) }} />
                     <span class="unit">rad/s</span>
                   </span>
                 </label>
                 <label>
                   <span>Accel</span>
                   <span class="motion-editor">
-                    <input
-                      class="compact-input mono"
-                      type="number"
-                      value={$motionState.acceleration}
-                      disabled={motionLocked()}
-                      oninput={(event) => updateAcceleration(motionNumber(event))}
-                    />
+                    <input class:ramModified={!!metadata[MOTION_ACCEL] && $modifiedParameterIds.has(metadata[MOTION_ACCEL].id)}
+                      class:dirty={dirty(MOTION_ACCEL)} class="compact-input mono"
+                      value={drafts[MOTION_ACCEL] ?? ""} disabled={motionLocked()}
+                      oninput={(event) => {
+                        drafts = { ...drafts, [MOTION_ACCEL]: event.currentTarget.value };
+                        if (copyAccelToDecel) drafts = { ...drafts, [MOTION_DECEL]: event.currentTarget.value };
+                      }}
+                      onkeydown={(event) => motionParameterKeydown(event, MOTION_ACCEL)}
+                      onblur={() => drafts = { ...drafts, [MOTION_ACCEL]: valueText(values[MOTION_ACCEL], MOTION_ACCEL) }} />
                     <span class="unit">rad/s²</span>
                   </span>
                 </label>
                 <label>
                   <span>Decel</span>
                   <span class="motion-editor">
-                    <input
-                      class="compact-input mono"
-                      type="number"
-                      value={$motionState.deceleration}
-                      disabled={motionLocked() || copyAccelToDecel}
-                      oninput={(event) => updateMotionField("deceleration", motionNumber(event))}
-                    />
+                    <input class:ramModified={!!metadata[MOTION_DECEL] && $modifiedParameterIds.has(metadata[MOTION_DECEL].id)}
+                      class:dirty={dirty(MOTION_DECEL)} class="compact-input mono"
+                      value={drafts[MOTION_DECEL] ?? ""} disabled={motionLocked() || copyAccelToDecel}
+                      oninput={(event) => drafts = { ...drafts, [MOTION_DECEL]: event.currentTarget.value }}
+                      onkeydown={(event) => motionParameterKeydown(event, MOTION_DECEL)}
+                      onblur={() => drafts = { ...drafts, [MOTION_DECEL]: valueText(values[MOTION_DECEL], MOTION_DECEL) }} />
                     <span class="unit">rad/s²</span>
                   </span>
                 </label>
               </div>
-            {:else if $motionState.mode === "speed" || $motionState.mode === "sensorless-speed"}
+            {:else if activeMotionMode() === "speed" || activeMotionMode() === "sensorless-speed"}
               <div class="motion-grid">
                 <label>
                   <span>Target Speed</span>
                   <span class="motion-editor">
-                    <input
-                      class="compact-input mono"
-                      type="number"
-                      value={$motionState.mode === "speed" ? $motionState.speedTarget : $motionState.sensorlessSpeedTarget}
-                      disabled={motionLocked()}
-                      oninput={(event) => $motionState.mode === "speed"
-                        ? updateMotionField("speedTarget", motionNumber(event))
-                        : updateMotionField("sensorlessSpeedTarget", motionNumber(event))}
-                    />
+                    <input class:ramModified={!!metadata[TARGET_SPEED] && $modifiedParameterIds.has(metadata[TARGET_SPEED].id)}
+                      class:dirty={dirty(TARGET_SPEED)} class="compact-input mono"
+                      value={drafts[TARGET_SPEED] ?? ""} disabled={motionLocked()}
+                      oninput={(event) => drafts = { ...drafts, [TARGET_SPEED]: event.currentTarget.value }}
+                      onkeydown={(event) => motionParameterKeydown(event, TARGET_SPEED)}
+                      onblur={() => drafts = { ...drafts, [TARGET_SPEED]: valueText(values[TARGET_SPEED], TARGET_SPEED) }} />
                     <span class="unit">rad/s</span>
                   </span>
                 </label>
@@ -779,95 +852,67 @@
                 <label>
                   <span>Accel</span>
                   <span class="motion-editor">
-                    <input
-                      class="compact-input mono"
-                      type="number"
-                      value={$motionState.acceleration}
-                      disabled={motionLocked()}
-                      oninput={(event) => updateAcceleration(motionNumber(event))}
-                    />
+                    <input class:ramModified={!!metadata[MOTION_ACCEL] && $modifiedParameterIds.has(metadata[MOTION_ACCEL].id)}
+                      class:dirty={dirty(MOTION_ACCEL)} class="compact-input mono"
+                      value={drafts[MOTION_ACCEL] ?? ""} disabled={motionLocked()}
+                      oninput={(event) => {
+                        drafts = { ...drafts, [MOTION_ACCEL]: event.currentTarget.value };
+                        if (copyAccelToDecel) drafts = { ...drafts, [MOTION_DECEL]: event.currentTarget.value };
+                      }}
+                      onkeydown={(event) => motionParameterKeydown(event, MOTION_ACCEL)}
+                      onblur={() => drafts = { ...drafts, [MOTION_ACCEL]: valueText(values[MOTION_ACCEL], MOTION_ACCEL) }} />
                     <span class="unit">rad/s²</span>
                   </span>
                 </label>
                 <label>
                   <span>Decel</span>
                   <span class="motion-editor">
-                    <input
-                      class="compact-input mono"
-                      type="number"
-                      value={$motionState.deceleration}
-                      disabled={motionLocked() || copyAccelToDecel}
-                      oninput={(event) => updateMotionField("deceleration", motionNumber(event))}
-                    />
+                    <input class:ramModified={!!metadata[MOTION_DECEL] && $modifiedParameterIds.has(metadata[MOTION_DECEL].id)}
+                      class:dirty={dirty(MOTION_DECEL)} class="compact-input mono"
+                      value={drafts[MOTION_DECEL] ?? ""} disabled={motionLocked() || copyAccelToDecel}
+                      oninput={(event) => drafts = { ...drafts, [MOTION_DECEL]: event.currentTarget.value }}
+                      onkeydown={(event) => motionParameterKeydown(event, MOTION_DECEL)}
+                      onblur={() => drafts = { ...drafts, [MOTION_DECEL]: valueText(values[MOTION_DECEL], MOTION_DECEL) }} />
                     <span class="unit">rad/s²</span>
                   </span>
                 </label>
               </div>
-            {:else if $motionState.mode === "torque"}
+            {:else if activeMotionMode() === "torque"}
               <div class="motion-grid">
                 <label>
                   <span>Torque</span>
                   <span class="motion-editor">
-                    <input
-                      class="compact-input mono"
-                      type="number"
-                      value={$motionState.torqueTargetNm}
-                      disabled={motionLocked()}
-                      oninput={(event) => updateMotionField("torqueTargetNm", motionNumber(event))}
-                    />
+                    <input class:ramModified={!!metadata[TARGET_TORQUE] && $modifiedParameterIds.has(metadata[TARGET_TORQUE].id)}
+                      class:dirty={dirty(TARGET_TORQUE)} class="compact-input mono"
+                      value={drafts[TARGET_TORQUE] ?? ""} disabled={motionLocked()}
+                      oninput={(event) => drafts = { ...drafts, [TARGET_TORQUE]: event.currentTarget.value }}
+                      onkeydown={(event) => motionParameterKeydown(event, TARGET_TORQUE)}
+                      onblur={() => drafts = { ...drafts, [TARGET_TORQUE]: valueText(values[TARGET_TORQUE], TARGET_TORQUE) }} />
                     <span class="unit">N·m</span>
                   </span>
                 </label>
-                <label>
-                  <span>Ramp</span>
-                  <span class="motion-editor">
-                    <input
-                      class="compact-input mono"
-                      type="number"
-                      value={$motionState.torqueRampNmPerS}
-                      disabled={motionLocked()}
-                      oninput={(event) => updateMotionField("torqueRampNmPerS", motionNumber(event))}
-                    />
-                    <span class="unit">N·m/s</span>
-                  </span>
-                </label>
-              </div>
-            {:else}
-              <div class="motion-grid">
-                <label>
-                  <span>Position</span>
-                  <span class="motion-editor">
-                    <input class="compact-input mono" type="number" value={$motionState.mitPositionRef} disabled={motionLocked()} oninput={(event) => updateMotionField("mitPositionRef", motionNumber(event))} />
-                    <span class="unit">turn</span>
-                  </span>
-                </label>
-                <label>
-                  <span>Velocity</span>
-                  <span class="motion-editor">
-                    <input class="compact-input mono" type="number" value={$motionState.mitVelocityRef} disabled={motionLocked()} oninput={(event) => updateMotionField("mitVelocityRef", motionNumber(event))} />
-                    <span class="unit">rad/s</span>
-                  </span>
-                </label>
-                <label>
-                  <span>Kp</span>
-                  <span class="motion-editor"><input class="compact-input mono" type="number" value={$motionState.mitKp} disabled={motionLocked()} oninput={(event) => updateMotionField("mitKp", motionNumber(event))} /></span>
-                </label>
-                <label>
-                  <span>Kd</span>
-                  <span class="motion-editor"><input class="compact-input mono" type="number" value={$motionState.mitKd} disabled={motionLocked()} oninput={(event) => updateMotionField("mitKd", motionNumber(event))} /></span>
-                </label>
+                {#if metadata[TORQUE_RAMP]}
+                  <label>
+                    <span>Ramp</span>
+                    <span class="motion-editor">
+                      <input class:ramModified={$modifiedParameterIds.has(metadata[TORQUE_RAMP].id)}
+                        class:dirty={dirty(TORQUE_RAMP)} class="compact-input mono"
+                        value={drafts[TORQUE_RAMP] ?? ""} disabled={motionLocked()}
+                        oninput={(event) => drafts = { ...drafts, [TORQUE_RAMP]: event.currentTarget.value }}
+                        onkeydown={(event) => motionParameterKeydown(event, TORQUE_RAMP)}
+                        onblur={() => drafts = { ...drafts, [TORQUE_RAMP]: valueText(values[TORQUE_RAMP], TORQUE_RAMP) }} />
+                      <span class="unit">N·m/s</span>
+                    </span>
+                  </label>
+                {/if}
               </div>
             {/if}
 
             <div class="motion-footer">
-              {#if $motionState.mode === "position" || $motionState.mode === "speed" || $motionState.mode === "sensorless-speed"}
+              {#if activeMotionMode() === "position" || activeMotionMode() === "speed" || activeMotionMode() === "sensorless-speed"}
                 <label class="copy-decel">
-                  <input
-                    type="checkbox"
-                    checked={copyAccelToDecel}
-                    disabled={motionLocked()}
-                    onchange={(event) => toggleCopyAccelToDecel((event.currentTarget as HTMLInputElement).checked)}
-                  />
+                  <input type="checkbox" checked={copyAccelToDecel} disabled={motionLocked()}
+                    onchange={(event) => toggleCopyAccelToDecel((event.currentTarget as HTMLInputElement).checked)} />
                   Copy Accel to Decel
                 </label>
               {:else}
@@ -886,12 +931,9 @@
                         : "Run tuning experiment"}
                   onclick={() => void runTuningMotion()}
                 >Run</vscode-button>
-                <vscode-button
-                  secondary
-                  disabled={!canStopMotion()}
-                  title="Stop motor motion and end the tuning experiment"
-                  onclick={() => void stopTuningMotion()}
-                >Stop</vscode-button>
+                <vscode-button secondary disabled={!canStopMotion()}
+                  title="Stop the active tuning experiment and retain its waveform"
+                  onclick={() => void stopTuningMotion()}>Stop</vscode-button>
               </div>
             </div>
           </section>
