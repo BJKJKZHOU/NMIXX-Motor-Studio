@@ -4,9 +4,15 @@
   import { DataZoomComponent, GridComponent, LegendComponent, TooltipComponent } from "echarts/components";
   import { init, use, type ECharts, type EChartsOption } from "echarts/core";
   import { CanvasRenderer } from "echarts/renderers";
-  import type { ScopeChannel, ScopeSnapshot } from "./types";
+  import type { ScopeSnapshot } from "./types";
 
-  export let channels: ScopeChannel[] = [];
+  type ScopeDisplayChannel = {
+    id: number;
+    label: string;
+    unit?: string;
+  };
+
+  export let channels: ScopeDisplayChannel[] = [];
   export let snapshot: ScopeSnapshot | undefined;
   export let verticalScale = new Map<number, number>();
   export let verticalOffset = new Map<number, number>();
@@ -30,14 +36,24 @@
   let resizeObserver: ResizeObserver | undefined;
   let applyingOption = false;
 
-  $: if (host && snapshot) updateChart();
+  $: if (host) {
+    channels;
+    snapshot;
+    verticalScale;
+    verticalOffset;
+    activeChannelId;
+    viewRange;
+    valueMultiplier;
+    showLegend;
+    updateChart();
+  }
 
   function multiplier(id: number): number {
     const value = valueMultiplier.get(id);
     return Number.isFinite(value) && (value ?? 0) > 0 ? value! : 1;
   }
 
-  function defaultScale(channel: ScopeChannel): number {
+  function defaultScale(channel: ScopeDisplayChannel): number {
     const unit = channel.unit?.trim().toLowerCase() ?? "";
     if (unit === "a") return 0.5;
     if (unit === "v") return 5;
@@ -46,7 +62,7 @@
     return 1;
   }
 
-  function traceColor(channel: ScopeChannel): string {
+  function traceColor(channel: ScopeDisplayChannel): string {
     const index = Math.max(0, channels.findIndex((item) => item.id === channel.id));
     return traceColors[index % traceColors.length];
   }
