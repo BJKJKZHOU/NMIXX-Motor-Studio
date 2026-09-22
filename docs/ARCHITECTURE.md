@@ -389,95 +389,78 @@ There is deliberately no implicit Enable/Disable in the experiment. The global S
 
 The waveform panel is not an indefinitely scrolling Scope. It reuses shared acquisition/uPlot infrastructure but is finite and synchronized to the tuning experiment.
 
-## Motion is a shared runtime model, not page-local state
+## Motion ownership and execution semantics
 
-Motion is a first-class application domain. It owns the complete motor-motion command and trajectory-generation model, not merely a target setpoint.
-
-The full Motion page and the compact Motion controls shown during Control Tuning are two views over the **same Application-level Motion model**.
+Motion is a first-class application domain, but device Parameters and host command semantics have different owners.
 
 ```text
-                    Application / Motion model
+                         ParameterService
                               |
-                 +------------+------------+
-                 |                         |
-            Motion page              Control Tuning
-          full editor/view            compact editor
-                 |                         |
-                 +------------+------------+
-                              |
-                       same state object
+          +-------------------+-------------------+
+          |                   |                   |
+      Motion page       Control Tuning       Parameters page
+          |
+          +--> device-owned values
+               - PARAM_MOTOR_MODE
+               - PARAM_MOTION_WM_MAX
+               - PARAM_MOTION_WM_ACC
+               - PARAM_MOTION_WM_DEC
+               - PARAM_TARGET_POSITION
+               - PARAM_TARGET_SPEED
+               - PARAM_TARGET_TORQUE
+               - optional schema-advertised motion Parameters
+
+Application Motion model
+          |
+          +--> host-only command semantics
+               - Absolute / Incremental position interpretation
+               - incremental position delta
+               - manual alternating Repeat state
 ```
 
-There must not be separate page-local copies of motion parameters, an Apply/synchronize step, or a snapshot that diverges between these views. Editing a shared field from either page updates the same runtime state and the other view must reflect the new value immediately.
+A device-owned value must not also be stored in `MotionConfig`. Editing the same Parameter from Motion, Control Tuning or the generic Parameters page changes the same active device RAM value and every view observes that shared value.
 
-The Motion page is the complete motion-command editor. Control Tuning exposes only the compact subset needed to excite the motor while tuning controllers and observing analysis data. Fields hidden from the compact tuning view still belong to the same Motion model.
+Numeric device Parameters follow the workbench editor rule defined in `UI_INTERACTION_RULES.md`: typing creates a draft, Enter writes RAM and reads back the canonical value, while Escape or leaving the editor without Enter discards the draft. Enum/select controls such as motor mode may write immediately because one selection is already a complete value.
 
-The initial operating/control modes exposed by Motion are broader than the traditional position/speed/torque trio:
+### Run is execution, not synchronization
 
-- **Position**
-- **Speed**
-- **Sensorless Speed**
-- **Torque**
-- **MIT**
+Normal Motion Parameters are committed before Run. `motion.run` must not bulk-copy a Host configuration object into device Parameters.
 
-The mode selector itself is shared state. If a view is allowed to change the active mode, every other Motion view observes that same active mode.
+For Speed, Sensorless Speed and Torque, Run normally reduces to validating the required runtime state and starting `ACTION_MOTOR_RUN`.
 
-Motion configuration includes the trajectory-generator behavior appropriate to the selected mode. Position motion may use trapezoidal/T-profile, S-curve, filtered trajectory or future trajectory types. Speed motion also uses a configurable trajectory rather than jumping directly to a speed setpoint; acceleration, deceleration and the selected shaping method are part of the same Motion state. Other modes may expose their own mode-specific command shaping when meaningful.
+Absolute Position target is also a normal device Parameter and is written when the user commits the target field.
 
-The current trajectory semantics are explicit:
+Incremental Position is intentionally different because the user enters a delta, not an absolute firmware target. At execution time the Application reads the current position, adds the committed host-side delta, writes the resulting `PARAM_TARGET_POSITION`, then starts `ACTION_MOTOR_RUN`.
 
-- **T / Trapezoidal**: Acc and Dec are the constant acceleration/deceleration magnitudes of the base profile.
-- **S-curve / Peak Accel**: Acc and Dec are the actual maximum acceleration/deceleration magnitudes. Smooth acceleration shaping therefore takes longer than a T-profile using the same values.
-- **S-curve / Matched Time**: Acc and Dec describe the equivalent T-profile timing. Acceleration/deceleration duration is kept equal to the T-profile, so the internal S-curve peak acceleration is higher.
-- **Filtered**: Acc and Dec define a base T-profile. Filter Time is the time constant of a causal first-order low-pass applied to the base speed command. Position is obtained by integrating the filtered speed; preview code must not rescale position independently from speed merely to force the endpoint.
+### Manual Repeat
 
-The exact trajectory implementations belong behind the Application-level Motion API. GUI pages select and edit trajectory semantics; they do not implement their own ramp, S-curve or filter generators.
+Repeat is host command semantics, not a firmware Repeat mode and not an automatic loop.
 
-Mode-specific command fields also share one owner. Conceptually the Application API should expose one coherent Motion domain such as:
+With Position Repeat enabled, the first manual Run establishes endpoints A and B. One Run executes only one leg. A successful Run completion changes which endpoint the **next manual Run** targets:
 
 ```text
-motion.mode
-
-motion.trajectory.type
-motion.trajectory.acc
-motion.trajectory.dec
-motion.trajectory.filter
-...
-
-motion.position.target
-motion.position.speed
-
-motion.speed.target
-
-motion.sensorless_speed.target
-...
-
-motion.mit.position_ref
-motion.mit.velocity_ref
-motion.mit.kp
-motion.mit.kd
-motion.mit.torque_ff
+Run #1: A -> B
+Run #2: B -> A
+Run #3: A -> B
 ```
 
-The exact public API names may evolve, but GUI components must not create parallel storage for these values.
+There is no automatic second Run. Stop, Disable, a failed Run or a fault must not advance the Repeat direction. A future continuously cycling servo-test feature is a separate workflow.
 
-The distinction between the two GUI surfaces is therefore **capability and density**, not ownership:
+### Executable trajectory capability
 
-- **Motion page**: complete mode-specific command configuration, trajectory type and shaping configuration, command/trajectory preview, advanced motion options where applicable, and Run/Stop.
-- **Control Tuning**: compact controls for the same Motion state beside Scope/Bode/FFT-oriented tuning tools.
+The GUI exposes only trajectory behavior the connected firmware actually advertises as executable. Current AxDr_L Position/Speed motion uses the T/Trapezoidal planner represented by `Wm_Max / Wm_Acc / Wm_Dec`; unsupported S-curve, filtered-profile and MIT controls are not presented as normal executable Motion options.
 
-Run, Stop and Disable have intentionally different semantics:
+If future firmware exposes additional executable trajectory Parameters/capabilities, those controls may appear from schema/capability discovery without introducing parallel Host copies of their values.
 
-- **Run** executes the currently configured Motion command using the selected trajectory generator.
-- **Stop** is a normal controlled stop. It must transition the current command toward the stopped state using the active trajectory/deceleration semantics instead of abruptly removing motor drive.
-- **Disable** is the emergency/immediate drive-off operation at the application level. It removes motor enable rather than following the normal motion trajectory.
+The full Motion page and Control Tuning are therefore two workflow projections over the same device Parameters plus the same small Application-owned command semantics. Their difference is presentation density and experiment workflow, not value ownership.
 
-Therefore a Stop button on the Motion page and a Stop button in Control Tuning must invoke the same Application-level controlled-stop operation. They must not be implemented as aliases for Disable. Likewise, any global Disable control must remain semantically distinct and visually recognizable from normal Stop.
+Run, Stop and Disable remain distinct:
 
-Sensorless Speed remains a separate operating mode rather than a checkbox on normal Speed because startup and observer handover have distinct runtime semantics. The Motion page should expose only the user-facing startup controls needed for normal operation; low-level observer/handover tuning belongs to deeper control/debug configuration.
+- **Run** executes the already committed Motion command.
+- **Stop** performs the normal controlled-stop operation exposed by the Application.
+- **Disable** removes motor enable and is not an alias for Stop.
 
-MIT is also represented as its own mode because its command surface is inherently different from trajectory Position/Speed control: position reference, velocity reference, Kp, Kd and torque feedforward are edited as one MIT command set.
-
+Sensorless Speed remains a separate operating mode where the firmware exposes it because startup and observer handover have distinct runtime semantics. Only user-facing Parameters actually exposed by the connected schema are shown.
 
 ## Analysis shares acquisition and plotting infrastructure
 
