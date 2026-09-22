@@ -735,7 +735,7 @@ impl ApplicationSession {
                 selections.push(self.tuning_selection("PARAM_REF_WM", ScopeRate::Normal)?);
                 selections.push(self.tuning_selection("PARAM_RUN_WM", ScopeRate::Normal)?);
             }
-            MotionMode::Torque | MotionMode::Mit => {}
+            MotionMode::Torque => {}
         }
 
         Ok(selections)
