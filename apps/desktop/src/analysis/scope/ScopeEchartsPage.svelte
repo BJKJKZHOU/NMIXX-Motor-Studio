@@ -1,14 +1,6 @@
 <script lang="ts">
-  import { onDestroy, onMount, tick } from "svelte";
-  import { LineChart } from "echarts/charts";
-  import {
-    DataZoomComponent,
-    GridComponent,
-    LegendComponent,
-    TooltipComponent,
-  } from "echarts/components";
-  import { init, use, type ECharts, type EChartsOption } from "echarts/core";
-  import { CanvasRenderer } from "echarts/renderers";
+  import { onDestroy, onMount } from "svelte";
+  import ScopeEchartsView from "./ScopeEchartsView.svelte";
   import type { ConnectionInfo, PlotChannel } from "../../connection/types";
   import { subscribeRefresh } from "../../refreshScheduler";
   import { configureScope, readScopeSnapshot, startScope, stopScope } from "./api";
@@ -20,7 +12,6 @@
   export let onError: (error: unknown) => void = () => undefined;
   export let onClearError: () => void = () => undefined;
 
-  use([LineChart, DataZoomComponent, GridComponent, LegendComponent, TooltipComponent, CanvasRenderer]);
 
   const refreshIntervalMs = 100;
   const defaultLatestSpanSeconds = 0.5;
@@ -31,10 +22,7 @@
     "#fc8452", "#9a60b4", "#ea7ccc", "#91cc75", "#fac858", "#ee6666",
   ];
 
-  let host: HTMLDivElement;
-  let chart: ECharts | undefined;
   let refreshUnsubscribe: (() => void) | undefined;
-  let resizeObserver: ResizeObserver | undefined;
   let reconfigureTimer: ReturnType<typeof setTimeout> | undefined;
   let viewRefreshTimer: ReturnType<typeof setTimeout> | undefined;
   let selectedIds = new Set<number>();
@@ -51,7 +39,6 @@
   let followingLatest = true;
   let viewRange: [number, number] = [-defaultLatestSpanSeconds, 0];
   let viewRevision = 0;
-  let applyingChartOption = false;
   let activeConnection: ConnectionInfo | undefined;
   let channelNotice = "";
 
@@ -60,9 +47,6 @@
   $: if (connection !== activeConnection) {
     activeConnection = connection;
     resetScope();
-  }
-  $: if (active && host) {
-    void tick().then(ensureChart);
   }
   $: onSummary({
     state: snapshot?.state ?? "STOPPED",
@@ -120,8 +104,6 @@
     verticalScale = new Map(availableChannels.map((channel) => [channel.id, defaultVerticalScale(channel)]));
     verticalOffset = new Map(availableChannels.map((channel) => [channel.id, 0]));
     activeChannelId = defaults[0]?.id;
-    chart?.clear();
-    setEmptyChartOption();
   }
 
   function selectedRateCount(ids: Set<number>, nextRates: Map<number, ScopeRate>, rate: ScopeRate): number {
@@ -178,7 +160,6 @@
     selectedIds = next;
     rates = nextRates;
     configurationDirty = true;
-    if (snapshot) updateChart(snapshot, displayRange(snapshot.recordedSeconds));
     scheduleHotReconfigure();
   }
 
@@ -268,19 +249,16 @@
   function selectActiveChannel(id: number) {
     if (!selectedIds.has(id) || activeChannelId === id) return;
     activeChannelId = id;
-    if (snapshot) updateChart(snapshot, displayRange(snapshot.recordedSeconds));
   }
 
   function updateVerticalScale(id: number, value: number) {
     if (!Number.isFinite(value) || value <= 0) return;
     verticalScale = new Map(verticalScale).set(id, value);
-    if (snapshot) updateChart(snapshot, displayRange(snapshot.recordedSeconds));
   }
 
   function updateVerticalOffset(id: number, value: number) {
     if (!Number.isFinite(value)) return;
     verticalOffset = new Map(verticalOffset).set(id, value);
-    if (snapshot) updateChart(snapshot, displayRange(snapshot.recordedSeconds));
   }
 
   function autoVertical(id: number) {
@@ -301,7 +279,6 @@
     const span = Math.max(max - min, Math.abs(center) * 0.01, 1e-6);
     verticalOffset = new Map(verticalOffset).set(id, center);
     verticalScale = new Map(verticalScale).set(id, ceil125(span / (verticalDivisions * 0.75)));
-    if (snapshot) updateChart(snapshot, displayRange(snapshot.recordedSeconds));
   }
 
   function availableSeconds(recordedSeconds = snapshot?.recordedSeconds ?? defaultLatestSpanSeconds): number {
@@ -344,237 +321,7 @@
       : clampViewRange(viewRange, recordedSeconds);
   }
 
-  function makeOption(next: ScopeSnapshot, visibleRange: [number, number]): EChartsOption {
-    const active = activeChannels();
-    const visibleAxisChannel = active.find((channel) => channel.id === activeChannelId) ?? active[0];
-
-    const channelAxes = active.map((channel) => {
-      const perDiv = verticalScale.get(channel.id) ?? defaultVerticalScale(channel);
-      const center = verticalOffset.get(channel.id) ?? 0;
-      const half = perDiv * verticalDivisions / 2;
-      const visible = channel.id === visibleAxisChannel?.id;
-      const color = traceColor(channel);
-      return {
-        type: "value" as const,
-        name: visible ? `${channel.label}${channel.unit ? ` (${channel.unit})` : ""}` : "",
-        show: visible,
-        position: "left" as const,
-        min: center - half,
-        max: center + half,
-        interval: perDiv,
-        axisLine: { show: visible, lineStyle: { color } },
-        axisTick: { show: visible },
-        axisLabel: { show: visible, color },
-        nameTextStyle: { color },
-        splitLine: { show: visible, lineStyle: { color: "#303030" } },
-      };
-    });
-    const yAxis = channelAxes.length > 0 ? channelAxes : [{ type: "value" as const }];
-
-    const series = active.map((channel, index) => {
-      const source = next.series.find((item) => item.id === channel.id);
-      const color = traceColor(channel);
-      return {
-        name: channel.label,
-        type: "line" as const,
-        yAxisIndex: index,
-        showSymbol: false,
-        symbol: "none",
-        sampling: "none",
-        animation: false,
-        lineStyle: { color, width: channel.id === visibleAxisChannel?.id ? 1.5 : 1.1 },
-        itemStyle: { color },
-        data: (source?.times ?? []).map((time, pointIndex) => [time, source?.values[pointIndex] ?? null]),
-      };
-    });
-
-    return {
-      animation: false,
-      backgroundColor: "transparent",
-      grid: { left: 76, right: 36, top: 42, bottom: 54, containLabel: false },
-      legend: {
-        top: 4,
-        right: 14,
-        textStyle: { color: "#bdbdbd" },
-      },
-      tooltip: {
-        trigger: "axis",
-        axisPointer: { type: "cross" },
-        backgroundColor: "rgba(30,30,30,0.94)",
-        borderColor: "#4a4a4a",
-        textStyle: { color: "#d0d0d0" },
-      },
-      xAxis: {
-        type: "value",
-        min: -availableSeconds(next.recordedSeconds),
-        max: 0,
-        axisLine: { lineStyle: { color: "#6e6e6e" } },
-        axisLabel: {
-          color: "#9a9a9a",
-          formatter: (value: number) => `${value.toFixed(3)} s`,
-        },
-        splitLine: { lineStyle: { color: "#303030" } },
-      },
-      yAxis,
-      dataZoom: [
-        {
-          type: "inside",
-          xAxisIndex: 0,
-          zoomOnMouseWheel: true,
-          moveOnMouseMove: true,
-          moveOnMouseWheel: false,
-          preventDefaultMouseMove: true,
-          filterMode: "none",
-          startValue: visibleRange[0],
-          endValue: visibleRange[1],
-        },
-      ],
-      series,
-    };
-  }
-
-  function setEmptyChartOption() {
-    if (!chart) return;
-    applyingChartOption = true;
-    try {
-      chart.setOption({
-        animation: false,
-        xAxis: { type: "value", min: -defaultLatestSpanSeconds, max: 0 },
-        yAxis: [{ type: "value" }],
-        dataZoom: [{ type: "inside", xAxisIndex: 0, startValue: -defaultLatestSpanSeconds, endValue: 0 }],
-        series: [],
-      }, { notMerge: true, lazyUpdate: false });
-    } finally {
-      applyingChartOption = false;
-    }
-  }
-
-  function updateChart(next: ScopeSnapshot, visibleRange = displayRange(next.recordedSeconds)) {
-    if (!chart) return;
-    applyingChartOption = true;
-    try {
-      chart.setOption(makeOption(next, visibleRange), {
-        notMerge: false,
-        replaceMerge: ["series", "yAxis"],
-        lazyUpdate: false,
-      });
-    } finally {
-      applyingChartOption = false;
-    }
-  }
-
-  async function refreshSnapshot(allowWhileBusy = false) {
-    if (!configured || snapshotBusy || (busy && !allowWhileBusy)) return;
-    snapshotBusy = true;
-    const revision = viewRevision;
-    const requestedFollowingLatest = followingLatest;
-    const requestedRange = requestedFollowingLatest
-      ? latestRange(undefined, viewSpan(viewRange))
-      : clampViewRange(viewRange);
-    const windowSeconds = requestedRange[1] - requestedRange[0];
-    const endOffsetSeconds = requestedFollowingLatest ? 0 : Math.max(0, -requestedRange[1]);
-    try {
-      const next = await readScopeSnapshot(windowSeconds, endOffsetSeconds, maxGraphPoints);
-      if (revision !== viewRevision || requestedFollowingLatest !== followingLatest) return;
-      snapshot = next;
-      const nextRange = requestedFollowingLatest
-        ? latestRange(next.recordedSeconds, viewSpan(requestedRange))
-        : clampViewRange(requestedRange, next.recordedSeconds);
-      viewRange = nextRange;
-      updateChart(next, nextRange);
-    } catch (error) {
-      onError(error);
-    } finally {
-      snapshotBusy = false;
-    }
-  }
-
-  function scheduleViewRefresh(delay = 80) {
-    if (viewRefreshTimer) clearTimeout(viewRefreshTimer);
-    viewRefreshTimer = setTimeout(() => {
-      viewRefreshTimer = undefined;
-      if (snapshotBusy || busy) {
-        scheduleViewRefresh(50);
-        return;
-      }
-      void refreshSnapshot();
-    }, delay);
-  }
-
-  function navigateToRange(range: [number, number]) {
-    followingLatest = false;
-    viewRange = clampViewRange(range);
-    viewRevision += 1;
-    scheduleViewRefresh();
-  }
-
-  function returnToLatest() {
-    const span = viewSpan(viewRange);
-    followingLatest = true;
-    viewRange = latestRange(undefined, span);
-    viewRevision += 1;
-    if (snapshot) updateChart(snapshot, viewRange);
-    scheduleViewRefresh(0);
-  }
-
-  function dataZoomRange(event: any): [number, number] | undefined {
-    const payload = event?.batch?.[0] ?? event ?? {};
-    const option = chart?.getOption() as any;
-    const zoom = option?.dataZoom?.[0] ?? {};
-    const min = -availableSeconds();
-    const width = -min;
-
-    const payloadStartValue = Number(payload.startValue);
-    const payloadEndValue = Number(payload.endValue);
-    if (Number.isFinite(payloadStartValue) && Number.isFinite(payloadEndValue)) {
-      return [Math.min(payloadStartValue, payloadEndValue), Math.max(payloadStartValue, payloadEndValue)];
-    }
-
-    const payloadStart = Number(payload.start);
-    const payloadEnd = Number(payload.end);
-    if (Number.isFinite(payloadStart) && Number.isFinite(payloadEnd)) {
-      return [min + width * payloadStart / 100, min + width * payloadEnd / 100];
-    }
-
-    const startValue = Number(zoom.startValue);
-    const endValue = Number(zoom.endValue);
-    if (Number.isFinite(startValue) && Number.isFinite(endValue)) {
-      return [Math.min(startValue, endValue), Math.max(startValue, endValue)];
-    }
-
-    const start = Number(zoom.start);
-    const end = Number(zoom.end);
-    return Number.isFinite(start) && Number.isFinite(end)
-      ? [min + width * start / 100, min + width * end / 100]
-      : undefined;
-  }
-
-  function handleDataZoom(event: any) {
-    if (applyingChartOption) return;
-    const range = dataZoomRange(event);
-    if (range) navigateToRange(range);
-  }
-
-  function ensureChart() {
-    if (!active || !host) return;
-    const rect = host.getBoundingClientRect();
-    if (rect.width < 1 || rect.height < 1) return;
-    if (!chart) {
-      chart = init(host, undefined, { renderer: "canvas" });
-      chart.on("datazoom", handleDataZoom);
-      chart.getZr().on("dblclick", returnToLatest);
-      setEmptyChartOption();
-      if (snapshot) updateChart(snapshot, displayRange(snapshot.recordedSeconds));
-    } else {
-      chart.resize();
-    }
-  }
-
   onMount(() => {
-    resizeObserver = new ResizeObserver(ensureChart);
-    resizeObserver.observe(host);
-    ensureChart();
-
     refreshUnsubscribe = subscribeRefresh(refreshIntervalMs, () => {
       if (active && running && followingLatest) void refreshSnapshot();
     });
@@ -584,8 +331,6 @@
     refreshUnsubscribe?.();
     if (reconfigureTimer) clearTimeout(reconfigureTimer);
     if (viewRefreshTimer) clearTimeout(viewRefreshTimer);
-    resizeObserver?.disconnect();
-    chart?.dispose();
   });
 </script>
 
@@ -676,7 +421,18 @@
       <span>{snapshot?.recordedSeconds?.toFixed(3) ?? "0.000"} s recorded</span>
       <span>loss {snapshot?.lostFrames ?? 0}</span>
     </div>
-    <div bind:this={host} class="scope-spike-plot"></div>
+    <div class="scope-spike-plot">
+      <ScopeEchartsView
+        channels={activeChannels()}
+        {snapshot}
+        {verticalScale}
+        {verticalOffset}
+        {activeChannelId}
+        {viewRange}
+        onViewRangeChange={navigateToRange}
+        onDoubleClick={returnToLatest}
+      />
+    </div>
   </section>
 </div>
 
