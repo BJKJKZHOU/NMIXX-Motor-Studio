@@ -330,19 +330,22 @@ FAST and NORMAL samples keep their native sample rates. The GUI does not upsampl
 
 ### Waveform interaction
 
-The tuning waveform is intentionally simpler than the general Scope page.
+Control Tuning uses the same Scope/ECharts waveform core as the general Scope page. The difference is presentation and workflow, not a second plotting implementation.
 
-It supports:
+The compact tuning panel keeps its own tab layout:
 
-- one shared horizontal time axis;
-- mouse-wheel Time/div changes;
-- horizontal drag within the finite captured record;
-- stable per-channel color identity within the capture;
-- one positive display multiplier per selected channel.
+- **Waveform** — the shared Scope waveform view;
+- **Channels** — experiment capture channel/rate selection;
+- **Scale** — compact display controls for the selected channels.
 
-The Scale tab edits the multiplier directly as `×N`. The rendering rule is exactly `display_y = raw_sample × multiplier`. With `×1`, the plotted curve is the original floating-point sample value without per-channel normalization or per-channel auto-ranging. All tuning curves share one display Y scale, so relative numeric magnitude is preserved unless the user explicitly changes a multiplier. The multiplier is display-only: raw capture values, exports and future measurements continue to use the original physical values. The tuning waveform does not expose Y offset, Y-position markers, cursors, trigger controls, Follow Latest, or the full Scope acquisition controls.
+Generic plotting behavior remains shared with Scope:
 
-The intended workflow is to configure channels and display multipliers infrequently, then repeatedly change tuning parameters, Run the same motion, inspect the waveform, and tune again.
+- ECharts owns waveform rendering, continuous horizontal zoom/pan, coordinate transforms and hover behavior;
+- the same Scope snapshot/series model is rendered in both pages;
+- Control Tuning must not maintain a separate Time/div, pointer-drag or chart-rendering engine;
+- tuning-specific channel defaults and finite experiment lifecycle remain owned by Control Tuning.
+
+The compact layout may expose fewer controls at once than the full Scope page, but this is only a UI projection over the same Scope display capability. Raw capture values and experiment data ownership are unchanged.
 
 ### Waveform LOD
 
