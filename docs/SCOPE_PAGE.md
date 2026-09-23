@@ -11,7 +11,7 @@ Triggering is intentionally excluded from the current Scope milestone.
 Scope owns:
 
 - channel selection and FAST/NORMAL acquisition rate selection;
-- continuous Run/Stop acquisition;
+- continuous Run/Stop waveform recording;
 - time-domain history viewing;
 - per-channel vertical scale and position;
 - continuous horizontal zoom and history pan;
@@ -27,6 +27,25 @@ Scope does not currently own:
 - control-tuning experiment sequencing.
 
 Trigger and Single-shot behavior must not be invented in the GUI before their acquisition semantics exist in the Application layer.
+
+## Shared acquisition and trace visibility
+
+The Application connection owns one physical acquisition stream, not this page.
+It continuously acquires the available baseline Iq, mechanical speed, position and
+Vbus NORMAL channels and retains ten seconds of recent history. A baseline trace
+is already a device channel before it is visible. Selecting/hiding it at its
+baseline rate changes only the view; all traces may be hidden without stopping
+runtime feedback. Existing history is available when a trace is revealed.
+
+Only the merged baseline + live Scope + active Tuning demand is sent to firmware.
+Duplicate parameter IDs are transmitted once; a required FAST source serves a
+NORMAL consumer by integer decimation. Device limits apply to this merged demand,
+including hidden baseline channels, not merely the checkbox count. Selecting a new
+non-baseline signal or changing its sample rate can change device configuration.
+
+Scope and Control Tuning use the same decoded samples but own separate recording
+buffers. They must not replace each other's channel settings or frozen samples.
+See `SHARED_ACQUISITION.md` for precision, rate and validation boundaries.
 
 ## Plot infrastructure boundary
 
@@ -144,7 +163,16 @@ No new transport path or device-side Plot state is introduced for horizontal nav
 
 ## Run / Stop and frozen data
 
-`Stop` stops acquisition but preserves captured history and the current display state.
+`Stop` stops appending to this Scope recording and preserves captured history and
+the current display state. It does not issue Motor Stop. Baseline acquisition and
+shared Parameter runtime values continue, as does an independently active Tuning
+recording. Channels needed only by this stopped record can be released.
+
+The stopped record owns retained samples, not offsets into the rolling baseline
+buffer. Later telemetry, Tuning runs and baseline buffer wrap cannot overwrite it.
+Changing visibility while stopped can reveal only data present in that frozen
+record; it must not substitute newer baseline history. A new Run starts a new
+Scope record seeded with available recent baseline data.
 
 After Stop the user must still be able to:
 
@@ -224,7 +252,6 @@ The following are deliberately deferred:
 - Trigger;
 - Single;
 - inertial scrolling policy beyond the plotting library's normal behavior;
-- horizontal Y cursors;
-- acquire-vs-hide channel separation.
+- horizontal Y cursors.
 
 These may be added when their workflows are required without reintroducing a parallel horizontal timebase model.

@@ -1,5 +1,6 @@
-use std::collections::HashMap;
+use std::collections::{HashMap, HashSet};
 use std::sync::{mpsc, Arc, Mutex, RwLock};
+use std::time::{Duration, Instant};
 
 use thiserror::Error;
 
@@ -22,6 +23,12 @@ pub enum ParameterServiceError {
     },
     #[error("parameter cache lock is poisoned")]
     CachePoisoned,
+    #[error("parameter 0x{id:04X} is not synchronized: {message}")]
+    CachedReadFailed { id: u16, message: String },
+    #[error("parameter 0x{0:04X} has not been read into the shared cache")]
+    CacheMissing(u16),
+    #[error("RAM write to parameter 0x{id:04X} succeeded, but readback failed: {details}")]
+    ReadbackFailed { id: u16, details: String },
     #[error("parameter 0x{id:04X} value {value} is outside the HostSchema range")]
     OutOfRange { id: u16, value: String },
     #[error("parameter 0x{id:04X} value {value} is not allowed by the HostSchema")]
@@ -36,12 +43,24 @@ pub enum ParameterServiceError {
     Session(#[from] SessionError),
 }
 
+struct StreamUpdates {
+    ids: HashSet<u16>,
+    dirty: HashSet<u16>,
+    published: Instant,
+}
+impl Default for StreamUpdates {
+    fn default() -> Self { Self { ids: HashSet::new(), dirty: HashSet::new(), published: Instant::now() } }
+}
+
 #[derive(Clone)]
 pub struct ParameterService {
     session: DeviceSession,
     schema: HostSchema,
-    cache: Arc<RwLock<HashMap<u16, ParameterValue>>>,
+    cache: Arc<RwLock<HashMap<u16, Result<ParameterValue, String>>>>,
+    // Serialize device reads and write/readback groups, not cache-only views or Actions.
+    io: Arc<Mutex<()>>,
     subscribers: Arc<Mutex<Vec<mpsc::Sender<Vec<u16>>>>>,
+    stream: Arc<Mutex<StreamUpdates>>,
 }
 
 impl ParameterService {
@@ -50,7 +69,9 @@ impl ParameterService {
             session,
             schema,
             cache: Arc::new(RwLock::new(HashMap::new())),
+            io: Arc::new(Mutex::new(())),
             subscribers: Arc::new(Mutex::new(Vec::new())),
+            stream: Arc::new(Mutex::new(StreamUpdates::default())),
         }
     }
 
@@ -59,7 +80,7 @@ impl ParameterService {
     }
 
     pub fn parameters(&self) -> &[ParameterMetadata] {
-        &self.schema.parameters
+        self.schema.parameters.as_slice()
     }
 
     pub fn metadata(&self, id: u16) -> Result<&ParameterMetadata, ParameterServiceError> {
@@ -70,12 +91,20 @@ impl ParameterService {
 
     pub fn cached(&self, id: u16) -> Result<Option<ParameterValue>, ParameterServiceError> {
         self.metadata(id)?;
-        Ok(self
-            .cache
-            .read()
-            .map_err(|_| ParameterServiceError::CachePoisoned)?
-            .get(&id)
-            .cloned())
+        let cache = self.cache.read().map_err(|_| ParameterServiceError::CachePoisoned)?;
+        match cache.get(&id) {
+            Some(Ok(value)) => Ok(Some(value.clone())),
+            Some(Err(message)) => Err(ParameterServiceError::CachedReadFailed {
+                id,
+                message: message.clone(),
+            }),
+            None => Ok(None),
+        }
+    }
+
+    /// One cache-only snapshot. It does not perform I/O or emit change notifications.
+    pub fn snapshot(&self) -> Result<HashMap<u16, Result<ParameterValue, String>>, ParameterServiceError> {
+        Ok(self.cache.read().map_err(|_| ParameterServiceError::CachePoisoned)?.clone())
     }
 
     pub fn subscribe(&self) -> Result<mpsc::Receiver<Vec<u16>>, ParameterServiceError> {
@@ -88,42 +117,92 @@ impl ParameterService {
     }
 
     pub fn read(&self, id: u16) -> Result<ParameterValue, ParameterServiceError> {
-        let value = self.read_cache(id)?;
-        self.notify_changed(vec![id]);
-        Ok(value)
+        let mut results = self.read_many(&[id])?;
+        results.remove(0).1
     }
 
-    /// Convenience batch read. Each requested ID produces one independent result in input order.
-    /// A failed item does not discard successful values or stop the remaining reads.
+    /// Read a group and publish its value/error changes together. A failed read invalidates
+    /// the old cache entry rather than presenting an old value as a successful readback.
     pub fn read_many(
         &self,
         ids: &[u16],
     ) -> Result<Vec<(u16, Result<ParameterValue, ParameterServiceError>)>, ParameterServiceError> {
-        let mut changed = Vec::new();
-        let results = ids
-            .iter()
-            .copied()
-            .map(|id| {
-                let result = self.read_cache(id);
-                if result.is_ok() {
-                    changed.push(id);
-                }
-                (id, result)
-            })
-            .collect();
+        let _io = self.io.lock().map_err(|_| ParameterServiceError::CachePoisoned)?;
+        self.read_many_locked(ids)
+    }
+
+    fn read_many_locked(
+        &self,
+        ids: &[u16],
+    ) -> Result<Vec<(u16, Result<ParameterValue, ParameterServiceError>)>, ParameterServiceError> {
+        let results = ids.iter().copied().map(|id| {
+            let result = (|| {
+                let ty = self.metadata(id)?.parameter_type()?;
+                Ok(self.session.parameter_read(id, ty)?)
+            })();
+            (id, result)
+        }).collect::<Vec<_>>();
+        let entries = results.iter().filter(|(id, _)| self.schema.parameter_by_id(*id).is_some()).map(|(id, result)| {
+            (*id, result.as_ref().cloned().map_err(ToString::to_string))
+        }).collect::<Vec<_>>();
+        let changed = {
+            // A Read group may finish after newer streaming samples arrived.
+            // Keep those latest values; return the actual Read results to its caller.
+            let stream = self.stream.lock().map_err(|_| ParameterServiceError::CachePoisoned)?;
+            let entries = entries.into_iter().filter(|(id, _)| !stream.ids.contains(id)).collect();
+            let mut cache = self.cache.write().map_err(|_| ParameterServiceError::CachePoisoned)?;
+            update_cache(&mut cache, entries)
+        };
         self.notify_changed(changed);
         Ok(results)
     }
 
-    fn read_cache(&self, id: u16) -> Result<ParameterValue, ParameterServiceError> {
-        let metadata = self.metadata(id)?;
-        let ty = metadata.parameter_type()?;
-        let value = self.session.parameter_read(id, ty)?;
-        self.cache
-            .write()
-            .map_err(|_| ParameterServiceError::CachePoisoned)?
-            .insert(id, value.clone());
-        Ok(value)
+    /// Consumes already-decoded baseline samples; never performs device I/O.
+    /// Preserve wire types: f32 total-turn Plot samples cannot replace Position.
+    pub(crate) fn ingest_stream_values(&self, samples: &[(u16, f32)]) -> Result<(), ParameterServiceError> {
+        let mut stream = self.stream.lock().map_err(|_| ParameterServiceError::CachePoisoned)?;
+        let mut entries = Vec::new();
+        for &(id, value) in samples {
+            let meta = self.metadata(id)?;
+            if meta.access.contains('w') { continue; }
+            let Some(value) = stream_scalar(meta.parameter_type()?, value) else { continue; };
+            stream.ids.insert(id);
+            entries.push((id, value));
+        }
+        let changed = {
+            let mut cache = self.cache.write().map_err(|_| ParameterServiceError::CachePoisoned)?;
+            update_cache(&mut cache, entries)
+        };
+        stream.dirty.extend(changed);
+        // Cache values follow every received batch. GUI notifications are coalesced
+        // to at most 60 Hz instead of one IPC notification for every sample.
+        let notify = if stream.published.elapsed() >= Duration::from_micros(16_667) {
+            stream.published = Instant::now();
+            stream.dirty.drain().collect()
+        } else { Vec::new() };
+        drop(stream);
+        self.notify_changed(notify);
+        Ok(())
+    }
+
+    pub(crate) fn invalidate_stream_values(&self, message: &str) {
+        let Ok(mut stream) = self.stream.lock() else { return; };
+        let entries = stream.ids.iter().map(|id| (*id, Err(format!("Runtime stream: {message}")))).collect();
+        let Ok(mut cache) = self.cache.write() else { return; };
+        let changed = update_cache(&mut cache, entries);
+        stream.dirty.clear();
+        drop(cache);
+        drop(stream);
+        self.notify_changed(changed);
+    }
+
+    fn readback_ids(&self, id: u16) -> Result<Vec<u16>, ParameterServiceError> {
+        let symbol = &self.metadata(id)?.symbol;
+        let mut ids = vec![id];
+        ids.extend(self.parameters().iter().filter(|meta| {
+            meta.id != id && meta.access.contains('r') && related_parameter(symbol, &meta.symbol)
+        }).map(|meta| meta.id));
+        Ok(ids)
     }
 
     fn notify_changed(&self, ids: Vec<u16>) {
@@ -176,8 +255,23 @@ impl ParameterService {
         validate_static_constraints(metadata, &value)?;
         self.validate_write_state(metadata)?;
 
+        let ids = self.readback_ids(id)?;
+        let _io = self.io.lock().map_err(|_| ParameterServiceError::CachePoisoned)?;
         self.session.parameter_write(id, value)?;
-        self.read(id)
+        let results = self.read_many_locked(&ids)?;
+        let mut written = None;
+        let mut failures = Vec::new();
+        for (read_id, result) in results {
+            match result {
+                Ok(value) if read_id == id => written = Some(value),
+                Ok(_) => {}
+                Err(error) => failures.push(format!("0x{read_id:04X}: {error}")),
+            }
+        }
+        if !failures.is_empty() {
+            return Err(ParameterServiceError::ReadbackFailed { id, details: failures.join("; ") });
+        }
+        written.ok_or(ParameterServiceError::CacheMissing(id))
     }
     fn validate_write_state(
         &self,
@@ -222,6 +316,74 @@ impl ParameterService {
         Ok(())
     }
 
+}
+
+
+fn update_cache(
+    cache: &mut HashMap<u16, Result<ParameterValue, String>>,
+    entries: Vec<(u16, Result<ParameterValue, String>)>,
+) -> Vec<u16> {
+    let mut changed = Vec::new();
+    for (id, entry) in entries {
+        if cache.get(&id) != Some(&entry) {
+            cache.insert(id, entry);
+            if !changed.contains(&id) { changed.push(id); }
+        }
+    }
+    changed
+}
+
+#[cfg(test)]
+mod linkage_readback_tests {
+    use super::related_parameter;
+
+    #[test]
+    fn motion_limit_write_invalidates_the_effective_speed_view() {
+        assert!(related_parameter("PARAM_MOTION_WM_MAX", "PARAM_LIMIT_WM_EFFECTIVE"));
+    }
+    #[test]
+    fn model_and_encoder_changes_reread_actual_calibration_validity() {
+        for written in ["PARAM_MOTOR_PP", "PARAM_ENCODER_PROTOCOL", "PARAM_ENCODER_SPI_TYPE"] {
+            assert!(related_parameter(written, "PARAM_CAL_VALID"));
+        }
+        assert!(!related_parameter("PARAM_ENCODER_PROTOCOL", "PARAM_POSITION_ZERO_VALID"));
+    }
+    #[test]
+    fn encoder_reset_and_direction_mapping_refresh_user_feedback() {
+        for written in ["PARAM_ENCODER_PROTOCOL", "PARAM_ENCODER_SPI_TYPE", "PARAM_MOTOR_DIR"] {
+            for candidate in ["PARAM_RUN_POSITION", "PARAM_RUN_WM"] {
+                assert!(related_parameter(written, candidate));
+            }
+        }
+    }
+}
+
+// Firmware owns these calculations. The host only rereads their outputs. This small
+// dependency table is shared by every client; pages must not supply readback lists.
+fn related_parameter(written: &str, candidate: &str) -> bool {
+    const CURRENT: &[&str] = &[
+        "PARAM_CTRL_CURRENT_BW_HZ", "PARAM_CTRL_CURRENT_SOURCE",
+        "PARAM_CTRL_ID_KP", "PARAM_CTRL_ID_KI", "PARAM_CTRL_IQ_KP", "PARAM_CTRL_IQ_KI",
+    ];
+    const SPEED: &[&str] = &[
+        "PARAM_CTRL_SPEED_BW_HZ", "PARAM_CTRL_SPEED_SOURCE", "PARAM_CTRL_SPEED_KP", "PARAM_CTRL_SPEED_KI",
+    ];
+    const MODEL: &[&str] = &[
+        "PARAM_MOTOR_PP", "PARAM_MOTOR_RS", "PARAM_MOTOR_LD", "PARAM_MOTOR_LQ",
+        "PARAM_MOTOR_FLUX", "PARAM_MOTOR_J", "PARAM_MOTOR_B",
+    ];
+    (CURRENT.contains(&written) && CURRENT.contains(&candidate))
+        || (SPEED.contains(&written) && SPEED.contains(&candidate))
+        || (MODEL.contains(&written)
+            && (candidate.starts_with("PARAM_CTRL_") || candidate.starts_with("PARAM_LIMIT_")))
+        || (written.starts_with("PARAM_LIMIT_") && candidate.starts_with("PARAM_LIMIT_"))
+        || (written == "PARAM_MOTION_WM_MAX" && candidate == "PARAM_LIMIT_WM_EFFECTIVE")
+        || (written == "PARAM_MOTOR_PP" && candidate == "PARAM_CAL_VALID")
+        || ((written.starts_with("PARAM_ENCODER_") || written == "PARAM_MOTOR_DIR")
+            && (candidate.starts_with("PARAM_ENCODER_") || candidate == "PARAM_CAL_VALID"
+                || candidate == "PARAM_RUN_POSITION" || candidate == "PARAM_RUN_WM"))
+        || (written == "PARAM_MOTOR_MODE"
+            && (candidate == "PARAM_MOTOR_STATE" || candidate.starts_with("PARAM_TARGET_")))
 }
 
 
@@ -351,4 +513,69 @@ fn state_symbol(metadata: &ParameterMetadata, state: u8) -> String {
         .get(usize::from(state))
         .cloned()
         .unwrap_or_else(|| state.to_string())
+}
+
+#[cfg(test)]
+mod shared_cache_tests {
+    use super::*;
+
+    #[test]
+    fn repeated_reads_do_not_publish_changes() {
+        let mut cache = HashMap::new();
+        let entry = (7, Ok(ParameterValue::F32(1.25)));
+        assert_eq!(update_cache(&mut cache, vec![entry.clone()]), vec![7]);
+        assert!(update_cache(&mut cache, vec![entry]).is_empty());
+    }
+
+    #[test]
+    fn failures_replace_stale_values_and_recovery_is_a_change() {
+        let mut cache = HashMap::new();
+        update_cache(&mut cache, vec![(7, Ok(ParameterValue::F32(1.25)))]);
+        let error = (7, Err("timeout".to_owned()));
+        assert_eq!(update_cache(&mut cache, vec![error.clone()]), vec![7]);
+        assert!(cache.get(&7).unwrap().is_err());
+        assert!(update_cache(&mut cache, vec![error]).is_empty());
+        assert_eq!(update_cache(&mut cache, vec![(7, Ok(ParameterValue::F32(1.25)))]), vec![7]);
+    }
+
+    #[test]
+    fn current_bandwidth_and_gains_always_include_source() {
+        assert!(related_parameter("PARAM_CTRL_CURRENT_BW_HZ", "PARAM_CTRL_CURRENT_SOURCE"));
+        assert!(related_parameter("PARAM_CTRL_ID_KP", "PARAM_CTRL_CURRENT_SOURCE"));
+        assert!(related_parameter("PARAM_CTRL_CURRENT_SOURCE", "PARAM_CTRL_IQ_KI"));
+        assert!(related_parameter("PARAM_MOTOR_RS", "PARAM_CTRL_IQ_KI"));
+        assert!(related_parameter("PARAM_MOTOR_J", "PARAM_CTRL_SPEED_KP"));
+        assert!(!related_parameter("PARAM_TARGET_SPEED", "PARAM_CTRL_SPEED_KP"));
+    }
+
+    #[test]
+    fn groups_publish_only_the_ids_that_changed() {
+        let mut cache = HashMap::new();
+        update_cache(&mut cache, vec![(1, Ok(ParameterValue::U8(0)))]);
+        assert_eq!(update_cache(&mut cache, vec![
+            (1, Ok(ParameterValue::U8(0))), (2, Ok(ParameterValue::F32(10.0))),
+        ]), vec![2]);
+    }
+}
+
+// Plot integer/position encodings are deliberately not guessed from f32.
+fn stream_scalar(ty: ParameterType, value: f32) -> Option<Result<ParameterValue, String>> {
+    if ty != ParameterType::F32 { return None; }
+    Some(if value.is_finite() { Ok(ParameterValue::F32(value)) }
+        else { Err("non-finite runtime sample".to_owned()) })
+}
+
+#[cfg(test)]
+mod stream_value_tests {
+    use super::*;
+    #[test]
+    fn plot_position_never_overwrites_the_precise_position_parameter() {
+        assert!(stream_scalar(ParameterType::Position, 123456.75).is_none());
+        assert!(stream_scalar(ParameterType::U8, 2.0).is_none());
+    }
+    #[test]
+    fn runtime_scalars_preserve_f32_and_reject_nonfinite_samples() {
+        assert_eq!(stream_scalar(ParameterType::F32, 1.25), Some(Ok(ParameterValue::F32(1.25))));
+        assert!(stream_scalar(ParameterType::F32, f32::NAN).unwrap().is_err());
+    }
 }

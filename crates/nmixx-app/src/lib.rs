@@ -28,10 +28,7 @@ pub use application::{
 pub use config_service::{ConfigService, ConfigServiceError};
 pub use connection::DEFAULT_USB_BAUD;
 pub use parameter_service::{ParameterService, ParameterServiceError};
-pub use motion::{
-    MotionConfig, MotionMode, MotionPreview, MotionService, PositionCommand, SCurveMode,
-    TrajectoryType,
-};
+pub use motion::{MotionConfig, MotionMode, MotionPreview, MotionService, PositionCommand};
 pub use motion_capabilities::MotionCapabilities;
 pub use motor_actions::{IdentificationStart, MotorActionError, MotorActionService};
 pub use mixed_scope::{

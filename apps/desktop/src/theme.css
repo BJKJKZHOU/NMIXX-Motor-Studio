@@ -337,7 +337,6 @@ vscode-button { --vscode-button-border: transparent; }
   cursor: grab;
   user-select: none;
 }
-.scope-plot-interactive .u-over { touch-action: none; }
 .empty-hint { padding: 5px 10px 9px; color: #757575; font-size: 11px; line-height: 1.45; }
 .property-grid { display: grid; grid-template-columns: 1fr auto; gap: 8px 12px; padding: 2px 11px 8px; color: #858585; font-size: 12px; }
 .property-grid strong { color: #c7c7c7; font-family: "SFMono-Regular", Consolas, "Liberation Mono", monospace; font-size: 11px; font-weight: 400; }
@@ -353,8 +352,6 @@ vscode-button { --vscode-button-border: transparent; }
 .plot-meta { position: absolute; inset: 0 0 0 auto; display: flex; align-items: center; padding: 0 12px; background: #1e1e1e; color: #777; white-space: nowrap; }
 .plot-placeholder { color: #777; }
 .plot-host { min-width: 0; min-height: 0; overflow: hidden; padding: 8px 8px 4px 4px; }
-.uplot { font-family: "SFMono-Regular", Consolas, "Liberation Mono", monospace; }
-.uplot .u-title, .uplot .u-legend { color: #cccccc; }
 
 .statusbar { display: flex; align-items: center; gap: 15px; padding: 0 8px; background: #24272d; border-top: 1px solid #30343a; color: #b9b9b9; font-size: 11px; user-select: none; }
 .status-spacer { flex: 1; }
@@ -610,14 +607,11 @@ vscode-button { --vscode-button-border: transparent; }
   .motion-simple-body { grid-template-columns: 1fr; }
 }
 
-.motion-uplot-host {
+.motion-trajectory-host {
   width: 100%;
   min-width: 0;
   min-height: 300px;
   height: min(46vh, 420px);
-}
-.motion-uplot-host .uplot {
-  width: 100% !important;
 }
 
 .tuning-motion-section { padding-bottom: 10px; }

@@ -1,6 +1,5 @@
 import "@vscode-elements/elements/dist/bundled.js";
 import "@vscode/codicons/dist/codicon.css";
-import "uplot/dist/uPlot.min.css";
 import "./theme.css";
 
 import { mount } from "svelte";

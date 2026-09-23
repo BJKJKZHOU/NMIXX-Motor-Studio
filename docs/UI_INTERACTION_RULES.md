@@ -109,6 +109,33 @@ This state is session-wide, not page-local:
 
 Do not confuse this with an input draft. A draft is text that has not yet been committed with Enter; the RAM-modified state begins only after the write succeeds.
 
+### Parameter editor commit semantics
+
+Numeric/text Parameter editors use one consistent commit model across business pages and the generic Parameters page:
+
+```text
+typing
+    -> local draft only
+
+Enter
+    -> validate draft
+    -> write active device RAM
+    -> read back canonical value
+    -> update the shared Parameter view
+
+Escape
+    -> discard draft and restore the current RAM value
+
+blur with an uncommitted draft
+    -> discard draft and restore the current RAM value
+```
+
+A normal Parameter editor must not write on every keystroke, and leaving the field must not implicitly commit a partially edited value.
+
+Discrete controls such as an enum selector, radio group or checkbox may commit immediately when one interaction produces one complete value. Their write still goes through the shared Parameter API and the committed device value remains authoritative.
+
+`Run`, `Start`, `Apply` or another later action must not be used as an implicit commit step for ordinary Parameter edits. If a workflow needs an execution-time value that is not itself a device Parameter (for example an incremental position delta that must be combined with the current position), that value is explicitly host-owned command state rather than an uncommitted Parameter draft.
+
 ## Stateful paired actions
 
 When two actions are mutually exclusive transitions of the same resource, use one stateful button in a stable location rather than two adjacent Start/Stop-style buttons.
