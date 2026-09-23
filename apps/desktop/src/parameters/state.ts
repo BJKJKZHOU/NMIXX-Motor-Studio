@@ -197,7 +197,7 @@ export function selectParameters(symbols?: readonly string[]): Readable<Paramete
   let previous: ParameterView | undefined;
   let selectedMetadata: ParameterMetadata[] = [];
   let selectedEntries: Array<ParameterReadResult | undefined> = [];
-  return derived(parameterState, (state, set) => {
+  return derived<typeof parameterState, ParameterView>(parameterState, (state, set) => {
     const metadata = state.registry.filter((meta) => !symbols || symbols.includes(meta.symbol));
     const entries = metadata.map((meta) => state.entries[meta.id]);
     const writing = new Set(metadata.filter((meta) => state.writing.has(meta.id)).map((meta) => meta.symbol));
