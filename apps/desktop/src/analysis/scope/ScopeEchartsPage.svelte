@@ -43,6 +43,7 @@
   let channelNotice = "";
 
   $: channels = connection?.channels.filter((channel) => channel.supportsFast || channel.supportsNormal) ?? [];
+  $: visibleChannels = channels.filter((channel) => selectedIds.has(channel.id));
   $: running = snapshot?.state === "LIVE";
   $: if (connection !== activeConnection) {
     activeConnection = connection;
@@ -244,10 +245,6 @@
       stopping = false;
       busy = false;
     }
-  }
-
-  function activeChannels() {
-    return channels.filter((channel) => selectedIds.has(channel.id));
   }
 
   function selectActiveChannel(id: number) {
@@ -483,7 +480,7 @@
     </div>
     <div class="scope-spike-plot">
       <ScopeEchartsView
-        channels={activeChannels()}
+        channels={visibleChannels}
         {snapshot}
         {verticalScale}
         {verticalOffset}

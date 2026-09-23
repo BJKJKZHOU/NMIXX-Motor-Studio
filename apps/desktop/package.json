@@ -11,7 +11,7 @@
     "test:parameters": "node scripts/test-parameters.mjs",
     "check:parameter-syntax": "node scripts/check-parameter-syntax.mjs",
     "test:startup": "python3 scripts/test-startup.py",
-    "test:plots": "node --test tests/scope-window.test.cjs tests/motion-plot.test.cjs"
+    "test:plots": "node --test tests/scope-window.test.cjs tests/motion-plot.test.cjs tests/scope-channel-reactivity.test.cjs"
   },
   "dependencies": {
     "@tanstack/svelte-table": "9.2.4",
