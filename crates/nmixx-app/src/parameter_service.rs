@@ -278,6 +278,31 @@ fn update_cache(
     changed
 }
 
+#[cfg(test)]
+mod linkage_readback_tests {
+    use super::related_parameter;
+
+    #[test]
+    fn motion_limit_write_invalidates_the_effective_speed_view() {
+        assert!(related_parameter("PARAM_MOTION_WM_MAX", "PARAM_LIMIT_WM_EFFECTIVE"));
+    }
+    #[test]
+    fn model_and_encoder_changes_reread_actual_calibration_validity() {
+        for written in ["PARAM_MOTOR_PP", "PARAM_ENCODER_PROTOCOL", "PARAM_ENCODER_SPI_TYPE"] {
+            assert!(related_parameter(written, "PARAM_CAL_VALID"));
+        }
+        assert!(!related_parameter("PARAM_ENCODER_PROTOCOL", "PARAM_POSITION_ZERO_VALID"));
+    }
+    #[test]
+    fn encoder_reset_and_direction_mapping_refresh_user_feedback() {
+        for written in ["PARAM_ENCODER_PROTOCOL", "PARAM_ENCODER_SPI_TYPE", "PARAM_MOTOR_DIR"] {
+            for candidate in ["PARAM_RUN_POSITION", "PARAM_RUN_WM"] {
+                assert!(related_parameter(written, candidate));
+            }
+        }
+    }
+}
+
 // Firmware owns these calculations. The host only rereads their outputs. This small
 // dependency table is shared by every client; pages must not supply readback lists.
 fn related_parameter(written: &str, candidate: &str) -> bool {
@@ -297,8 +322,11 @@ fn related_parameter(written: &str, candidate: &str) -> bool {
         || (MODEL.contains(&written)
             && (candidate.starts_with("PARAM_CTRL_") || candidate.starts_with("PARAM_LIMIT_")))
         || (written.starts_with("PARAM_LIMIT_") && candidate.starts_with("PARAM_LIMIT_"))
+        || (written == "PARAM_MOTION_WM_MAX" && candidate == "PARAM_LIMIT_WM_EFFECTIVE")
+        || (written == "PARAM_MOTOR_PP" && candidate == "PARAM_CAL_VALID")
         || ((written.starts_with("PARAM_ENCODER_") || written == "PARAM_MOTOR_DIR")
-            && (candidate.starts_with("PARAM_ENCODER_") || candidate == "PARAM_POSITION_ZERO_VALID"))
+            && (candidate.starts_with("PARAM_ENCODER_") || candidate == "PARAM_CAL_VALID"
+                || candidate == "PARAM_RUN_POSITION" || candidate == "PARAM_RUN_WM"))
         || (written == "PARAM_MOTOR_MODE"
             && (candidate == "PARAM_MOTOR_STATE" || candidate.starts_with("PARAM_TARGET_")))
 }
