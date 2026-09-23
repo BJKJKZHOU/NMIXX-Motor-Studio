@@ -46,12 +46,15 @@
   }
 
   async function disconnect() {
+    if (busy) return;
+    busy = true;
     try {
       await disconnectDevice();
+      onDisconnected();
     } catch (error) {
       onError(error);
     } finally {
-      onDisconnected();
+      busy = false;
     }
   }
 
@@ -77,7 +80,7 @@
       <div class="connection-actions">
         {#if connection}
           <!-- svelte-ignore a11y_click_events_have_key_events a11y_no_static_element_interactions -->
-          <vscode-button secondary onclick={disconnect}>Disconnect</vscode-button>
+          <vscode-button secondary disabled={busy} onclick={disconnect}>Disconnect</vscode-button>
         {:else}
           <!-- svelte-ignore a11y_click_events_have_key_events a11y_no_static_element_interactions -->
           <vscode-button disabled={busy || !port} onclick={connect}>Connect</vscode-button>

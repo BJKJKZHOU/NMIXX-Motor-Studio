@@ -1,7 +1,11 @@
 use std::path::Path;
 use std::sync::{Arc, Mutex, mpsc};
 use std::thread;
-use std::time::Duration;
+use std::time::{Duration, Instant};
+
+#[path = "motor_gate.rs"]
+mod motor_gate;
+use motor_gate::MotorGate;
 
 use thiserror::Error;
 use crate::{
@@ -58,6 +62,7 @@ const TUNING_PRE_CAPTURE: Duration = Duration::from_millis(500);
 const TUNING_POST_CAPTURE: Duration = Duration::from_millis(750);
 const TUNING_POSITION_SETTLE: Duration = Duration::from_millis(500);
 const TUNING_POLL: Duration = Duration::from_millis(20);
+const MOTOR_STOP_TIMEOUT: Duration = Duration::from_secs(60);
 
 struct ApplicationInner {
     session: DeviceSession,
@@ -70,6 +75,8 @@ struct ApplicationInner {
     motion_repeat: Mutex<MotionRepeatRuntime>,
     scope: Mutex<Option<MixedScopeSession>>,
     tuning_experiment: Mutex<TuningExperimentRuntime>,
+    motor_gate: MotorGate,
+    tuning_worker: Mutex<Option<thread::JoinHandle<()>>>,
 }
 #[derive(Clone)]
 pub struct ApplicationSession { inner: Arc<ApplicationInner> }
@@ -93,6 +100,7 @@ impl ApplicationSession {
             plot_capabilities: Mutex::new(None), motion_capabilities, motion,
             motion_repeat: Mutex::new(MotionRepeatRuntime::default()), scope: Mutex::new(None),
             tuning_experiment: Mutex::new(TuningExperimentRuntime::default()),
+            motor_gate: MotorGate::default(), tuning_worker: Mutex::new(None),
         }) };
         let weak = Arc::downgrade(&app.inner);
         thread::spawn(move || {
@@ -157,6 +165,15 @@ impl ApplicationSession {
     }
     pub fn action_start(&self, key: &str) -> Result<ActionHandle, ApplicationError> {
         let action = self.inner.schema.action_by_key(key).ok_or_else(|| ApplicationError::UnknownAction(key.to_owned()))?;
+        match action.symbol.as_str() {
+            "ACTION_MOTOR_STOP" => return self.motor_stop(),
+            "ACTION_MOTOR_DISABLE" => return self.motor_disable(),
+            _ => {}
+        }
+        let ticket = self.inner.motor_gate.ticket();
+        let _command = self.inner.motor_gate.start(ticket)
+            .map_err(|message| ApplicationError::Motion(message.to_owned()))?;
+        self.ensure_no_tuning()?;
         let handle = self.inner.session.action_start(action.id)?;
         match action.symbol.as_str() {
             "ACTION_IDENT_APPLY" | "ACTION_POSITION_SET_ZERO" | "ACTION_PROTECTION_CLEAR" => self.refresh_after_immediate_action()?,
@@ -168,6 +185,12 @@ impl ApplicationSession {
     /// Only use for Actions whose firmware response represents completed execution.
     pub fn action_start_immediate(&self, key: &str) -> Result<ActionHandle, ApplicationError> {
         let action = self.inner.schema.action_by_key(key).ok_or_else(|| ApplicationError::UnknownAction(key.to_owned()))?;
+        if action.symbol == "ACTION_MOTOR_STOP" { return self.motor_stop(); }
+        if action.symbol == "ACTION_MOTOR_DISABLE" { return self.motor_disable(); }
+        let ticket = self.inner.motor_gate.ticket();
+        let _command = self.inner.motor_gate.start(ticket)
+            .map_err(|message| ApplicationError::Motion(message.to_owned()))?;
+        self.ensure_no_tuning()?;
         let handle = self.inner.session.action_start(action.id)?;
         self.refresh_after_immediate_action()?;
         Ok(handle)
@@ -183,12 +206,23 @@ impl ApplicationSession {
     pub fn preflight_identification(&self, kind: IdentificationKind) -> Result<Vec<PreflightIssue>, ApplicationError> {
         Ok(PreflightService::new(self.inner.parameters.clone()).check_identification(kind)?)
     }
+    fn ensure_no_tuning(&self) -> Result<(), ApplicationError> {
+        let runtime = self.inner.tuning_experiment.lock().map_err(|_| ApplicationError::Poisoned)?;
+        if matches!(runtime.state, TuningExperimentState::Preparing | TuningExperimentState::Running | TuningExperimentState::Stopping) {
+            return Err(ApplicationError::TuningExperimentBusy);
+        }
+        Ok(())
+    }
     fn motor_actions(&self) -> MotorActionService {
         MotorActionService::from_shared(self.inner.session.clone(), self.inner.schema.clone(), self.inner.parameters.clone())
     }
     pub fn identification_start(&self, kind: IdentificationKind, allow_enable: bool) -> Result<IdentificationStart, ApplicationError> {
+        let ticket = self.inner.motor_gate.ticket();
+        let _command = self.inner.motor_gate.start(ticket)
+            .map_err(|message| ApplicationError::Motion(message.to_owned()))?;
+        self.ensure_no_tuning()?;
         let result = self.motor_actions().identification_start(kind, allow_enable)?;
-        if (matches!(&result, IdentificationStart::Started(_))) { self.refresh_motor_context()?; }
+        if matches!(&result, IdentificationStart::Started(_)) { self.refresh_motor_context()?; }
         Ok(result)
     }
     pub fn identification_apply(&self) -> Result<ActionHandle, ApplicationError> {
@@ -197,27 +231,87 @@ impl ApplicationSession {
         Ok(handle)
     }
     pub fn motor_enable(&self) -> Result<ActionHandle, ApplicationError> {
+        let ticket = self.inner.motor_gate.ticket();
+        let _command = self.inner.motor_gate.start(ticket)
+            .map_err(|message| ApplicationError::Motion(message.to_owned()))?;
+        self.ensure_no_tuning()?;
         let handle = self.motor_actions().enable()?;
         self.refresh_motor_context()?;
         Ok(handle)
     }
     pub fn motor_stop(&self) -> Result<ActionHandle, ApplicationError> {
-        let handle = self.motor_actions().stop()?;
-        self.request_tuning_stop()?;
+        // Cancel delayed Run before sending Stop, including while PREPARING.
+        self.inner.motor_gate.cancel();
+        let cancelled = self.request_tuning_stop();
+        let handle = {
+            let _command = self.inner.motor_gate.stop();
+            self.motor_actions().stop()?
+        };
+        cancelled?;
         self.refresh_motor_context()?;
         Ok(handle)
     }
     pub fn motor_disable(&self) -> Result<ActionHandle, ApplicationError> {
-        let handle = self.motor_actions().disable()?;
-        self.request_tuning_stop()?;
+        self.inner.motor_gate.cancel();
+        let cancelled = self.request_tuning_stop();
+        let handle = {
+            let _command = self.inner.motor_gate.stop();
+            self.motor_actions().disable()?
+        };
+        cancelled?;
         self.refresh_motor_context()?;
         Ok(handle)
     }
     pub fn phase_search_start(&self) -> Result<ActionHandle, ApplicationError> {
+        let ticket = self.inner.motor_gate.ticket();
+        let _command = self.inner.motor_gate.start(ticket)
+            .map_err(|message| ApplicationError::Motion(message.to_owned()))?;
+        self.ensure_no_tuning()?;
         let handle = self.motor_actions().phase_search_start()?;
         self.refresh_motor_context()?;
         Ok(handle)
     }
+    pub fn is_same_session(&self, other: &Self) -> bool { Arc::ptr_eq(&self.inner, &other.inner) }
+
+    pub fn disconnect(&self) -> Result<(), ApplicationError> {
+        let deadline = Instant::now() + MOTOR_STOP_TIMEOUT;
+        self.inner.motor_gate.close();
+        let mut failures = Vec::new();
+        if let Err(error) = self.request_tuning_stop() { failures.push(error.to_string()); }
+        {
+            let _command = self.inner.motor_gate.stop();
+            if let Err(error) = self.motor_actions().stop() { failures.push(error.to_string()); }
+        }
+        let worker = self.inner.tuning_worker.lock().map_err(|_| ApplicationError::Poisoned)?.take();
+        if let Some(worker) = worker {
+            if worker.join().is_err() { failures.push("tuning worker panicked".to_owned()); }
+        }
+        if let Err(error) = self.wait_motor_stopped_until(deadline) { failures.push(error.to_string()); }
+        let has_scope = self.inner.scope.lock().map_err(|_| ApplicationError::Poisoned)?.is_some();
+        if has_scope {
+            if let Err(error) = self.scope_stop() { failures.push(error.to_string()); }
+        }
+        if failures.is_empty() { Ok(()) }
+        else { Err(ApplicationError::Motion(format!("Disconnect incomplete; motor/transport status must be checked: {}", failures.join("; ")))) }
+    }
+
+    fn wait_motor_stopped(&self) -> Result<(), ApplicationError> {
+        self.wait_motor_stopped_until(Instant::now() + MOTOR_STOP_TIMEOUT)
+    }
+    fn wait_motor_stopped_until(&self, deadline: Instant) -> Result<(), ApplicationError> {
+        loop {
+            match self.read_motor_state()? {
+                0 | 1 => return Ok(()),
+                2 => {}
+                state => return Err(ApplicationError::Motion(format!("Unknown motor state {state} while stopping"))),
+            }
+            if Instant::now() >= deadline {
+                return Err(ApplicationError::Motion("Motor is still RUN after the 60 s controlled-stop timeout; use Disable to turn off the drive".to_owned()));
+            }
+            thread::sleep(TUNING_POLL);
+        }
+    }
+
     pub fn config_save_available(&self) -> bool {
         ConfigService::from_shared(self.inner.session.clone(), self.inner.schema.clone(), self.inner.parameters.clone()).save_available()
     }
@@ -239,6 +333,21 @@ impl ApplicationSession {
         self.inner.motion.preview_with_parameters(&self.inner.parameters, None).map_err(ApplicationError::Motion)
     }
     pub fn motion_run(&self) -> Result<ActionHandle, ApplicationError> {
+        self.motion_run_at(self.inner.motor_gate.ticket(), None)
+    }
+    fn motion_run_at(&self, ticket: u64, experiment: Option<u64>) -> Result<ActionHandle, ApplicationError> {
+        let _command = self.inner.motor_gate.start(ticket)
+            .map_err(|message| ApplicationError::Motion(message.to_owned()))?;
+        {
+            let runtime = self.inner.tuning_experiment.lock().map_err(|_| ApplicationError::Poisoned)?;
+            if let Some(generation) = experiment {
+                if runtime.generation != generation || runtime.stop_requested {
+                    return Err(ApplicationError::Motion("tuning Run was cancelled".to_owned()));
+                }
+            } else if matches!(runtime.state, TuningExperimentState::Preparing | TuningExperimentState::Running | TuningExperimentState::Stopping) {
+                return Err(ApplicationError::TuningExperimentBusy);
+            }
+        }
         let events = self.subscribe()?;
         let config = self.inner.motion.get();
         let mode = self.read_motion_mode()?;
@@ -340,38 +449,73 @@ impl ApplicationSession {
         Ok(Duration::from_secs_f64(seconds.max(TUNING_PRE_CAPTURE.as_secs_f64() + TUNING_POST_CAPTURE.as_secs_f64())))
     }
     pub fn tuning_experiment_start(&self, selections: &[ScopeSelection]) -> Result<TuningExperimentStatus, ApplicationError> {
-        if self.read_motor_state()? != 1 { return Err(ApplicationError::TuningExperimentMotorNotEnabled); }
-        {
-            let runtime = self.inner.tuning_experiment.lock().map_err(|_| ApplicationError::Poisoned)?;
+        let ticket = self.inner.motor_gate.ticket();
+        let generation = {
+            let _command = self.inner.motor_gate.start(ticket)
+                .map_err(|message| ApplicationError::Motion(message.to_owned()))?;
+            let mut runtime = self.inner.tuning_experiment.lock().map_err(|_| ApplicationError::Poisoned)?;
             if matches!(runtime.state, TuningExperimentState::Preparing | TuningExperimentState::Running | TuningExperimentState::Stopping) {
                 return Err(ApplicationError::TuningExperimentBusy);
             }
-        }
-        // These are execution-time reads, not display-preview reads. The experiment
-        // duration and effective tuning values must come from current firmware RAM.
-        let ids = self.parameter_metadata().iter().filter(|meta| meta.access.contains('r') && (
-            meta.symbol.starts_with("PARAM_CTRL_") || meta.symbol.starts_with("PARAM_MOTION_")
-            || meta.symbol.starts_with("PARAM_TARGET_") || meta.symbol == "PARAM_RUN_POSITION"
-            || meta.symbol == "PARAM_LIMIT_WM_EFFECTIVE"
-        )).map(|meta| meta.id).collect::<Vec<_>>();
-        self.require_refresh(self.parameter_read_many(&ids)?)?;
-        let mode = self.read_motion_mode()?;
-        let preview_duration = if mode == MotionMode::Position {
-            self.motion_preview()?.times.last().copied().unwrap_or(0.0).max(0.0)
-        } else { 0.0 };
-        let scope_exists = self.inner.scope.lock().map_err(|_| ApplicationError::Poisoned)?.is_some();
-        if scope_exists { self.scope_stop()?; }
-        let capture_duration = self.tuning_capture_duration(selections)?;
-        self.scope_configure(selections, capture_duration, 2)?;
-        self.scope_capture(capture_duration)?;
-        let generation = {
-            let mut runtime = self.inner.tuning_experiment.lock().map_err(|_| ApplicationError::Poisoned)?;
+            // Publish PREPARING before any blocking I/O. Stop must be able to
+            // cancel this operation even before the pre-capture worker exists.
             runtime.generation = runtime.generation.wrapping_add(1);
-            runtime.state = TuningExperimentState::Preparing; runtime.stop_requested = false; runtime.message = None;
+            runtime.state = TuningExperimentState::Preparing;
+            runtime.stop_requested = false;
+            runtime.message = None;
             runtime.generation
         };
-        let app = self.clone();
-        thread::spawn(move || { app.run_tuning_experiment(generation, mode, preview_duration, capture_duration); });
+        let mut capture_owned = false;
+        let prepared = (|| -> Result<(), ApplicationError> {
+            if self.read_motor_state()? != 1 { return Err(ApplicationError::TuningExperimentMotorNotEnabled); }
+            let ids = self.parameter_metadata().iter().filter(|meta| meta.access.contains('r') && (
+                meta.symbol.starts_with("PARAM_CTRL_") || meta.symbol.starts_with("PARAM_MOTION_")
+                || meta.symbol.starts_with("PARAM_TARGET_") || meta.symbol == "PARAM_RUN_POSITION"
+                || meta.symbol == "PARAM_LIMIT_WM_EFFECTIVE"
+            )).map(|meta| meta.id).collect::<Vec<_>>();
+            self.require_refresh(self.parameter_read_many(&ids)?)?;
+            let mode = self.read_motion_mode()?;
+            let preview_duration = if mode == MotionMode::Position {
+                self.motion_preview()?.times.last().copied().unwrap_or(0.0).max(0.0)
+            } else { 0.0 };
+            let capture_duration = self.tuning_capture_duration(selections)?;
+            // The check and command sequence are ordered against Stop/Disconnect.
+            // A stale preparation must not reconfigure/start capture after close.
+            let _command = self.inner.motor_gate.start(ticket)
+                .map_err(|message| ApplicationError::Motion(message.to_owned()))?;
+            let scope_exists = self.inner.scope.lock().map_err(|_| ApplicationError::Poisoned)?.is_some();
+            if scope_exists { self.scope_stop()?; }
+            self.scope_configure(selections, capture_duration, 2)?;
+            capture_owned = true;
+            self.scope_capture(capture_duration)?;
+            let mut worker = self.inner.tuning_worker.lock().map_err(|_| ApplicationError::Poisoned)?;
+            // A previous worker reaches a terminal state only after its cleanup.
+            if let Some(old) = worker.take() {
+                old.join().map_err(|_| ApplicationError::Motion("previous tuning worker panicked".to_owned()))?;
+            }
+            let app = self.clone();
+            *worker = Some(thread::spawn(move || {
+                app.run_tuning_experiment(generation, ticket, mode, preview_duration, capture_duration);
+            }));
+            Ok(())
+        })();
+        if let Err(error) = prepared {
+            let cleanup = if capture_owned { self.scope_stop() } else { Ok(()) };
+            let cancelled = (self.tuning_stop_requested(generation)
+                || self.inner.motor_gate.ticket() != ticket) && cleanup.is_ok();
+            let error = if let Err(cleanup) = cleanup {
+                ApplicationError::Motion(format!("{error}; Scope cleanup: {cleanup}"))
+            } else { error };
+            if let Ok(mut runtime) = self.inner.tuning_experiment.lock() {
+                if runtime.generation == generation {
+                    runtime.state = if cancelled { TuningExperimentState::Completed } else { TuningExperimentState::Failed };
+                    runtime.message = Some(if cancelled { "Cancelled before Run".to_owned() } else { error.to_string() });
+                }
+            }
+            // No motor Run was sent by this preparation. Do not stop an unrelated
+            // motor operation when start validation itself failed.
+            if !cancelled { return Err(error); }
+        }
         self.tuning_experiment_status()
     }
     fn request_tuning_stop(&self) -> Result<(), ApplicationError> {
@@ -453,7 +597,8 @@ impl ApplicationSession {
         }
     }
     fn tuning_stop_requested(&self, generation: u64) -> bool {
-        self.inner.tuning_experiment.lock().map(|runtime| runtime.generation != generation || runtime.stop_requested).unwrap_or(true)
+        self.inner.motor_gate.is_closed()
+            || self.inner.tuning_experiment.lock().map(|runtime| runtime.generation != generation || runtime.stop_requested).unwrap_or(true)
     }
     fn set_tuning_state(&self, generation: u64, state: TuningExperimentState) -> bool {
         let Ok(mut runtime) = self.inner.tuning_experiment.lock() else { return false; };
@@ -461,9 +606,34 @@ impl ApplicationSession {
         runtime.state = state; true
     }
     fn fail_tuning_experiment(&self, generation: u64, error: impl ToString) {
-        let _ = self.scope_stop();
+        {
+            let Ok(mut runtime) = self.inner.tuning_experiment.lock() else { return; };
+            if runtime.generation != generation { return; }
+            runtime.state = TuningExperimentState::Stopping;
+        }
+        let mut failures = vec![error.to_string()];
+        // A plot error ends the experiment, not just its recording. Motor Stop
+        // is separate from Scope Stop; retain every cleanup error for the user.
+        if let Err(error) = self.motor_stop() { failures.push(format!("Motor Stop: {error}")); }
+        if let Err(error) = self.wait_motor_stopped() { failures.push(format!("Motor state: {error}")); }
+        if let Err(error) = self.scope_stop() { failures.push(format!("Scope Stop: {error}")); }
         if let Ok(mut runtime) = self.inner.tuning_experiment.lock() {
-            if runtime.generation == generation { runtime.state = TuningExperimentState::Failed; runtime.message = Some(error.to_string()); }
+            if runtime.generation == generation {
+                runtime.state = TuningExperimentState::Failed;
+                runtime.message = Some(failures.join("; "));
+            }
+        }
+    }
+    fn finish_cancelled_pre_capture(&self, generation: u64) {
+        if let Err(error) = self.scope_stop() {
+            self.fail_tuning_experiment(generation, error);
+            return;
+        }
+        if let Ok(mut runtime) = self.inner.tuning_experiment.lock() {
+            if runtime.generation == generation {
+                runtime.state = TuningExperimentState::Completed;
+                runtime.message = Some("Cancelled before Run".to_owned());
+            }
         }
     }
     fn wait_tuning(&self, generation: u64, duration: Duration, stop_sensitive: bool) -> bool {
@@ -475,11 +645,19 @@ impl ApplicationSession {
         }
         true
     }
-    fn run_tuning_experiment(&self, generation: u64, mode: MotionMode, preview_duration: f64, capture_duration: Duration) {
+    fn run_tuning_experiment(&self, generation: u64, ticket: u64, mode: MotionMode, preview_duration: f64, capture_duration: Duration) {
         if !self.wait_tuning(generation, TUNING_PRE_CAPTURE, true) {
-            let _ = self.scope_stop(); let _ = self.set_tuning_state(generation, TuningExperimentState::Completed); return;
+            self.finish_cancelled_pre_capture(generation);
+            return;
         }
-        if let Err(error) = self.motion_run() { self.fail_tuning_experiment(generation, error); return; }
+        if let Err(error) = self.motion_run_at(ticket, Some(generation)) {
+            if self.tuning_stop_requested(generation) || self.inner.motor_gate.ticket() != ticket {
+                self.finish_cancelled_pre_capture(generation);
+            } else {
+                self.fail_tuning_experiment(generation, error);
+            }
+            return;
+        }
         if !self.set_tuning_state(generation, TuningExperimentState::Running) { return; }
         let auto_position = mode == MotionMode::Position;
         let mut stop_sent = false;
@@ -508,7 +686,14 @@ impl ApplicationSession {
                 }
                 match self.read_motor_state() {
                     Ok(2) => {}
-                    Ok(_) => { completed_window = false; break; }
+                    Ok(state) => {
+                        if !self.tuning_stop_requested(generation) && !stop_sent {
+                            self.fail_tuning_experiment(generation, format!("Motor left RUN unexpectedly (state {state}); check firmware faults"));
+                            return;
+                        }
+                        completed_window = false;
+                        break;
+                    }
                     Err(error) => { self.fail_tuning_experiment(generation, error); return; }
                 }
                 let step = TUNING_POLL.min(run_window.saturating_sub(elapsed));
@@ -520,13 +705,31 @@ impl ApplicationSession {
                 let _ = self.set_tuning_state(generation, TuningExperimentState::Stopping);
             }
         }
+        let mut stop_deadline = if stop_sent { Some(Instant::now() + MOTOR_STOP_TIMEOUT) } else { None };
         loop {
             let stop_requested = self.tuning_stop_requested(generation);
             let motor_state = match self.read_motor_state() {
                 Ok(state) => state,
                 Err(error) => { self.fail_tuning_experiment(generation, error); return; }
             };
-            if motor_state != 2 { break; }
+            if motor_state != 2 {
+                if !stop_requested && !stop_sent {
+                    self.fail_tuning_experiment(generation, format!("Motor left RUN unexpectedly (state {motor_state}); check firmware faults"));
+                    return;
+                }
+                break;
+            }
+            if stop_sent && stop_deadline.is_some_and(|deadline| Instant::now() >= deadline) {
+                let mut message = "Motor is still RUN after the 60 s controlled-stop timeout; use Disable to turn off the drive".to_owned();
+                if let Err(error) = self.scope_stop() { message.push_str(&format!("; Scope Stop: {error}")); }
+                if let Ok(mut runtime) = self.inner.tuning_experiment.lock() {
+                    if runtime.generation == generation {
+                        runtime.state = TuningExperimentState::Failed;
+                        runtime.message = Some(message);
+                    }
+                }
+                return;
+            }
             if stop_requested && !stop_sent {
                 if let Err(error) = self.motion_stop() { self.fail_tuning_experiment(generation, error); return; }
                 stop_sent = true;
@@ -549,6 +752,7 @@ impl ApplicationSession {
                     Err(error) => { self.fail_tuning_experiment(generation, error); return; }
                 }
             }
+            if stop_sent && stop_deadline.is_none() { stop_deadline = Some(Instant::now() + MOTOR_STOP_TIMEOUT); }
             thread::sleep(TUNING_POLL);
         }
         let _ = self.set_tuning_state(generation, TuningExperimentState::Stopping);

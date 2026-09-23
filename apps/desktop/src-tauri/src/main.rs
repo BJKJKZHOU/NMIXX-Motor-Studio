@@ -217,11 +217,7 @@ fn action_handle_dto(handle: ActionHandle, symbol: String) -> ActionHandleDto { 
 fn device_list() -> Result<Vec<String>, String> { ApplicationSession::available_usb_ports().map_err(|error| error.to_string()) }
 #[tauri::command]
 async fn device_connect(app_handle: tauri::AppHandle, state: State<'_, Mutex<DesktopState>>, port: String, schema_path: String, baud: Option<u32>) -> Result<ConnectionDto, String> {
-    let old_app = {
-        let mut guard = state.lock().map_err(|_| "desktop state is poisoned".to_owned())?;
-        guard.port = None; guard.app.take()
-    };
-    drop(old_app);
+    disconnect_application(&state)?;
     let schema = HostSchema::load(&schema_path).map_err(|error| error.to_string())?;
     let app = ApplicationSession::open_usb(&port, baud.unwrap_or(DEFAULT_USB_BAUD), schema).map_err(|error| error.to_string())?;
     for (id, result) in app.parameter_refresh_all().map_err(|error| error.to_string())? {
@@ -244,8 +240,21 @@ async fn device_connect(app_handle: tauri::AppHandle, state: State<'_, Mutex<Des
 }
 #[tauri::command]
 async fn device_disconnect(state: State<'_, Mutex<DesktopState>>) -> Result<(), String> {
-    let app = { let mut guard = state.lock().map_err(|_| "desktop state is poisoned".to_owned())?; guard.port = None; guard.app.take() };
-    drop(app); Ok(())
+    disconnect_application(&state)
+}
+fn disconnect_application(state: &State<'_, Mutex<DesktopState>>) -> Result<(), String> {
+    let app = state.lock().map_err(|_| "desktop state is poisoned".to_owned())?.app.clone();
+    let Some(app) = app else { return Ok(()); };
+    app.disconnect().map_err(|error| error.to_string())?;
+    let removed = {
+        let mut guard = state.lock().map_err(|_| "desktop state is poisoned".to_owned())?;
+        if guard.app.as_ref().is_some_and(|current| current.is_same_session(&app)) {
+            guard.port = None;
+            guard.app.take()
+        } else { None }
+    };
+    drop(removed);
+    Ok(())
 }
 #[tauri::command]
 fn parameter_list(state: State<'_, Mutex<DesktopState>>) -> Result<Vec<ParameterMetadataDto>, String> { Ok(application(&state)?.parameter_metadata().iter().map(Into::into).collect()) }

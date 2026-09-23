@@ -393,7 +393,7 @@ impl MixedScopeSession {
     pub fn stop(&self) -> Result<(), MixedScopeError> {
         let mask = {
             let shared = self.shared.lock().map_err(|_| MixedScopeError::Closed)?;
-            ensure_runtime_ok(&shared)?;
+            // Cleanup must remain available after an ingest/decoder failure.
             group_mask(&shared)
         };
         if mask != 0 {
