@@ -20,8 +20,7 @@
     "@vscode/codicons": "0.0.45",
     "dygraphs": "2.2.2",
     "echarts": "6.1.0",
-    "split.js": "1.6.5",
-    "uplot": "1.6.32"
+    "split.js": "1.6.5"
   },
   "devDependencies": {
     "@sveltejs/vite-plugin-svelte": "7.3.0",

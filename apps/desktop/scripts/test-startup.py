@@ -123,7 +123,7 @@ def main() -> int:
                             allowed = {"device_list", "device_disconnect", "action_list", "motion_get"}
                             assert set(calls) <= allowed, f"Unexpected IPC: {calls}"
                             page.goto(url + "?preview=1", wait_until="networkidle")
-                            expect(page.locator(".motion-uplot-host canvas")).to_be_visible()
+                            expect(page.locator(".motion-trajectory-host canvas")).to_be_visible()
                             assert not errors, f"{locale}: {errors}"
                             print(f"PASS {args.browser} / {locale}: workbench, eight pages, Scope and Motion preview")
                         finally:

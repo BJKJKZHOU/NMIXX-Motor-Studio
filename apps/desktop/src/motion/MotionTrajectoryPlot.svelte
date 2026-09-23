@@ -93,8 +93,7 @@
     const rect = host.getBoundingClientRect();
     if (rect.width < 20 || rect.height < 20) return;
     if (!plot) {
-      // Reuse the existing chart library. Do not evaluate uPlot's module-level
-      // Intl formatter against WebKit's POSIX "C" language, or patch global Intl.
+      // Use an explicit chart locale; WebKit may report the POSIX language "C".
       plot = init(host, undefined, { renderer: "canvas", locale: "EN" });
     }
     plot.resize();
@@ -114,4 +113,4 @@
   });
 </script>
 
-<div class="motion-uplot-host" bind:this={host}></div>
+<div class="motion-trajectory-host" bind:this={host}></div>
