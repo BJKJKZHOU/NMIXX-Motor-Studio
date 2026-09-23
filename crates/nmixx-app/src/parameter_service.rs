@@ -1,5 +1,6 @@
-use std::collections::HashMap;
+use std::collections::{HashMap, HashSet};
 use std::sync::{mpsc, Arc, Mutex, RwLock};
+use std::time::{Duration, Instant};
 
 use thiserror::Error;
 
@@ -42,6 +43,15 @@ pub enum ParameterServiceError {
     Session(#[from] SessionError),
 }
 
+struct StreamUpdates {
+    ids: HashSet<u16>,
+    dirty: HashSet<u16>,
+    published: Instant,
+}
+impl Default for StreamUpdates {
+    fn default() -> Self { Self { ids: HashSet::new(), dirty: HashSet::new(), published: Instant::now() } }
+}
+
 #[derive(Clone)]
 pub struct ParameterService {
     session: DeviceSession,
@@ -50,6 +60,7 @@ pub struct ParameterService {
     // Serialize device reads and write/readback groups, not cache-only views or Actions.
     io: Arc<Mutex<()>>,
     subscribers: Arc<Mutex<Vec<mpsc::Sender<Vec<u16>>>>>,
+    stream: Arc<Mutex<StreamUpdates>>,
 }
 
 impl ParameterService {
@@ -60,6 +71,7 @@ impl ParameterService {
             cache: Arc::new(RwLock::new(HashMap::new())),
             io: Arc::new(Mutex::new(())),
             subscribers: Arc::new(Mutex::new(Vec::new())),
+            stream: Arc::new(Mutex::new(StreamUpdates::default())),
         }
     }
 
@@ -134,11 +146,54 @@ impl ParameterService {
             (*id, result.as_ref().cloned().map_err(ToString::to_string))
         }).collect::<Vec<_>>();
         let changed = {
+            // A Read group may finish after newer streaming samples arrived.
+            // Keep those latest values; return the actual Read results to its caller.
+            let stream = self.stream.lock().map_err(|_| ParameterServiceError::CachePoisoned)?;
+            let entries = entries.into_iter().filter(|(id, _)| !stream.ids.contains(id)).collect();
             let mut cache = self.cache.write().map_err(|_| ParameterServiceError::CachePoisoned)?;
             update_cache(&mut cache, entries)
         };
         self.notify_changed(changed);
         Ok(results)
+    }
+
+    /// Consumes already-decoded baseline samples; never performs device I/O.
+    /// Preserve wire types: f32 total-turn Plot samples cannot replace Position.
+    pub(crate) fn ingest_stream_values(&self, samples: &[(u16, f32)]) -> Result<(), ParameterServiceError> {
+        let mut stream = self.stream.lock().map_err(|_| ParameterServiceError::CachePoisoned)?;
+        let mut entries = Vec::new();
+        for &(id, value) in samples {
+            let meta = self.metadata(id)?;
+            if meta.access.contains('w') { continue; }
+            let Some(value) = stream_scalar(meta.parameter_type()?, value) else { continue; };
+            stream.ids.insert(id);
+            entries.push((id, value));
+        }
+        let changed = {
+            let mut cache = self.cache.write().map_err(|_| ParameterServiceError::CachePoisoned)?;
+            update_cache(&mut cache, entries)
+        };
+        stream.dirty.extend(changed);
+        // Cache values follow every received batch. GUI notifications are coalesced
+        // to at most 60 Hz instead of one IPC notification for every sample.
+        let notify = if stream.published.elapsed() >= Duration::from_micros(16_667) {
+            stream.published = Instant::now();
+            stream.dirty.drain().collect()
+        } else { Vec::new() };
+        drop(stream);
+        self.notify_changed(notify);
+        Ok(())
+    }
+
+    pub(crate) fn invalidate_stream_values(&self, message: &str) {
+        let Ok(mut stream) = self.stream.lock() else { return; };
+        let entries = stream.ids.iter().map(|id| (*id, Err(format!("Runtime stream: {message}")))).collect();
+        let Ok(mut cache) = self.cache.write() else { return; };
+        let changed = update_cache(&mut cache, entries);
+        stream.dirty.clear();
+        drop(cache);
+        drop(stream);
+        self.notify_changed(changed);
     }
 
     fn readback_ids(&self, id: u16) -> Result<Vec<u16>, ParameterServiceError> {
@@ -500,5 +555,27 @@ mod shared_cache_tests {
         assert_eq!(update_cache(&mut cache, vec![
             (1, Ok(ParameterValue::U8(0))), (2, Ok(ParameterValue::F32(10.0))),
         ]), vec![2]);
+    }
+}
+
+// Plot integer/position encodings are deliberately not guessed from f32.
+fn stream_scalar(ty: ParameterType, value: f32) -> Option<Result<ParameterValue, String>> {
+    if ty != ParameterType::F32 { return None; }
+    Some(if value.is_finite() { Ok(ParameterValue::F32(value)) }
+        else { Err("non-finite runtime sample".to_owned()) })
+}
+
+#[cfg(test)]
+mod stream_value_tests {
+    use super::*;
+    #[test]
+    fn plot_position_never_overwrites_the_precise_position_parameter() {
+        assert!(stream_scalar(ParameterType::Position, 123456.75).is_none());
+        assert!(stream_scalar(ParameterType::U8, 2.0).is_none());
+    }
+    #[test]
+    fn runtime_scalars_preserve_f32_and_reject_nonfinite_samples() {
+        assert_eq!(stream_scalar(ParameterType::F32, 1.25), Some(Ok(ParameterValue::F32(1.25))));
+        assert!(stream_scalar(ParameterType::F32, f32::NAN).unwrap().is_err());
     }
 }

@@ -1,7 +1,6 @@
 <script lang="ts">
-  import { onMount } from "svelte";
   import type { ConnectionInfo } from "../connection/types";
-  import { pollParameters, selectParameters } from "../parameters/state";
+  import { selectParameters } from "../parameters/state";
   import { createParameterEditor } from "../parameters/editor";
   import { parameterText } from "../parameters/codec";
   import { modifiedParameterIds } from "../parameters/persistence";
@@ -28,8 +27,6 @@
   let values = $derived($parameters.values);
   let drafts = $derived($edits.drafts);
   let writing = $derived($edits.writing);
-
-  onMount(() => pollParameters([VBUS_ACTUAL_SYMBOL], 250, onError));
 
   function displayText(symbol: string) { return parameterText(values[symbol]) || "—"; }
   function unitFor(symbol: string) { return metadata[symbol]?.unit ?? ""; }

@@ -19,6 +19,9 @@
   type Page = "connection" | "motor" | "encoder" | "limits" | "control" | "tuning" | "motion" | "analysis" | "parameters" | "events" | "automation";
   type ControlLoopPage = "current" | "speed" | "position";
   const GLOBAL_SYMBOLS = ["PARAM_MOTOR_STATE", "PARAM_RUN_IQ", "PARAM_RUN_WM", "PARAM_RUN_POSITION"] as const;
+  // Plot position is f32 total turns, not the exact typed turn+rad value.
+  // Keep only that read and non-streamed motor state on the slow polling path.
+  const POLLED_SYMBOLS = ["PARAM_MOTOR_STATE", "PARAM_RUN_POSITION"] as const;
   const MOTOR_DISABLED = 0;
   const DEFAULT_SCHEMA_PATH = "../../../AxDr_L_Motor/build/host/axdr-host-schema.toml";
   const SCHEMA_PATH_STORAGE_KEY = "nmixx.connection.hostSchemaPath";
@@ -114,7 +117,7 @@
       const storedPath = localStorage.getItem(SCHEMA_PATH_STORAGE_KEY);
       if (storedPath?.trim()) connectionSchemaPath = storedPath;
     } catch { /* Use the development default when storage is unavailable. */ }
-    return pollParameters(GLOBAL_SYMBOLS, 500, setError);
+    return pollParameters(POLLED_SYMBOLS, 500, setError);
   });
   onDestroy(() => {
     ++connectionGeneration;

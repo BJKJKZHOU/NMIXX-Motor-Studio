@@ -97,6 +97,14 @@ pub enum MixedScopeError {
     Closed,
 }
 
+// One decoded batch is delivered to the shared acquisition owner. Standalone
+// ScopeSession users keep their existing behavior when no sink is installed.
+#[derive(Clone)]
+pub(crate) struct SampleSink {
+    pub samples: Arc<dyn Fn(ScopeRate, &[u16], &[f32]) -> Result<(), MixedScopeError> + Send + Sync>,
+    pub failed: Arc<dyn Fn(&str) + Send + Sync>,
+}
+
 #[derive(Clone)]
 struct GroupLayout {
     config_id: u8,
@@ -122,6 +130,7 @@ struct SharedState {
     histories: HashMap<u16, ChannelHistory>,
     state: StreamState,
     runtime_error: Option<String>,
+    sink: Option<SampleSink>,
 }
 
 enum ScopeCommand {
@@ -189,6 +198,7 @@ impl MixedScopeSession {
             histories,
             state: StreamState::Stopped,
             runtime_error: None,
+            sink: None,
         }));
         let events = session.subscribe()?;
         let (command_tx, command_rx) = mpsc::channel();
@@ -215,6 +225,11 @@ impl MixedScopeSession {
             command_tx,
             worker: Some(worker),
         })
+    }
+
+    pub(crate) fn set_sample_sink(&self, sink: SampleSink) -> Result<(), MixedScopeError> {
+        self.shared.lock().map_err(|_| MixedScopeError::Closed)?.sink = Some(sink);
+        Ok(())
     }
 
     pub fn config(&self) -> Result<MixedScopeConfig, MixedScopeError> {
@@ -534,7 +549,7 @@ impl Drop for MixedScopeSession {
     }
 }
 
-fn build_config(
+pub(crate) fn build_config(
     capabilities: &DevicePlotCapabilities,
     schema: &HostSchema,
     selections: &[ScopeSelection],
@@ -772,9 +787,11 @@ fn scope_worker(
         };
 
         if let Err(error) = result {
-            if let Ok(mut state) = shared.lock() {
+            let sink = if let Ok(mut state) = shared.lock() {
                 state.runtime_error = Some(error.to_string());
-            }
+                state.sink.clone()
+            } else { None };
+            if let Some(sink) = sink { (sink.failed)(&error.to_string()); }
             let mask = shared.lock().ok().map(|state| group_mask(&state)).unwrap_or(0);
             if mask != 0 {
                 let _ = session.plot_stop(mask);
@@ -805,7 +822,8 @@ fn ingest_fast(
     let config_id = frame.data().get(2).copied().ok_or(MixedScopeError::UnknownConfig(0))?;
     let mut state = shared.lock().map_err(|_| MixedScopeError::Closed)?;
     let (ids, scales) = {
-        let group = state.fast.as_mut().ok_or(MixedScopeError::UnknownConfig(config_id))?;
+        // A frame already queued before Plot Stop may outlive the group.
+        let Some(group) = state.fast.as_mut() else { return Ok(()); };
         promote_if_pending(group, config_id)?;
         let ids = group.active.ids.clone();
         let scales = group.active.scales.clone();
@@ -829,6 +847,9 @@ fn ingest_fast(
             }
         }
     }
+    let sink = state.sink.clone();
+    drop(state);
+    if let Some(sink) = sink { (sink.samples)(ScopeRate::Fast, &ids, &values)?; }
     Ok(())
 }
 
@@ -839,10 +860,7 @@ fn ingest_normal(
     let decoded = decode_normal_data(frame)?;
     let mut state = shared.lock().map_err(|_| MixedScopeError::Closed)?;
     let ids = {
-        let group = state
-            .normal
-            .as_mut()
-            .ok_or(MixedScopeError::UnknownConfig(decoded.config_id))?;
+        let Some(group) = state.normal.as_mut() else { return Ok(()); };
         promote_if_pending(group, decoded.config_id)?;
 
         if decoded.values.len() != group.active.ids.len() {
@@ -859,5 +877,8 @@ fn ingest_normal(
             history.stream.push_sample(&[decoded.values[index]])?;
         }
     }
+    let sink = state.sink.clone();
+    drop(state);
+    if let Some(sink) = sink { (sink.samples)(ScopeRate::Normal, &ids, &decoded.values)?; }
     Ok(())
 }

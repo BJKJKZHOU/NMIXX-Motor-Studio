@@ -55,6 +55,7 @@
   });
 
   function defaultRate(channel: PlotChannel): ScopeRate {
+    if (connection?.runtimeChannelIds?.includes(channel.id)) return "normal";
     return channel.supportsFast ? "fast" : "normal";
   }
 
@@ -88,7 +89,7 @@
     if (viewRefreshTimer) clearTimeout(viewRefreshTimer);
     reconfigureTimer = undefined;
     viewRefreshTimer = undefined;
-    configured = false;
+    configured = !!connection?.runtimeChannelIds?.length;
     configurationDirty = false;
     channelNotice = "";
     snapshot = undefined;
@@ -98,7 +99,10 @@
     const availableChannels = connection?.channels.filter(
       (channel) => channel.supportsFast || channel.supportsNormal,
     ) ?? [];
-    const defaults = availableChannels.slice(0, 3);
+    const runtimeIds = new Set(connection?.runtimeChannelIds ?? []);
+    const defaults = runtimeIds.size
+      ? availableChannels.filter((channel) => runtimeIds.has(channel.id))
+      : availableChannels.slice(0, 3);
     selectedIds = new Set(defaults.map((channel) => channel.id));
     rates = new Map(defaults.map((channel) => [channel.id, defaultRate(channel)]));
     verticalScale = new Map(availableChannels.map((channel) => [channel.id, defaultVerticalScale(channel)]));
@@ -107,7 +111,9 @@
   }
 
   function selectedRateCount(ids: Set<number>, nextRates: Map<number, ScopeRate>, rate: ScopeRate): number {
-    return Array.from(ids).filter((id) => nextRates.get(id) === rate).length;
+    const demand = new Map<number, ScopeRate>((connection?.runtimeChannelIds ?? []).map((id) => [id, "normal"]));
+    for (const id of ids) demand.set(id, nextRates.get(id) ?? "normal");
+    return Array.from(demand.values()).filter((item) => item === rate).length;
   }
 
   function rateLimit(rate: ScopeRate): number {
@@ -134,10 +140,6 @@
     if (!channel) return;
 
     if (next.has(id)) {
-      if (running && next.size === 1) {
-        onError("Keep at least one channel selected while Scope is running.");
-        return;
-      }
       next.delete(id);
       nextRates.delete(id);
       if (activeChannelId === id) {
@@ -184,11 +186,13 @@
   }
 
   async function ensureConfigured() {
-    if (!connection || selectedIds.size === 0) return false;
+    if (!connection) return false;
     if (configured && !configurationDirty) return true;
+    const requestedConnection = connection;
     await configureScope(
       Array.from(selectedIds).map((id) => ({ id, rate: rates.get(id) ?? "normal" })),
     );
+    if (connection !== requestedConnection) return false;
     configured = true;
     configurationDirty = false;
     channelNotice = "";
@@ -197,7 +201,7 @@
   }
 
   function scheduleHotReconfigure() {
-    if (!running || selectedIds.size === 0) return;
+    if (!connection) return;
     if (reconfigureTimer) clearTimeout(reconfigureTimer);
     reconfigureTimer = setTimeout(() => {
       reconfigureTimer = undefined;
@@ -206,7 +210,7 @@
   }
 
   async function hotReconfigure() {
-    if (!running || busy || !configurationDirty || selectedIds.size === 0) return;
+    if (!connection || busy || !configurationDirty) return;
     busy = true;
     try {
       await ensureConfigured();
@@ -377,7 +381,7 @@
 
   onMount(() => {
     refreshUnsubscribe = subscribeRefresh(refreshIntervalMs, () => {
-      if (active && running && followingLatest) void refreshSnapshot();
+      if (active && configured && followingLatest && (running || !snapshot)) void refreshSnapshot();
     });
   });
 
@@ -396,7 +400,7 @@
     <!-- svelte-ignore a11y_click_events_have_key_events a11y_no_static_element_interactions -->
     <vscode-button
       class:stopping={stopping}
-      disabled={!connection || (!running && selectedIds.size === 0) || busy}
+      disabled={!connection || busy}
       onclick={() => void toggleRun()}
     >
       <i class={`codicon ${stopping ? "codicon-loading codicon-modifier-spin" : running ? "codicon-debug-stop" : "codicon-play"}`}></i>

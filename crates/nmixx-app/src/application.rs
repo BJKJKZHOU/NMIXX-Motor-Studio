@@ -6,15 +6,18 @@ use std::time::{Duration, Instant};
 #[path = "motor_gate.rs"]
 mod motor_gate;
 use motor_gate::MotorGate;
+#[path = "acquisition.rs"]
+mod acquisition;
+use acquisition::{SharedAcquisition, View};
 
 use thiserror::Error;
 use crate::{
     ActionHandle, AxdrStatus, ConfigService, ConfigServiceError, DevicePlotCapabilities, DeviceSession,
-    HostSchema, IdentificationKind, IdentificationStart, MixedScopeConfig, MixedScopeError, MixedScopeSession,
+    HostSchema, IdentificationKind, IdentificationStart, MixedScopeConfig, MixedScopeError,
     MixedScopeSnapshot, MixedScopeStatus, MotionCapabilities, MotionConfig, MotionMode, MotionPreview,
     PositionCommand, MotionService, MotorActionError, MotorActionService, ParameterMetadata, ParameterService,
     ParameterServiceError, ParameterValue, PlotCapabilitiesError, PreflightError, PreflightIssue,
-    PreflightService, ScopeRate, ScopeSelection, SessionError, SessionEvent,
+    PreflightService, ScopeRate, ScopeSelection, SessionError, SessionEvent, StreamState,
 };
 
 #[derive(Debug, Error)]
@@ -73,7 +76,7 @@ struct ApplicationInner {
     motion_capabilities: MotionCapabilities,
     motion: MotionService,
     motion_repeat: Mutex<MotionRepeatRuntime>,
-    scope: Mutex<Option<MixedScopeSession>>,
+    scope: Mutex<Option<SharedAcquisition>>,
     tuning_experiment: Mutex<TuningExperimentRuntime>,
     motor_gate: MotorGate,
     tuning_worker: Mutex<Option<thread::JoinHandle<()>>>,
@@ -289,7 +292,7 @@ impl ApplicationSession {
         if let Err(error) = self.wait_motor_stopped_until(deadline) { failures.push(error.to_string()); }
         let has_scope = self.inner.scope.lock().map_err(|_| ApplicationError::Poisoned)?.is_some();
         if has_scope {
-            if let Err(error) = self.scope_stop() { failures.push(error.to_string()); }
+            if let Err(error) = self.with_scope(|source| source.shutdown()) { failures.push(error.to_string()); }
         }
         if failures.is_empty() { Ok(()) }
         else { Err(ApplicationError::Motion(format!("Disconnect incomplete; motor/transport status must be checked: {}", failures.join("; ")))) }
@@ -399,36 +402,45 @@ impl ApplicationSession {
         Ok(())
     }
     pub fn motion_stop(&self) -> Result<ActionHandle, ApplicationError> { self.cancel_motion_repeat_leg()?; self.motor_stop() }
-    pub fn scope_configure(&self, selections: &[ScopeSelection], history: Duration, config_id: u8) -> Result<MixedScopeConfig, ApplicationError> {
-        let old_scope = {
-            let mut slot = self.inner.scope.lock().map_err(|_| ApplicationError::Poisoned)?;
-            if let Some(scope) = slot.as_ref() {
-                if scope.config()?.history == history { return Ok(scope.reconfigure(selections)?); }
-                let _ = scope.stop();
-            }
-            slot.take()
-        };
-        drop(old_scope);
-        let plot_capabilities = self.plot_capabilities()?;
-        let scope = MixedScopeSession::from_capabilities(self.inner.session.clone(), &plot_capabilities,
-            &self.inner.schema, selections, history, config_id)?;
-        let config = scope.config()?;
-        *self.inner.scope.lock().map_err(|_| ApplicationError::Poisoned)? = Some(scope);
-        Ok(config)
+    /// Start only telemetry acquisition, never the motor. Called once on connection.
+    pub fn runtime_start(&self) -> Result<Vec<u16>, ApplicationError> {
+        if self.inner.motor_gate.is_closed() {
+            return Err(ApplicationError::Motion("device connection is closing".to_owned()));
+        }
+        let capabilities = self.plot_capabilities()?;
+        let mut slot = self.inner.scope.lock().map_err(|_| ApplicationError::Poisoned)?;
+        if slot.is_none() {
+            *slot = Some(SharedAcquisition::new(self.inner.session.clone(), capabilities,
+                self.inner.schema.clone(), self.inner.parameters.clone())?);
+        }
+        Ok(slot.as_ref().ok_or(ApplicationError::ScopeNotConfigured)?.base_ids()?)
     }
-    pub fn scope_live(&self) -> Result<(), ApplicationError> { self.with_scope(|scope| scope.live()) }
-    pub fn scope_resume(&self) -> Result<(), ApplicationError> { self.with_scope(|scope| scope.resume()) }
-    pub fn scope_pause(&self) -> Result<(), ApplicationError> { self.with_scope(|scope| scope.pause()) }
-    pub fn scope_stop(&self) -> Result<(), ApplicationError> { self.with_scope(|scope| scope.stop()) }
-    pub fn scope_clear(&self) -> Result<(), ApplicationError> { self.with_scope(|scope| scope.clear()) }
-    pub fn scope_capture(&self, duration: Duration) -> Result<(), ApplicationError> { self.with_scope(|scope| scope.capture(duration)) }
-    pub fn scope_status(&self) -> Result<MixedScopeStatus, ApplicationError> { self.with_scope(|scope| scope.status()) }
-    pub fn scope_snapshot_tail(&self, window: Duration) -> Result<MixedScopeSnapshot, ApplicationError> { self.with_scope(|scope| scope.snapshot_tail(window)) }
+    pub fn scope_configure(&self, selections: &[ScopeSelection], history: Duration, _config_id: u8) -> Result<MixedScopeConfig, ApplicationError> {
+        self.runtime_start()?;
+        self.with_scope(|source| source.configure(View::Scope, selections, history))
+    }
+    pub fn scope_live(&self) -> Result<(), ApplicationError> { self.with_scope(|source| source.live(View::Scope)) }
+    pub fn scope_resume(&self) -> Result<(), ApplicationError> { self.scope_live() }
+    pub fn scope_pause(&self) -> Result<(), ApplicationError> { self.with_scope(|source| source.stop(View::Scope, StreamState::Paused)) }
+    pub fn scope_stop(&self) -> Result<(), ApplicationError> { self.with_scope(|source| source.stop(View::Scope, StreamState::Stopped)) }
+    pub fn scope_clear(&self) -> Result<(), ApplicationError> { self.with_scope(|source| source.clear(View::Scope)) }
+    pub fn scope_capture(&self, duration: Duration) -> Result<(), ApplicationError> { self.with_scope(|source| source.capture(View::Scope, duration)) }
+    pub fn scope_status(&self) -> Result<MixedScopeStatus, ApplicationError> { self.with_scope(|source| source.status(View::Scope)) }
+    pub fn scope_snapshot_tail(&self, window: Duration) -> Result<MixedScopeSnapshot, ApplicationError> { self.scope_snapshot_window(window, Duration::ZERO) }
     pub fn scope_snapshot_window(&self, window: Duration, end_offset: Duration) -> Result<MixedScopeSnapshot, ApplicationError> {
-        self.with_scope(|scope| scope.snapshot_window(window, end_offset))
+        self.with_scope(|source| source.snapshot(View::Scope, window, end_offset))
     }
-    pub fn scope_recorded_duration(&self) -> Result<Duration, ApplicationError> { self.with_scope(|scope| scope.recorded_duration()) }
-    pub fn scope_config(&self) -> Result<MixedScopeConfig, ApplicationError> { self.with_scope(|scope| scope.config()) }
+    pub fn scope_recorded_duration(&self) -> Result<Duration, ApplicationError> { self.with_scope(|source| source.recorded_duration(View::Scope)) }
+    pub fn scope_config(&self) -> Result<MixedScopeConfig, ApplicationError> { self.with_scope(|source| source.config(View::Scope)) }
+    pub fn tuning_record_config(&self) -> Result<MixedScopeConfig, ApplicationError> { self.with_scope(|source| source.config(View::Tuning)) }
+    pub fn tuning_record_status(&self) -> Result<MixedScopeStatus, ApplicationError> { self.with_scope(|source| source.status(View::Tuning)) }
+    pub fn tuning_record_duration(&self) -> Result<Duration, ApplicationError> { self.with_scope(|source| source.recorded_duration(View::Tuning)) }
+    pub fn tuning_record_window(&self, window: Duration, end_offset: Duration) -> Result<MixedScopeSnapshot, ApplicationError> {
+        self.with_scope(|source| source.snapshot(View::Tuning, window, end_offset))
+    }
+    fn tuning_record_stop(&self) -> Result<(), ApplicationError> {
+        self.with_scope(|source| source.stop(View::Tuning, StreamState::Stopped))
+    }
     pub fn tuning_experiment_default_selections(&self) -> Result<Vec<ScopeSelection>, ApplicationError> {
         self.tuning_default_selections(self.read_motion_mode()?)
     }
@@ -445,7 +457,8 @@ impl ApplicationSession {
         }
         if samples_per_second == 0 { return Err(ApplicationError::TuningExperimentChannel("no capture channels selected".to_owned())); }
         let bytes_per_second = samples_per_second.saturating_mul(std::mem::size_of::<f32>() as u64);
-        let seconds = TUNING_CAPTURE_BUDGET_BYTES as f64 / bytes_per_second as f64;
+        let bytes = TUNING_CAPTURE_BUDGET_BYTES.saturating_sub(selections.len() * 8);
+        let seconds = bytes as f64 / bytes_per_second as f64;
         Ok(Duration::from_secs_f64(seconds.max(TUNING_PRE_CAPTURE.as_secs_f64() + TUNING_POST_CAPTURE.as_secs_f64())))
     }
     pub fn tuning_experiment_start(&self, selections: &[ScopeSelection]) -> Result<TuningExperimentStatus, ApplicationError> {
@@ -483,11 +496,10 @@ impl ApplicationSession {
             // A stale preparation must not reconfigure/start capture after close.
             let _command = self.inner.motor_gate.start(ticket)
                 .map_err(|message| ApplicationError::Motion(message.to_owned()))?;
-            let scope_exists = self.inner.scope.lock().map_err(|_| ApplicationError::Poisoned)?.is_some();
-            if scope_exists { self.scope_stop()?; }
-            self.scope_configure(selections, capture_duration, 2)?;
+            self.runtime_start()?;
+            self.with_scope(|source| source.configure(View::Tuning, selections, capture_duration))?;
             capture_owned = true;
-            self.scope_capture(capture_duration)?;
+            self.with_scope(|source| source.capture(View::Tuning, capture_duration))?;
             let mut worker = self.inner.tuning_worker.lock().map_err(|_| ApplicationError::Poisoned)?;
             // A previous worker reaches a terminal state only after its cleanup.
             if let Some(old) = worker.take() {
@@ -500,7 +512,7 @@ impl ApplicationSession {
             Ok(())
         })();
         if let Err(error) = prepared {
-            let cleanup = if capture_owned { self.scope_stop() } else { Ok(()) };
+            let cleanup = if capture_owned { self.tuning_record_stop() } else { Ok(()) };
             let cancelled = (self.tuning_stop_requested(generation)
                 || self.inner.motor_gate.ticket() != ticket) && cleanup.is_ok();
             let error = if let Err(cleanup) = cleanup {
@@ -537,11 +549,11 @@ impl ApplicationSession {
     }
     pub fn tuning_experiment_snapshot(&self) -> Result<TuningExperimentSnapshot, ApplicationError> {
         let status = self.tuning_experiment_status()?;
-        let config = self.scope_config()?;
+        let config = self.tuning_record_config()?;
         let window = if matches!(status.state, TuningExperimentState::Preparing | TuningExperimentState::Running | TuningExperimentState::Stopping) {
             TUNING_LIVE_WINDOW.min(config.history)
         } else { config.history };
-        let snapshot = self.scope_snapshot_tail(window)?;
+        let snapshot = self.tuning_record_window(window, Duration::ZERO)?;
         Ok(TuningExperimentSnapshot { status, config, snapshot })
     }
     fn tuning_default_selections(&self, mode: MotionMode) -> Result<Vec<ScopeSelection>, ApplicationError> {
@@ -616,7 +628,7 @@ impl ApplicationSession {
         // is separate from Scope Stop; retain every cleanup error for the user.
         if let Err(error) = self.motor_stop() { failures.push(format!("Motor Stop: {error}")); }
         if let Err(error) = self.wait_motor_stopped() { failures.push(format!("Motor state: {error}")); }
-        if let Err(error) = self.scope_stop() { failures.push(format!("Scope Stop: {error}")); }
+        if let Err(error) = self.tuning_record_stop() { failures.push(format!("Scope Stop: {error}")); }
         if let Ok(mut runtime) = self.inner.tuning_experiment.lock() {
             if runtime.generation == generation {
                 runtime.state = TuningExperimentState::Failed;
@@ -625,7 +637,7 @@ impl ApplicationSession {
         }
     }
     fn finish_cancelled_pre_capture(&self, generation: u64) {
-        if let Err(error) = self.scope_stop() {
+        if let Err(error) = self.tuning_record_stop() {
             self.fail_tuning_experiment(generation, error);
             return;
         }
@@ -668,7 +680,7 @@ impl ApplicationSession {
             let mut completed_window = true;
             while elapsed < run_window {
                 if self.tuning_stop_requested(generation) { completed_window = false; break; }
-                match self.scope_status() {
+                match self.tuning_record_status() {
                     Ok(status) if status.capacity_samples > 0 => {
                         let used = status.samples as f64 / status.capacity_samples as f64;
                         if used >= 1.0 - reserve_ratio {
@@ -721,7 +733,7 @@ impl ApplicationSession {
             }
             if stop_sent && stop_deadline.is_some_and(|deadline| Instant::now() >= deadline) {
                 let mut message = "Motor is still RUN after the 60 s controlled-stop timeout; use Disable to turn off the drive".to_owned();
-                if let Err(error) = self.scope_stop() { message.push_str(&format!("; Scope Stop: {error}")); }
+                if let Err(error) = self.tuning_record_stop() { message.push_str(&format!("; Scope Stop: {error}")); }
                 if let Ok(mut runtime) = self.inner.tuning_experiment.lock() {
                     if runtime.generation == generation {
                         runtime.state = TuningExperimentState::Failed;
@@ -736,7 +748,7 @@ impl ApplicationSession {
                 let _ = self.set_tuning_state(generation, TuningExperimentState::Stopping);
             }
             if !stop_sent {
-                match self.scope_status() {
+                match self.tuning_record_status() {
                     Ok(status) if status.capacity_samples > 0 => {
                         let used = status.samples as f64 / status.capacity_samples as f64;
                         if used >= 1.0 - reserve_ratio {
@@ -757,10 +769,10 @@ impl ApplicationSession {
         }
         let _ = self.set_tuning_state(generation, TuningExperimentState::Stopping);
         self.wait_tuning(generation, TUNING_POST_CAPTURE, false);
-        if let Err(error) = self.scope_stop() { self.fail_tuning_experiment(generation, error); return; }
+        if let Err(error) = self.tuning_record_stop() { self.fail_tuning_experiment(generation, error); return; }
         let _ = self.set_tuning_state(generation, TuningExperimentState::Completed);
     }
-    fn with_scope<T>(&self, call: impl FnOnce(&MixedScopeSession) -> Result<T, MixedScopeError>) -> Result<T, ApplicationError> {
+    fn with_scope<T>(&self, call: impl FnOnce(&SharedAcquisition) -> Result<T, MixedScopeError>) -> Result<T, ApplicationError> {
         let slot = self.inner.scope.lock().map_err(|_| ApplicationError::Poisoned)?;
         let scope = slot.as_ref().ok_or(ApplicationError::ScopeNotConfigured)?;
         Ok(call(scope)?)

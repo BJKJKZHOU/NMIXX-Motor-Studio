@@ -19,6 +19,7 @@ struct PlotChannelDto { id: u16, label: String, unit: Option<String>, supports_f
 struct ConnectionDto {
     port: String, fast_max_channels: u8, normal_max_channels: u8, fast_block_samples: u8,
     fast_rate_hz: u32, normal_rate_hz: u32, channels: Vec<PlotChannelDto>, motion: MotionCapabilities,
+    runtime_channel_ids: Vec<u16>,
 }
 #[derive(Debug, Clone, Copy, Serialize)]
 #[serde(untagged)]
@@ -231,9 +232,10 @@ async fn device_connect(app_handle: tauri::AppHandle, state: State<'_, Mutex<Des
         id: channel.id, label: channel.label.unwrap_or_else(|| format!("0x{:04X}", channel.id)), unit: channel.unit,
         supports_fast: channel.supports_fast, supports_normal: channel.supports_normal, fast_scale: channel.fast_scale,
     }).collect();
+    let runtime_channel_ids = app.runtime_start().map_err(|error| error.to_string())?;
     let result = ConnectionDto { port: port.clone(), fast_max_channels: capabilities.fast_max_channels,
         normal_max_channels: capabilities.normal_max_channels, fast_block_samples: capabilities.fast_block_samples,
-        fast_rate_hz: capabilities.fast_rate_hz, normal_rate_hz: capabilities.normal_rate_hz, channels, motion: app.motion_capabilities().clone() };
+        fast_rate_hz: capabilities.fast_rate_hz, normal_rate_hz: capabilities.normal_rate_hz, channels, motion: app.motion_capabilities().clone(), runtime_channel_ids };
     let mut guard = state.lock().map_err(|_| "desktop state is poisoned".to_owned())?;
     guard.app = Some(app); guard.port = Some(port);
     Ok(result)
@@ -412,14 +414,14 @@ fn tuning_experiment_status(state: State<'_, Mutex<DesktopState>>) -> Result<Tun
 fn tuning_experiment_snapshot(state: State<'_, Mutex<DesktopState>>, window_seconds: Option<f64>, end_offset_seconds: Option<f64>, max_points: Option<usize>) -> Result<TuningExperimentSnapshotDto, String> {
     let app = application(&state)?;
     let status = app.tuning_experiment_status().map_err(|error| error.to_string())?;
-    let config = app.scope_config().map_err(|error| error.to_string())?;
-    let scope_status = app.scope_status().map_err(|error| error.to_string())?;
-    let recorded_seconds = app.scope_recorded_duration().map_err(|error| error.to_string())?.as_secs_f64();
+    let config = app.tuning_record_config().map_err(|error| error.to_string())?;
+    let scope_status = app.tuning_record_status().map_err(|error| error.to_string())?;
+    let recorded_seconds = app.tuning_record_duration().map_err(|error| error.to_string())?.as_secs_f64();
     let default_window = if matches!(status.state, TuningExperimentState::Preparing | TuningExperimentState::Running | TuningExperimentState::Stopping) { 3.0 } else { recorded_seconds.max(0.0005) };
     let window_seconds = window_seconds.unwrap_or(default_window).clamp(0.0005, recorded_seconds.max(0.0005));
     let max_offset = (recorded_seconds - window_seconds).max(0.0);
     let end_offset_seconds = end_offset_seconds.unwrap_or(0.0).clamp(0.0, max_offset);
-    let snapshot = app.scope_snapshot_window(Duration::from_secs_f64(window_seconds), Duration::from_secs_f64(end_offset_seconds)).map_err(|error| error.to_string())?;
+    let snapshot = app.tuning_record_window(Duration::from_secs_f64(window_seconds), Duration::from_secs_f64(end_offset_seconds)).map_err(|error| error.to_string())?;
     let max_points = max_points.unwrap_or(3000).clamp(200, 20_000);
     let series = snapshot.series.into_iter().map(|series| scope_series_dto(series, end_offset_seconds, max_points)).collect();
     Ok(TuningExperimentSnapshotDto {
