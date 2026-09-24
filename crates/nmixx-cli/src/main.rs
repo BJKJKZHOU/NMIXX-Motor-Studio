@@ -142,8 +142,6 @@ enum MotionCommand {
 enum CliMotionMode {
     Position,
     Speed,
-    SensorlessSpeed,
-    Torque,
 }
 
 impl From<CliMotionMode> for MotionMode {
@@ -151,8 +149,6 @@ impl From<CliMotionMode> for MotionMode {
         match value {
             CliMotionMode::Position => Self::Position,
             CliMotionMode::Speed => Self::Speed,
-            CliMotionMode::SensorlessSpeed => Self::SensorlessSpeed,
-            CliMotionMode::Torque => Self::Torque,
         }
     }
 }
