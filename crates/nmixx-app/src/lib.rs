@@ -22,7 +22,7 @@ mod session;
 mod stream;
 mod stream_pipeline;
 
-pub use automation::{AutomationApi, AutomationRuntime, AutomationSnapshot, AutomationState, LogLine, OperationEffect, RunControl, ScriptSpec, SessionWorkflowApi, DIAGNOSIS_SCRIPT, MOTION_SCRIPT};
+pub use automation::{AutomationApi, AutomationRuntime, AutomationSnapshot, AutomationState, LogLine, OperationEffect, RunControl, ScriptSpec, SessionWorkflowApi, DIAGNOSIS_SCRIPT, ENCODER_TURN_SCRIPT, MOTION_SCRIPT};
 pub use application::{
     ApplicationError, ApplicationSession, TuningExperimentSnapshot, TuningExperimentState,
     TuningExperimentStatus,
