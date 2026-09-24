@@ -6,8 +6,7 @@ from nmixx import client
 
 
 def show(label, value):
-    print("
-=== " + label + " ===", flush=True)
+    print("\n=== " + label + " ===", flush=True)
     print(json.dumps(value, ensure_ascii=False, indent=2, allow_nan=False), flush=True)
 
 
@@ -46,6 +45,5 @@ for item in last["channels"]:
     })
 show("Batch arrival progress (NOT firmware sampling-rate measurement)", progress)
 show("Scope record summary (does not change channels or Run/Stop)", client.scope_summary())
-print("
-Diagnosis completed. Position parameter is turn+rad; Plot position is f32 turns.", flush=True)
+print("\nDiagnosis completed. Position parameter is turn+rad; Plot position is f32 turns.", flush=True)
 print("Different sample times and representations must not be compared as exact equality.", flush=True)
