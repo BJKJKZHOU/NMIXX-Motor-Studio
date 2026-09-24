@@ -6,6 +6,7 @@ use std::time::{Duration, Instant};
 #[path = "motor_gate.rs"]
 mod motor_gate;
 use motor_gate::MotorGate;
+use crate::automation::access::{WorkflowAccess, Permit};
 #[path = "acquisition.rs"]
 mod acquisition;
 use acquisition::{SharedAcquisition, View};
@@ -79,10 +80,11 @@ struct ApplicationInner {
     scope: Mutex<Option<SharedAcquisition>>,
     tuning_experiment: Mutex<TuningExperimentRuntime>,
     motor_gate: MotorGate,
+    workflow_access: WorkflowAccess,
     tuning_worker: Mutex<Option<thread::JoinHandle<()>>>,
 }
 #[derive(Clone)]
-pub struct ApplicationSession { inner: Arc<ApplicationInner> }
+pub struct ApplicationSession { inner: Arc<ApplicationInner>, workflow_owner: Option<u64>, workflow_cleanup: bool }
 
 impl ApplicationSession {
     pub fn open_usb(path: impl AsRef<Path>, baud_rate: u32, schema: HostSchema) -> Result<Self, ApplicationError> {
@@ -103,8 +105,8 @@ impl ApplicationSession {
             plot_capabilities: Mutex::new(None), motion_capabilities, motion,
             motion_repeat: Mutex::new(MotionRepeatRuntime::default()), scope: Mutex::new(None),
             tuning_experiment: Mutex::new(TuningExperimentRuntime::default()),
-            motor_gate: MotorGate::default(), tuning_worker: Mutex::new(None),
-        }) };
+            motor_gate: MotorGate::default(), workflow_access: WorkflowAccess::default(), tuning_worker: Mutex::new(None),
+        }), workflow_owner: None, workflow_cleanup: false };
         let weak = Arc::downgrade(&app.inner);
         thread::spawn(move || {
             while let Ok(event) = events.recv() {
@@ -123,6 +125,45 @@ impl ApplicationSession {
     }
     pub fn available_usb_ports() -> Result<Vec<String>, ApplicationError> { Ok(DeviceSession::available_usb_ports()?) }
     pub fn schema(&self) -> &HostSchema { &self.inner.schema }
+    pub fn is_closing(&self) -> bool { self.inner.motor_gate.is_closed() }
+    pub fn runtime_stream_progress(&self) -> Result<crate::RuntimeStreamProgress, ApplicationError> {
+        Ok(self.inner.parameters.runtime_stream_progress()?)
+    }
+    pub(crate) fn automation_claim(&self) -> Result<(Self, Arc<std::sync::atomic::AtomicBool>), ApplicationError> {
+        let (id, cancelled) = self.inner.workflow_access.claim().map_err(ApplicationError::Motion)?;
+        if let Err(error) = self.ensure_no_tuning() {
+            self.inner.workflow_access.release(id);
+            return Err(error);
+        }
+        Ok((Self { inner: self.inner.clone(), workflow_owner: Some(id), workflow_cleanup: false }, cancelled))
+    }
+    fn workflow_checkpoint(&self, ticket: u64) -> Result<(), String> {
+        if self.inner.motor_gate.is_closed() || self.inner.motor_gate.ticket() != ticket {
+            return Err("The pending operation was cancelled".into());
+        }
+        let permit = self.workflow_permit().map_err(|error| error.to_string())?;
+        drop(permit);
+        Ok(())
+    }
+    fn motor_actions_at(&self, ticket: u64) -> MotorActionService {
+        let app = self.clone();
+        self.motor_actions().with_checkpoint(Arc::new(move || app.workflow_checkpoint(ticket).is_ok()))
+    }
+    pub(crate) fn automation_release(&self) {
+        if let Some(id) = self.workflow_owner { self.inner.workflow_access.release(id); }
+    }
+    fn workflow_permit(&self) -> Result<Permit<'_>, ApplicationError> {
+        self.inner.workflow_access.enter(self.workflow_owner, self.workflow_cleanup).map_err(ApplicationError::Motion)
+    }
+    pub(crate) fn automation_cleanup_handle(&self) -> Self {
+        Self { inner: self.inner.clone(), workflow_owner: self.workflow_owner, workflow_cleanup: true }
+    }
+    pub(crate) fn automation_wait_stopped(&self) -> Result<(), ApplicationError> { self.wait_motor_stopped() }
+    pub(crate) fn automation_join_tuning(&self) -> Result<(), ApplicationError> {
+        let worker = self.inner.tuning_worker.lock().map_err(|_| ApplicationError::Poisoned)?.take();
+        if let Some(worker) = worker { worker.join().map_err(|_| ApplicationError::Motion("tuning worker panicked".into()))?; }
+        Ok(())
+    }
     pub fn plot_capabilities(&self) -> Result<DevicePlotCapabilities, ApplicationError> {
         let mut slot = self.inner.plot_capabilities.lock().map_err(|_| ApplicationError::Poisoned)?;
         if slot.is_none() { *slot = Some(DevicePlotCapabilities::discover(&self.inner.session)?); }
@@ -151,6 +192,7 @@ impl ApplicationSession {
         Ok(self.inner.parameters.refresh_all()?)
     }
     pub fn parameter_write(&self, id: u16, value: ParameterValue) -> Result<ParameterValue, ApplicationError> {
+        let _workflow = self.workflow_permit()?;
         Ok(self.inner.parameters.write_readback(id, value)?)
     }
     fn require_refresh(&self, results: Vec<(u16, Result<ParameterValue, ParameterServiceError>)>) -> Result<(), ApplicationError> {
@@ -173,6 +215,7 @@ impl ApplicationSession {
             "ACTION_MOTOR_DISABLE" => return self.motor_disable(),
             _ => {}
         }
+        let _workflow = self.workflow_permit()?;
         let ticket = self.inner.motor_gate.ticket();
         let _command = self.inner.motor_gate.start(ticket)
             .map_err(|message| ApplicationError::Motion(message.to_owned()))?;
@@ -190,6 +233,7 @@ impl ApplicationSession {
         let action = self.inner.schema.action_by_key(key).ok_or_else(|| ApplicationError::UnknownAction(key.to_owned()))?;
         if action.symbol == "ACTION_MOTOR_STOP" { return self.motor_stop(); }
         if action.symbol == "ACTION_MOTOR_DISABLE" { return self.motor_disable(); }
+        let _workflow = self.workflow_permit()?;
         let ticket = self.inner.motor_gate.ticket();
         let _command = self.inner.motor_gate.start(ticket)
             .map_err(|message| ApplicationError::Motion(message.to_owned()))?;
@@ -220,29 +264,33 @@ impl ApplicationSession {
         MotorActionService::from_shared(self.inner.session.clone(), self.inner.schema.clone(), self.inner.parameters.clone())
     }
     pub fn identification_start(&self, kind: IdentificationKind, allow_enable: bool) -> Result<IdentificationStart, ApplicationError> {
+        let _workflow = self.workflow_permit()?;
         let ticket = self.inner.motor_gate.ticket();
         let _command = self.inner.motor_gate.start(ticket)
             .map_err(|message| ApplicationError::Motion(message.to_owned()))?;
         self.ensure_no_tuning()?;
-        let result = self.motor_actions().identification_start(kind, allow_enable)?;
+        let result = self.motor_actions_at(ticket).identification_start(kind, allow_enable)?;
         if matches!(&result, IdentificationStart::Started(_)) { self.refresh_motor_context()?; }
         Ok(result)
     }
     pub fn identification_apply(&self) -> Result<ActionHandle, ApplicationError> {
+        let _workflow = self.workflow_permit()?;
         let handle = self.motor_actions().identification_apply()?;
         self.refresh_after_immediate_action()?;
         Ok(handle)
     }
     pub fn motor_enable(&self) -> Result<ActionHandle, ApplicationError> {
+        let _workflow = self.workflow_permit()?;
         let ticket = self.inner.motor_gate.ticket();
         let _command = self.inner.motor_gate.start(ticket)
             .map_err(|message| ApplicationError::Motion(message.to_owned()))?;
         self.ensure_no_tuning()?;
-        let handle = self.motor_actions().enable()?;
+        let handle = self.motor_actions_at(ticket).enable()?;
         self.refresh_motor_context()?;
         Ok(handle)
     }
     pub fn motor_stop(&self) -> Result<ActionHandle, ApplicationError> {
+        if self.workflow_owner.is_none() { self.inner.workflow_access.revoke(); }
         // Cancel delayed Run before sending Stop, including while PREPARING.
         self.inner.motor_gate.cancel();
         let cancelled = self.request_tuning_stop();
@@ -255,6 +303,7 @@ impl ApplicationSession {
         Ok(handle)
     }
     pub fn motor_disable(&self) -> Result<ActionHandle, ApplicationError> {
+        if self.workflow_owner.is_none() { self.inner.workflow_access.revoke(); }
         self.inner.motor_gate.cancel();
         let cancelled = self.request_tuning_stop();
         let handle = {
@@ -266,17 +315,19 @@ impl ApplicationSession {
         Ok(handle)
     }
     pub fn phase_search_start(&self) -> Result<ActionHandle, ApplicationError> {
+        let _workflow = self.workflow_permit()?;
         let ticket = self.inner.motor_gate.ticket();
         let _command = self.inner.motor_gate.start(ticket)
             .map_err(|message| ApplicationError::Motion(message.to_owned()))?;
         self.ensure_no_tuning()?;
-        let handle = self.motor_actions().phase_search_start()?;
+        let handle = self.motor_actions_at(ticket).phase_search_start()?;
         self.refresh_motor_context()?;
         Ok(handle)
     }
     pub fn is_same_session(&self, other: &Self) -> bool { Arc::ptr_eq(&self.inner, &other.inner) }
 
     pub fn disconnect(&self) -> Result<(), ApplicationError> {
+        self.inner.workflow_access.close();
         let deadline = Instant::now() + MOTOR_STOP_TIMEOUT;
         self.inner.motor_gate.close();
         let mut failures = Vec::new();
@@ -319,12 +370,14 @@ impl ApplicationSession {
         ConfigService::from_shared(self.inner.session.clone(), self.inner.schema.clone(), self.inner.parameters.clone()).save_available()
     }
     pub fn config_save(&self) -> Result<ActionHandle, ApplicationError> {
+        let _workflow = self.workflow_permit()?;
         // AxDr executes NVS_Storage_Save_All before replying. There is no later
         // ACTION_COMPLETE for Save; a rejected/failed response is propagated.
         Ok(ConfigService::from_shared(self.inner.session.clone(), self.inner.schema.clone(), self.inner.parameters.clone()).save()?)
     }
     pub fn motion_get(&self) -> MotionConfig { self.inner.motion.get() }
     pub fn motion_set(&self, config: MotionConfig) -> Result<MotionConfig, ApplicationError> {
+        let _workflow = self.workflow_permit()?;
         let current = self.inner.motion.get();
         let reset_repeat = current.repeat != config.repeat || current.position_command != config.position_command
             || current.incremental_delta_turn != config.incremental_delta_turn;
@@ -339,6 +392,7 @@ impl ApplicationSession {
         self.motion_run_at(self.inner.motor_gate.ticket(), None)
     }
     fn motion_run_at(&self, ticket: u64, experiment: Option<u64>) -> Result<ActionHandle, ApplicationError> {
+        let _workflow = self.workflow_permit()?;
         let _command = self.inner.motor_gate.start(ticket)
             .map_err(|message| ApplicationError::Motion(message.to_owned()))?;
         {
@@ -377,7 +431,7 @@ impl ApplicationSession {
                 .ok_or_else(|| ApplicationError::Motion("Repeat position endpoints are not initialized".to_owned()))?;
             repeat_target = Some((target, target_is_b));
         }
-        let handle = self.inner.motion.run(&self.inner.parameters, &self.inner.session, repeat_target.map(|(target, _)| target))
+        let handle = self.inner.motion.run_checked(&self.inner.parameters, &self.inner.session, repeat_target.map(|(target, _)| target), || self.workflow_checkpoint(ticket))
             .map_err(ApplicationError::Motion)?;
         if let Some((_, target_is_b)) = repeat_target {
             self.inner.motion_repeat.lock().map_err(|_| ApplicationError::Poisoned)?.pending_target_is_b = Some(target_is_b);
@@ -387,7 +441,7 @@ impl ApplicationSession {
                 while let Ok(event) = events.recv() {
                     let SessionEvent::ActionCompleted { handle: completed, status } = event else { continue; };
                     if completed != handle { continue; }
-                    if let Some(inner) = weak.upgrade() { let _ = (ApplicationSession { inner }).motion_run_completed(status); }
+                    if let Some(inner) = weak.upgrade() { let _ = (ApplicationSession { inner, workflow_owner: None, workflow_cleanup: false }).motion_run_completed(status); }
                     break;
                 }
             });
@@ -416,15 +470,21 @@ impl ApplicationSession {
         Ok(slot.as_ref().ok_or(ApplicationError::ScopeNotConfigured)?.base_ids()?)
     }
     pub fn scope_configure(&self, selections: &[ScopeSelection], history: Duration, _config_id: u8) -> Result<MixedScopeConfig, ApplicationError> {
+        let _workflow = self.workflow_permit()?;
         self.runtime_start()?;
         self.with_scope(|source| source.configure(View::Scope, selections, history))
     }
-    pub fn scope_live(&self) -> Result<(), ApplicationError> { self.with_scope(|source| source.live(View::Scope)) }
+    pub fn scope_live(&self) -> Result<(), ApplicationError> {
+        let _workflow = self.workflow_permit()?; self.with_scope(|source| source.live(View::Scope)) }
     pub fn scope_resume(&self) -> Result<(), ApplicationError> { self.scope_live() }
-    pub fn scope_pause(&self) -> Result<(), ApplicationError> { self.with_scope(|source| source.stop(View::Scope, StreamState::Paused)) }
-    pub fn scope_stop(&self) -> Result<(), ApplicationError> { self.with_scope(|source| source.stop(View::Scope, StreamState::Stopped)) }
-    pub fn scope_clear(&self) -> Result<(), ApplicationError> { self.with_scope(|source| source.clear(View::Scope)) }
-    pub fn scope_capture(&self, duration: Duration) -> Result<(), ApplicationError> { self.with_scope(|source| source.capture(View::Scope, duration)) }
+    pub fn scope_pause(&self) -> Result<(), ApplicationError> {
+        let _workflow = self.workflow_permit()?; self.with_scope(|source| source.stop(View::Scope, StreamState::Paused)) }
+    pub fn scope_stop(&self) -> Result<(), ApplicationError> {
+        let _workflow = self.workflow_permit()?; self.with_scope(|source| source.stop(View::Scope, StreamState::Stopped)) }
+    pub fn scope_clear(&self) -> Result<(), ApplicationError> {
+        let _workflow = self.workflow_permit()?; self.with_scope(|source| source.clear(View::Scope)) }
+    pub fn scope_capture(&self, duration: Duration) -> Result<(), ApplicationError> {
+        let _workflow = self.workflow_permit()?; self.with_scope(|source| source.capture(View::Scope, duration)) }
     pub fn scope_status(&self) -> Result<MixedScopeStatus, ApplicationError> { self.with_scope(|source| source.status(View::Scope)) }
     pub fn scope_snapshot_tail(&self, window: Duration) -> Result<MixedScopeSnapshot, ApplicationError> { self.scope_snapshot_window(window, Duration::ZERO) }
     pub fn scope_snapshot_window(&self, window: Duration, end_offset: Duration) -> Result<MixedScopeSnapshot, ApplicationError> {
@@ -462,6 +522,7 @@ impl ApplicationSession {
         Ok(Duration::from_secs_f64(seconds.max(TUNING_PRE_CAPTURE.as_secs_f64() + TUNING_POST_CAPTURE.as_secs_f64())))
     }
     pub fn tuning_experiment_start(&self, selections: &[ScopeSelection]) -> Result<TuningExperimentStatus, ApplicationError> {
+        let _workflow = self.workflow_permit()?;
         let ticket = self.inner.motor_gate.ticket();
         let generation = {
             let _command = self.inner.motor_gate.start(ticket)

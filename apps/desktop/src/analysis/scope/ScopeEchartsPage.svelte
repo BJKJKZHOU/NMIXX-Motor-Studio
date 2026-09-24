@@ -1,6 +1,7 @@
 <script lang="ts">
   import { onDestroy, onMount } from "svelte";
   import ScopeEchartsView from "./ScopeEchartsView.svelte";
+  import { scopeOperation, type ScopeOperation } from "../../automation/operations";
   import type { ConnectionInfo, PlotChannel } from "../../connection/types";
   import { subscribeRefresh } from "../../refreshScheduler";
   import { configureScope, readScopeSnapshot, startScope, stopScope } from "./api";
@@ -54,6 +55,21 @@
     selectedChannels: selectedIds.size,
     lostFrames: snapshot?.lostFrames ?? 0,
   });
+
+  // Automation changes the same Application record. Mirror its canonical
+  // selection; do not turn this notification into another device reconfigure.
+  $: adoptScopeOperation($scopeOperation, connection);
+  function adoptScopeOperation(operation: ScopeOperation | undefined, session: ConnectionInfo | undefined) {
+    if (!operation || !session) return;
+    const config = operation.config;
+    selectedIds = new Set(config.channels.map((channel) => channel.id));
+    rates = new Map(config.channels.map((channel) => [channel.id, channel.rate]));
+    activeChannelId = config.channels[0]?.id;
+    configured = true;
+    configurationDirty = false;
+    viewRevision += 1;
+    scheduleViewRefresh(0);
+  }
 
   function defaultRate(channel: PlotChannel): ScopeRate {
     if (connection?.runtimeChannelIds?.includes(channel.id)) return "normal";

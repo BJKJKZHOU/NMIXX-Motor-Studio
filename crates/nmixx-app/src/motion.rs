@@ -107,11 +107,12 @@ impl MotionService {
         }
     }
 
-    pub(crate) fn run(
+    pub(crate) fn run_checked(
         &self,
         parameters: &ParameterService,
         session: &DeviceSession,
         position_target_override: Option<f64>,
+        checkpoint: impl Fn() -> Result<(), String>,
     ) -> Result<ActionHandle, String> {
         let config = self.get();
         validate_host_config(&config)?;
@@ -126,9 +127,11 @@ impl MotionService {
                 Some(current + config.incremental_delta_turn)
             } else { None };
             if let Some(target) = target_turns {
+                checkpoint()?;
                 write_by_symbol(parameters, "PARAM_TARGET_POSITION", ParameterValue::Position(turns_to_position(target)?))?;
             }
         }
+        checkpoint()?;
         start_action(parameters, session, "ACTION_MOTOR_RUN")
     }
 }

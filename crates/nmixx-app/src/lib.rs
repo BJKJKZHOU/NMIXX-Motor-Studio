@@ -5,6 +5,7 @@
 //! application-facing access to that device.
 
 mod application;
+mod automation;
 mod config_service;
 mod motor_actions;
 mod preflight;
@@ -21,13 +22,14 @@ mod session;
 mod stream;
 mod stream_pipeline;
 
+pub use automation::{AutomationApi, AutomationRuntime, AutomationSnapshot, AutomationState, LogLine, OperationEffect, RunControl, ScriptSpec, SessionWorkflowApi, DIAGNOSIS_SCRIPT, MOTION_SCRIPT};
 pub use application::{
     ApplicationError, ApplicationSession, TuningExperimentSnapshot, TuningExperimentState,
     TuningExperimentStatus,
 };
 pub use config_service::{ConfigService, ConfigServiceError};
 pub use connection::DEFAULT_USB_BAUD;
-pub use parameter_service::{ParameterService, ParameterServiceError};
+pub use parameter_service::{ParameterService, ParameterServiceError, RuntimeChannelProgress, RuntimeStreamProgress};
 pub use motion::{MotionConfig, MotionMode, MotionPreview, MotionService, PositionCommand};
 pub use motion_capabilities::MotionCapabilities;
 pub use motor_actions::{IdentificationStart, MotorActionError, MotorActionService};

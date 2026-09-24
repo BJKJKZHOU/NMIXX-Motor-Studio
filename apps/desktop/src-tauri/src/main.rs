@@ -1,3 +1,4 @@
+mod automation_commands;
 use std::sync::Mutex;
 use std::time::Duration;
 use nmixx_app::{
@@ -10,7 +11,7 @@ use serde::{Deserialize, Serialize};
 use tauri::{Emitter, State};
 
 #[derive(Default)]
-struct DesktopState { app: Option<ApplicationSession>, port: Option<String> }
+struct DesktopState { app: Option<ApplicationSession>, port: Option<String>, automation: nmixx_app::AutomationRuntime, disconnecting: bool }
 #[derive(Debug, Serialize)]
 #[serde(rename_all = "camelCase")]
 struct PlotChannelDto { id: u16, label: String, unit: Option<String>, supports_fast: bool, supports_normal: bool, fast_scale: Option<f32> }
@@ -245,18 +246,30 @@ async fn device_disconnect(state: State<'_, Mutex<DesktopState>>) -> Result<(), 
     disconnect_application(&state)
 }
 fn disconnect_application(state: &State<'_, Mutex<DesktopState>>) -> Result<(), String> {
-    let app = state.lock().map_err(|_| "desktop state is poisoned".to_owned())?.app.clone();
-    let Some(app) = app else { return Ok(()); };
-    app.disconnect().map_err(|error| error.to_string())?;
+    let (app, automation) = {
+        let mut guard = state.lock().map_err(|_| "desktop state is poisoned".to_owned())?;
+        if guard.disconnecting { return Err("Device disconnection is already in progress".to_owned()); }
+        let Some(app) = guard.app.clone() else { return Ok(()); };
+        guard.disconnecting = true;
+        (app, guard.automation.clone())
+    };
+    // Request cancellation without waiting ahead of the existing motor teardown.
+    // A stalled diagnostic must not delay the Disconnect motor-stop request.
+    let mut failures = Vec::new();
+    if let Err(error) = automation.request_cancel() { failures.push(error); }
+    if let Err(error) = app.disconnect() { failures.push(error.to_string()); }
+    if let Err(error) = automation.cancel_and_wait(Duration::from_secs(10)) { failures.push(error); }
+    let result = if failures.is_empty() { Ok(()) } else { Err(failures.join("; ")) };
     let removed = {
         let mut guard = state.lock().map_err(|_| "desktop state is poisoned".to_owned())?;
-        if guard.app.as_ref().is_some_and(|current| current.is_same_session(&app)) {
+        guard.disconnecting = false;
+        if result.is_ok() && guard.app.as_ref().is_some_and(|current| current.is_same_session(&app)) {
             guard.port = None;
             guard.app.take()
         } else { None }
     };
     drop(removed);
-    Ok(())
+    result
 }
 #[tauri::command]
 fn parameter_list(state: State<'_, Mutex<DesktopState>>) -> Result<Vec<ParameterMetadataDto>, String> { Ok(application(&state)?.parameter_metadata().iter().map(Into::into).collect()) }
@@ -467,6 +480,9 @@ fn scope_snapshot(state: State<'_, Mutex<DesktopState>>, window_seconds: Option<
 fn main() {
     tauri::Builder::default().manage(Mutex::new(DesktopState::default()))
         .invoke_handler(tauri::generate_handler![
+            automation_commands::automation_builtin, automation_commands::automation_open_script,
+            automation_commands::automation_start, automation_commands::automation_snapshot,
+            automation_commands::automation_cancel, automation_commands::automation_export_log,
             device_list, device_connect, device_disconnect, parameter_list, parameter_read, parameter_read_many,
             parameter_cached_many, parameter_refresh_all, parameter_write, phase_search_preflight,
             identification_preflight, identification_start, identification_apply, action_list, action_start,

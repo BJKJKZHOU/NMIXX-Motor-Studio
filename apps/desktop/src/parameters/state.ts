@@ -150,6 +150,14 @@ export function commitParameter(id: number, value: ParameterValue): Promise<Para
   });
 }
 
+/** Adopt an immutable baseline captured by a successful Application Save.
+ * Re-observe current values so writes made after Save remain highlighted. */
+export function acceptSavedParameterBaseline(results: ParameterReadResult[]): void {
+  if (!get(mutable).connected) return;
+  commitParameterPersistence(results);
+  observeParameterResults(Object.values(get(mutable).entries));
+}
+
 export async function refreshParameters(): Promise<void> {
   const token = epoch;
   requireSession(token);

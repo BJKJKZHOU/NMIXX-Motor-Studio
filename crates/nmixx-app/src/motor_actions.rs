@@ -1,4 +1,5 @@
 use thiserror::Error;
+use std::sync::Arc;
 
 use crate::{
     ActionHandle, DeviceSession, HostSchema, IdentificationKind, ParameterService,
@@ -24,6 +25,8 @@ const IDENT_APPLY: &str = "ACTION_IDENT_APPLY";
 
 #[derive(Debug, Error)]
 pub enum MotorActionError {
+    #[error("The pending motor operation was cancelled")]
+    Cancelled,
     #[error("required parameter '{0}' is not exposed by the HostSchema")]
     MissingParameter(String),
     #[error("required action '{0}' is not exposed by the HostSchema")]
@@ -58,12 +61,13 @@ pub struct MotorActionService {
     session: DeviceSession,
     schema: HostSchema,
     parameters: ParameterService,
+    checkpoint: Option<Arc<dyn Fn() -> bool + Send + Sync>>,
 }
 
 impl MotorActionService {
     pub fn new(session: DeviceSession, schema: HostSchema) -> Self {
         let parameters = ParameterService::new(session.clone(), schema.clone());
-        Self { session, schema, parameters }
+        Self { session, schema, parameters, checkpoint: None }
     }
 
     pub(crate) fn from_shared(
@@ -71,7 +75,15 @@ impl MotorActionService {
         schema: HostSchema,
         parameters: ParameterService,
     ) -> Self {
-        Self { session, schema, parameters }
+        Self { session, schema, parameters, checkpoint: None }
+    }
+
+    pub(crate) fn with_checkpoint(mut self, checkpoint: Arc<dyn Fn() -> bool + Send + Sync>) -> Self {
+        self.checkpoint = Some(checkpoint);
+        self
+    }
+    fn check_dispatch(&self) -> Result<(), MotorActionError> {
+        if self.checkpoint.as_ref().is_some_and(|check| !check()) { Err(MotorActionError::Cancelled) } else { Ok(()) }
     }
 
     /// Start the global motor Enable action.
@@ -140,6 +152,7 @@ impl MotorActionService {
         let current_mode = read_u8(&self.parameters, mode)?;
 
         if current_state == enabled && current_mode != ident_mode {
+            self.check_dispatch()?;
             self.session.action_start(disable.id)?;
             current_state = read_u8(&self.parameters, state)?;
             if current_state != disabled {
@@ -148,8 +161,10 @@ impl MotorActionService {
         }
 
         if current_state == disabled {
+            self.check_dispatch()?;
             self.parameters.write(mode.id, ParameterValue::U8(ident_mode))?;
 
+            self.check_dispatch()?;
             self.session.action_start(enable.id)?;
 
             current_state = read_u8(&self.parameters, state)?;
@@ -168,6 +183,7 @@ impl MotorActionService {
             .action_by_key(action_key)
             .ok_or_else(|| MotorActionError::MissingAction(action_key.to_owned()))?;
 
+        self.check_dispatch()?;
         Ok(IdentificationStart::Started(self.session.action_start(action.id)?))
     }
 
@@ -205,14 +221,17 @@ impl MotorActionService {
             .action_by_key(MOTOR_RUN)
             .ok_or_else(|| MotorActionError::MissingAction(MOTOR_RUN.to_owned()))?;
 
+        self.check_dispatch()?;
         self.parameters.write(mode.id, ParameterValue::U8(phase_search))?;
 
         // Enable is an immediate Action: a successful action_start response means
         // firmware has already executed Motor_Enable(). ACTION_COMPLETE is only
         // emitted for the finite phase-search operation itself.
+        self.check_dispatch()?;
         self.session.action_start(enable.id)?;
 
         // The returned handle represents the finite phase-search operation.
+        self.check_dispatch()?;
         Ok(self.session.action_start(run.id)?)
     }
 
@@ -221,6 +240,7 @@ impl MotorActionService {
             .schema
             .action_by_key(key)
             .ok_or_else(|| MotorActionError::MissingAction(key.to_owned()))?;
+        self.check_dispatch()?;
         Ok(self.session.action_start(action.id)?)
     }
 }

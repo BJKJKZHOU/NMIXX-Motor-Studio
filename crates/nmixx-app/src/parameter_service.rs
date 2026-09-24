@@ -43,13 +43,23 @@ pub enum ParameterServiceError {
     Session(#[from] SessionError),
 }
 
+#[derive(Debug, Clone, serde::Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct RuntimeChannelProgress {
+    pub id: u16, pub symbol: String, pub received_batches: u64, pub age_ms: u64,
+}
+#[derive(Debug, Clone, serde::Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct RuntimeStreamProgress { pub channels: Vec<RuntimeChannelProgress> }
+
 struct StreamUpdates {
+    observations: HashMap<u16, (u64, Instant)>,
     ids: HashSet<u16>,
     dirty: HashSet<u16>,
     published: Instant,
 }
 impl Default for StreamUpdates {
-    fn default() -> Self { Self { ids: HashSet::new(), dirty: HashSet::new(), published: Instant::now() } }
+    fn default() -> Self { Self { ids: HashSet::new(), dirty: HashSet::new(), published: Instant::now(), observations: HashMap::new() } }
 }
 
 #[derive(Clone)]
@@ -165,6 +175,9 @@ impl ParameterService {
         for &(id, value) in samples {
             let meta = self.metadata(id)?;
             if meta.access.contains('w') { continue; }
+            let observation = stream.observations.entry(id).or_insert((0, Instant::now()));
+            observation.0 = observation.0.saturating_add(1);
+            observation.1 = Instant::now();
             let Some(value) = stream_scalar(meta.parameter_type()?, value) else { continue; };
             stream.ids.insert(id);
             entries.push((id, value));
@@ -183,6 +196,18 @@ impl ParameterService {
         drop(stream);
         self.notify_changed(notify);
         Ok(())
+    }
+
+    /// Reception evidence is independent of value changes and rolling-buffer capacity.
+    /// Counts received batches, not firmware sample rate; never starts a device read.
+    pub fn runtime_stream_progress(&self) -> Result<RuntimeStreamProgress, ParameterServiceError> {
+        let stream = self.stream.lock().map_err(|_| ParameterServiceError::CachePoisoned)?;
+        let mut channels = stream.observations.iter().map(|(&id, &(received_batches, received))| {
+            Ok(RuntimeChannelProgress { id, symbol: self.metadata(id)?.symbol.clone(), received_batches,
+                age_ms: received.elapsed().as_millis().min(u64::MAX as u128) as u64 })
+        }).collect::<Result<Vec<_>, ParameterServiceError>>()?;
+        channels.sort_by_key(|channel| channel.id);
+        Ok(RuntimeStreamProgress { channels })
     }
 
     pub(crate) fn invalidate_stream_values(&self, message: &str) {

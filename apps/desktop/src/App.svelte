@@ -1,6 +1,8 @@
 <script lang="ts">
   import { onDestroy, onMount } from "svelte";
   import ConnectionPage from "./connection/ConnectionPage.svelte";
+  import AutomationHost from "./automation/AutomationHost.svelte";
+  import { startAutomationTracking, clearAutomationProjection } from "./automation/state";
   import { disconnectDevice } from "./connection/api";
   import type { ConnectionInfo } from "./connection/types";
   import ScopePage from "./analysis/scope/ScopeEchartsPage.svelte";
@@ -67,6 +69,7 @@
   }
   async function setConnection(next: ConnectionInfo | undefined) {
     const token = ++connectionGeneration;
+    clearAutomationProjection();
     connection = next;
     errorText = ""; parameterSaveAvailable = false; saveFeedback = "idle";
     if (saveFeedbackTimer) clearTimeout(saveFeedbackTimer);
@@ -117,7 +120,9 @@
       const storedPath = localStorage.getItem(SCHEMA_PATH_STORAGE_KEY);
       if (storedPath?.trim()) connectionSchemaPath = storedPath;
     } catch { /* Use the development default when storage is unavailable. */ }
-    return pollParameters(POLLED_SYMBOLS, 500, setError);
+    const stopStatus = pollParameters(POLLED_SYMBOLS, 500, setError);
+    const stopAutomation = startAutomationTracking(() => !!connection);
+    return () => { stopStatus(); stopAutomation(); };
   });
   onDestroy(() => {
     ++connectionGeneration;
@@ -170,6 +175,7 @@
     {:else if activePage === "tuning"}<div class="domain-page-container"><ControlTuningPage {connection} {motorState} onError={setError} /></div>
     {:else if activePage === "motion"}<div class="domain-page-container"><MotionPage capabilities={connection?.motion} {motorState} onError={setError} /></div>
     {:else if activePage === "parameters"}<div class="domain-page-container"><ParameterTablePage {connection} onError={setError} /></div>
+    {:else if activePage === "automation"}<div class="domain-page-container"><AutomationHost connected={!!connection} /></div>
     {:else if activePage !== "analysis"}
       <section class="page-toolbar"><div class="page-title">{pageTitle(activePage).toUpperCase()}</div></section>
       <section class="placeholder-page"><div class="placeholder-title">{pageTitle(activePage)}</div><div class="placeholder-copy">This workflow page is reserved for the corresponding application domain. Device behavior will be added through the shared Application API rather than implemented in the shell.</div></section>
