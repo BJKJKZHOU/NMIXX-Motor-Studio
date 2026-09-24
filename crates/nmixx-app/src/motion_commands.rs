@@ -75,6 +75,7 @@ impl ApplicationSession {
         require_optional_positive(request.max_speed_rad_s, "Max speed")?;
         require_optional_positive(request.acceleration_rad_s2, "Acceleration")?;
         require_optional_positive(request.deceleration_rad_s2, "Deceleration")?;
+        self.require_motor_enabled()?;
         self.require_motion_mode(MotionMode::Speed)?;
 
         self.write_motion_f32("PARAM_TARGET_SPEED", request.target_rad_s)?;
@@ -98,29 +99,30 @@ impl ApplicationSession {
         require_optional_positive(request.max_speed_rad_s, "Max speed")?;
         require_optional_positive(request.acceleration_rad_s2, "Acceleration")?;
         require_optional_positive(request.deceleration_rad_s2, "Deceleration")?;
+        self.require_motor_enabled()?;
         self.require_motion_mode(MotionMode::Position)?;
+
+        let mut config = self.motion_get();
+        config.position_command = request.command;
+        config.repeat = false;
+        if request.command == PositionCommand::Incremental {
+            config.incremental_delta_turn = request.target_turn;
+        } else {
+            config.incremental_delta_turn = 0.0;
+        }
+        self.motion_set(config)?;
 
         self.write_optional_motion_f32("PARAM_MOTION_WM_MAX", request.max_speed_rad_s)?;
         self.write_optional_motion_f32("PARAM_MOTION_WM_ACC", request.acceleration_rad_s2)?;
         self.write_optional_motion_f32("PARAM_MOTION_WM_DEC", request.deceleration_rad_s2)?;
 
-        let mut config = self.motion_get();
-        config.position_command = request.command;
-        config.repeat = false;
-
-        match request.command {
-            PositionCommand::Absolute => {
-                self.write_motion_value(
-                    "PARAM_TARGET_POSITION",
-                    ParameterValue::Position(turns_to_position(request.target_turn)?),
-                )?;
-            }
-            PositionCommand::Incremental => {
-                config.incremental_delta_turn = request.target_turn;
-            }
+        if request.command == PositionCommand::Absolute {
+            self.write_motion_value(
+                "PARAM_TARGET_POSITION",
+                ParameterValue::Position(turns_to_position(request.target_turn)?),
+            )?;
         }
 
-        self.motion_set(config)?;
         self.motion_run()
     }
 
@@ -176,6 +178,17 @@ impl ApplicationSession {
 
             thread::sleep(Duration::from_millis(20));
         }
+    }
+
+    fn require_motor_enabled(&self) -> Result<(), ApplicationError> {
+        let state = self.read_required_u8("PARAM_MOTOR_STATE")?;
+        let symbol = self.enum_symbol("PARAM_MOTOR_STATE", state)?;
+        if symbol != "ENABLED" {
+            return Err(ApplicationError::Motion(format!(
+                "motion Run requires ENABLED state, current state is {symbol}"
+            )));
+        }
+        Ok(())
     }
 
     fn require_motion_mode(&self, expected: MotionMode) -> Result<(), ApplicationError> {
