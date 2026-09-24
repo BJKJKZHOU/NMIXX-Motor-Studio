@@ -9,7 +9,7 @@
     "build": "npm run check && vite build",
     "tauri": "tauri",
     "test:parameters": "node scripts/test-parameters.mjs",
-    "test:automation": "node --test tests/automation-view.test.cjs",
+    "test:automation": "node --test tests/automation-view.test.cjs tests/automation-assets.test.cjs",
     "check:parameter-syntax": "node scripts/check-parameter-syntax.mjs",
     "test:startup": "python3 scripts/test-startup.py",
     "test:plots": "node --test tests/scope-window.test.cjs tests/motion-plot.test.cjs tests/scope-channel-reactivity.test.cjs"
