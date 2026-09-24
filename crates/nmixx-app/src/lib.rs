@@ -12,6 +12,7 @@ mod preflight;
 mod connection;
 mod parameter_service;
 mod motion;
+mod motion_commands;
 mod mixed_scope;
 mod motion_capabilities;
 mod plot_capabilities;
@@ -31,6 +32,7 @@ pub use config_service::{ConfigService, ConfigServiceError};
 pub use connection::DEFAULT_USB_BAUD;
 pub use parameter_service::{ParameterService, ParameterServiceError, RuntimeChannelProgress, RuntimeStreamProgress};
 pub use motion::{MotionConfig, MotionMode, MotionPreview, MotionService, PositionCommand};
+pub use motion_commands::{MotionRuntimeStatus, PositionMotionRequest, SpeedMotionRequest};
 pub use motion_capabilities::MotionCapabilities;
 pub use motor_actions::{IdentificationStart, MotorActionError, MotorActionService};
 pub use mixed_scope::{
