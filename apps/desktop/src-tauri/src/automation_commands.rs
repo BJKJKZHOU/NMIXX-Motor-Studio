@@ -1,7 +1,7 @@
 use std::io::Read;
 use std::path::Path;
 use std::sync::Arc;
-use nmixx_app::{AutomationSnapshot, ScriptSpec, SessionWorkflowApi, DIAGNOSIS_SCRIPT, MOTION_SCRIPT};
+use nmixx_app::{AutomationSnapshot, ScriptSpec, SessionWorkflowApi, DIAGNOSIS_SCRIPT, ENCODER_TURN_SCRIPT, MOTION_SCRIPT};
 use serde::Serialize;
 use tauri::State;
 use crate::DesktopState;
@@ -14,6 +14,7 @@ pub struct ScriptDocument { name: String, source: String, working_directory: Opt
 pub fn automation_builtin(kind: Option<String>) -> Result<ScriptDocument, String> {
     let (name, source) = match kind.as_deref().unwrap_or("diagnosis") {
         "diagnosis" => ("runtime_diagnosis.py", DIAGNOSIS_SCRIPT),
+        "encoder" => ("encoder_turn_diagnosis.py", ENCODER_TURN_SCRIPT),
         "motion" => ("motion_workflow.py", MOTION_SCRIPT),
         _ => return Err("Unknown built-in workflow".into()),
     };

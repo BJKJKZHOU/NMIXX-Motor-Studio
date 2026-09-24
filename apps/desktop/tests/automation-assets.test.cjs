@@ -25,6 +25,7 @@ test("all built-in Automation Python assets parse with Python 3", () => {
   const files = [
     "nmixx.py",
     "runtime_diagnosis.py",
+    "encoder_turn_diagnosis.py",
     "motion_workflow.py",
     "parameter_workflow.py",
   ].map((name) => path.join(root, name));

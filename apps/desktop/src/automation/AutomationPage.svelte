@@ -37,6 +37,7 @@
     <label>Script path <input class="compact-input" bind:value={$scriptSettings.path} placeholder="/home/user/tests/diagnosis.py" disabled={busy || activeTask} /></label>
     <button class="tool-button" disabled={busy || activeTask || !$scriptSettings.path.trim()} onclick={() => void perform(loadDocument)}>Open file</button>
     <button class="tool-button" disabled={busy || activeTask} onclick={() => void perform(() => selectBuiltin("diagnosis"))}>Runtime diagnosis</button>
+    <button class="tool-button" disabled={busy || activeTask} onclick={() => void perform(() => selectBuiltin("encoder"))}>Encoder turn diagnosis</button>
     <button class="tool-button" disabled={busy || activeTask} onclick={() => void perform(() => selectBuiltin("motion"))}>Motion example</button>
     <label>Interpreter <input class="compact-input" bind:value={$scriptSettings.program} disabled={busy || activeTask} /></label>
     <label>Timeout (s) <input class="compact-input timeout" type="number" min="1" max="3600" step="1" bind:value={$scriptSettings.timeoutSeconds} disabled={busy || activeTask} /></label>
