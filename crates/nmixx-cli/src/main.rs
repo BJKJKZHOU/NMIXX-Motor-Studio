@@ -127,7 +127,7 @@ enum MotionCommand {
     Position {
         /// Absolute target turns or incremental delta turns, selected by --command.
         target_turn: f64,
-        #[arg(long, value_enum, default_value_t = CliPositionCommand::Incremental)]
+        #[arg(long, value_enum, default_value = "incremental")]
         command: CliPositionCommand,
         #[arg(long)]
         max_speed: Option<f32>,
