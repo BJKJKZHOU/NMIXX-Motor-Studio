@@ -31,7 +31,7 @@ function harness() {
     setTimeout(cb) { const id = ++nextTimer; timers.set(id, cb); return id; },
     clearTimeout(id) { timers.delete(id); },
     // These are normally declared by Svelte's legacy reactive transformation.
-    channels: [], running: false,
+    channels: [], visibleChannels: [], running: false, $scopeOperation: undefined,
   });
   const output = ts.transpileModule(source, { compilerOptions: {
     target: ts.ScriptTarget.ES2022, module: ts.ModuleKind.CommonJS,

@@ -328,13 +328,11 @@ fn read_pipe(pipe: impl Read, kind: &'static str, tx: mpsc::SyncSender<Output>) 
     let mut reader = BufReader::new(pipe);
     loop {
         let mut buffer = Vec::new();
-        match (&mut reader).take(MAX_LINE as u64 + 1).read_until(b'
-', &mut buffer) {
+        match (&mut reader).take(MAX_LINE as u64 + 1).read_until(b'\n', &mut buffer) {
             Ok(0) => break,
             Ok(_) if buffer.len() > MAX_LINE => { let _ = tx.send(Output::Error("Script output line exceeds 1 MiB".to_owned())); return; }
             Ok(_) => {
-                let line = String::from_utf8_lossy(&buffer).trim_end_matches(['
-', '']).to_owned();
+                let line = String::from_utf8_lossy(&buffer).trim_end_matches(['\n', '\r']).to_owned();
                 if tx.send(Output::Line(kind, line)).is_err() { return; }
             }
             Err(error) => { let _ = tx.send(Output::Error(error.to_string())); return; }
@@ -425,8 +423,7 @@ fn run(task: &Arc<Task>, spec: ScriptSpec, api: &dyn AutomationApi, control: &Ru
                         if task.cancel.load(Ordering::Acquire) { continue; }
                         let mut bytes = serde_json::to_vec(&response).map_err(|e| e.to_string())?;
                         if bytes.len() > MAX_REPLY { return Err("Application response exceeds 4 MiB".to_owned()); }
-                        bytes.push(b'
-');
+                        bytes.push(b'\n');
                         input.write_all(&bytes).and_then(|_| input.flush()).map_err(|e| e.to_string())?;
                     } else { task.log("stdout", line); }
                 }
