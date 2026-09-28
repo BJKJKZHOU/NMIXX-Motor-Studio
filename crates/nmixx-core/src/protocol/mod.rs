@@ -26,7 +26,8 @@ pub use plot::{
     parse_plot_stop_response,
 };
 pub use router::{
-    ActionCompleteFrame, DecodeError, InboundFrame, ResponseFrame, decode_inbound,
+    ActionCompleteFrame, DecodeError, InboundFrame, ProtectionEventFrame, ResponseFrame, decode_inbound,
+    parse_protection_event,
 };
 pub use status::AxdrStatus;
 pub use stream::{

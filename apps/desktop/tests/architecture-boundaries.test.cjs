@@ -76,3 +76,15 @@ test("Limits displays firmware Effective values instead of deriving an active so
   assert.doesNotMatch(limits, /activeSource\s*\(/);
   assert.doesNotMatch(limits, /user\s*<=\s*hardware/);
 });
+
+
+test("Events and Problems use the shared Application problem projection", () => {
+  const shell = source("App.svelte");
+  const events = source("events/EventsPage.svelte");
+  assert.match(shell, /EventsPage/);
+  assert.match(shell, /problemSnapshot/);
+  assert.doesNotMatch(shell, /Problems service is not implemented yet/);
+  assert.doesNotMatch(events, /@tauri-apps\/api\/core|\binvoke\s*\(/);
+  assert.match(events, /recheckProblems/);
+  assert.match(events, /clearProtection/);
+});

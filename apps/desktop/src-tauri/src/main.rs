@@ -4,7 +4,7 @@ use std::time::Duration;
 use nmixx_app::{
     ActionCompletionWaiter, ActionHandle, ApplicationSession, AxdrStatus, CommissioningCapabilities, DEFAULT_USB_BAUD, HostSchema,
     IdentificationKind, IdentificationStart, MixedScopeSeries, MotionCapabilities, MotionConfig, MotionPreview, MotionService,
-    ParameterMetadata, ParameterValue, PositionValue, PreflightDomain, RangeMetadata,
+    ParameterMetadata, ParameterValue, PositionValue, PreflightDomain, ProblemSnapshot, RangeMetadata,
     SchemaNumber, ScopeRate, ScopeSelection, StreamState, TuningExperimentState,
 };
 use serde::{Deserialize, Serialize};
@@ -297,6 +297,18 @@ async fn parameter_refresh_all(state: State<'_, Mutex<DesktopState>>) -> Result<
     Ok(application(&state)?.parameter_refresh_all().map_err(|error| error.to_string())?.into_iter().map(|(id, result)| parameter_result(id, result)).collect())
 }
 #[tauri::command]
+fn problems_snapshot(state: State<'_, Mutex<DesktopState>>) -> Result<ProblemSnapshot, String> {
+    Ok(application(&state)?.problems_snapshot())
+}
+#[tauri::command]
+async fn problems_recheck(state: State<'_, Mutex<DesktopState>>) -> Result<ProblemSnapshot, String> {
+    application(&state)?.problems_recheck().map_err(|error| error.to_string())
+}
+#[tauri::command]
+fn problems_clear_history(state: State<'_, Mutex<DesktopState>>) -> Result<ProblemSnapshot, String> {
+    Ok(application(&state)?.problems_clear_history())
+}
+#[tauri::command]
 async fn phase_search_preflight(state: State<'_, Mutex<DesktopState>>) -> Result<Vec<PreflightIssueDto>, String> {
     Ok(application(&state)?.preflight_phase_search().map_err(|error| error.to_string())?.into_iter().map(preflight_issue_dto).collect())
 }
@@ -478,7 +490,8 @@ fn main() {
             automation_commands::automation_start, automation_commands::automation_snapshot,
             automation_commands::automation_cancel, automation_commands::automation_export_log,
             device_list, device_connect, device_disconnect, parameter_list, parameter_read, parameter_read_many,
-            parameter_cached_many, parameter_refresh_all, parameter_write, phase_search_preflight,
+            parameter_cached_many, parameter_refresh_all, parameter_write, problems_snapshot, problems_recheck,
+            problems_clear_history, phase_search_preflight,
             identification_preflight, identification_start, identification_apply,
             motor_enable, motor_stop, motor_disable, protection_clear, config_save_available, config_save,
             phase_search_start, homing_start, encoder_set_zero, motion_get, motion_set, motion_preview, motion_run, motion_stop,

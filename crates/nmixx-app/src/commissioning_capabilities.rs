@@ -12,6 +12,7 @@ pub struct CommissioningCapabilities {
     pub phase_search: bool,
     pub homing: bool,
     pub position_set_zero: bool,
+    pub protection_clear: bool,
 }
 
 impl CommissioningCapabilities {
@@ -31,6 +32,7 @@ impl CommissioningCapabilities {
             phase_search,
             homing: has_action("ACTION_HOME_START"),
             position_set_zero: has_action("ACTION_POSITION_SET_ZERO"),
+            protection_clear: has_action("ACTION_PROTECTION_CLEAR"),
         }
     }
 }

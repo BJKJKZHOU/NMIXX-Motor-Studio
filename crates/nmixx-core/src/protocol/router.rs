@@ -3,7 +3,7 @@ use thiserror::Error;
 use crate::wire::CanFdFrame;
 
 use super::{
-    MSG_EVENT, MSG_FAST_DATA, MSG_NORMAL_DATA, MSG_RESPONSE, AxdrStatus, split_can_id,
+    EVENT_NOTIFY, MSG_EVENT, MSG_FAST_DATA, MSG_NORMAL_DATA, MSG_RESPONSE, AxdrStatus, split_can_id,
 };
 
 #[derive(Debug, Error, PartialEq, Eq)]
@@ -28,6 +28,31 @@ pub struct ActionCompleteFrame {
     pub txn: u8,
     pub action_id: u16,
     pub status: AxdrStatus,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct ProtectionEventFrame {
+    pub report: u32,
+    pub warning: u32,
+    pub error: u32,
+    pub trip: u32,
+}
+
+pub fn parse_protection_event(frame: &CanFdFrame) -> Result<Option<ProtectionEventFrame>, DecodeError> {
+    let (message_type, _) = split_can_id(frame.id);
+    let data = frame.data();
+    if message_type != MSG_EVENT || data.first().copied() != Some(EVENT_NOTIFY) {
+        return Ok(None);
+    }
+    if data.len() < 17 {
+        return Err(DecodeError::TooShort("protection event"));
+    }
+    Ok(Some(ProtectionEventFrame {
+        report: u32::from_le_bytes([data[1], data[2], data[3], data[4]]),
+        warning: u32::from_le_bytes([data[5], data[6], data[7], data[8]]),
+        error: u32::from_le_bytes([data[9], data[10], data[11], data[12]]),
+        trip: u32::from_le_bytes([data[13], data[14], data[15], data[16]]),
+    }))
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -99,6 +124,28 @@ mod tests {
         assert_eq!(response.request_op, 0x01);
         assert_eq!(response.status, AxdrStatus::Ok);
         assert_eq!(&response.data[..2], &[0x10, 0x01]);
+    }
+
+    #[test]
+    fn parses_protection_event_without_changing_generic_event_routing() {
+        let frame = CanFdFrame::new(
+            can_id(MSG_EVENT, NODE_ID_DEFAULT),
+            &[
+                EVENT_NOTIFY,
+                1, 0, 0, 0,
+                2, 0, 0, 0,
+                8, 0, 0, 0,
+                16, 0, 0, 0,
+            ],
+        )
+        .unwrap();
+
+        let parsed = parse_protection_event(&frame).unwrap().unwrap();
+        assert_eq!(parsed.report, 1);
+        assert_eq!(parsed.warning, 2);
+        assert_eq!(parsed.error, 8);
+        assert_eq!(parsed.trip, 16);
+        assert!(matches!(decode_inbound(frame).unwrap(), InboundFrame::Event(_)));
     }
 
     #[test]

@@ -35,6 +35,7 @@ export type CommissioningCapabilities = {
   phaseSearch: boolean;
   homing: boolean;
   positionSetZero: boolean;
+  protectionClear: boolean;
 };
 
 export type PlotChannel = {

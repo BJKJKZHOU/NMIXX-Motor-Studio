@@ -167,6 +167,29 @@ impl ParameterService {
         Ok(results)
     }
 
+    /// Apply authoritative values delivered by a device event. This is cache-only:
+    /// it performs no device I/O and publishes the same changed-ID notification
+    /// used by normal Parameter reads.
+    pub(crate) fn ingest_external_values(
+        &self,
+        values: &[(u16, ParameterValue)],
+    ) -> Result<(), ParameterServiceError> {
+        let stream = self.stream.lock().map_err(|_| ParameterServiceError::CachePoisoned)?;
+        let entries = values.iter().filter_map(|(id, value)| {
+            let metadata = self.schema.parameter_by_id(*id)?;
+            if !metadata.access.contains('r') || stream.ids.contains(id) {
+                return None;
+            }
+            Some((*id, Ok(value.clone())))
+        }).collect::<Vec<_>>();
+        let mut cache = self.cache.write().map_err(|_| ParameterServiceError::CachePoisoned)?;
+        let changed = update_cache(&mut cache, entries);
+        drop(cache);
+        drop(stream);
+        self.notify_changed(changed);
+        Ok(())
+    }
+
     /// Consumes already-decoded baseline samples; never performs device I/O.
     /// Preserve wire types: f32 total-turn Plot samples cannot replace Position.
     pub(crate) fn ingest_stream_values(&self, samples: &[(u16, f32)]) -> Result<(), ParameterServiceError> {

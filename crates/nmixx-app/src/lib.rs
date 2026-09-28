@@ -12,6 +12,7 @@ mod config_service;
 mod motor_actions;
 mod motor_state;
 mod preflight;
+mod problems;
 mod connection;
 mod parameter_service;
 mod motion;
@@ -45,6 +46,7 @@ pub use mixed_scope::{
     MixedScopeSnapshot, MixedScopeStatus, ScopeRate, ScopeSelection,
 };
 pub use preflight::{IdentificationKind, PreflightDomain, PreflightError, PreflightIssue};
+pub use problems::{ProblemDomain, ProblemRecord, ProblemSeverity, ProblemSnapshot};
 pub use plot_capabilities::{
     DevicePlotCapabilities, DevicePlotChannel, PlotCapabilitiesError, PlotChannelInfo,
 };
@@ -71,6 +73,7 @@ pub use nmixx_core::protocol::{
 };
 pub(crate) use nmixx_core::protocol::{
     ActionError, PLOT_CAP_FAST, PLOT_CAP_NORMAL, PLOT_FAST_MASK, PLOT_GROUP_FAST,
+    ProtectionEventFrame, parse_protection_event,
     PLOT_GROUP_NORMAL, PLOT_NORMAL_MASK, SequenceStatus,
 };
 

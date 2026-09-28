@@ -20,6 +20,7 @@ export function disableMotor(): Promise<ActionHandle> { return reflected(invoke<
 export function stopMotor(): Promise<ActionHandle> { return reflected(invoke<ActionHandle>("motor_stop")); }
 export function canSaveParameters(): Promise<boolean> { return invoke<boolean>("config_save_available"); }
 export function saveParameters(): Promise<ActionHandle> { return reflected(invoke<ActionHandle>("config_save")); }
+export function clearProtection(): Promise<ActionHandle> { return reflected(invoke<ActionHandle>("protection_clear")); }
 export async function onActionCompleted(handler: (completion: ActionCompletion) => void): Promise<UnlistenFn> {
   let disposed = false;
   const stop = await listen<ActionCompletion>("action-completed", (event) => {

@@ -12,6 +12,7 @@ use crate::config_service::ConfigService;
 use crate::motor_actions::MotorActionService;
 use crate::parameter_service::ParameterService;
 use crate::preflight::PreflightService;
+use crate::problems::ProblemService;
 #[path = "acquisition.rs"]
 mod acquisition;
 use acquisition::{SharedAcquisition, View};
@@ -26,7 +27,8 @@ use crate::{
     MixedScopeSnapshot, MixedScopeStatus, MotionCapabilities, MotionConfig, MotionMode, MotionPreview,
     MotorState, PositionCommand, MotionService, MotorActionError, ParameterMetadata,
     ParameterServiceError, ParameterValue, PlotCapabilitiesError, PreflightError, PreflightIssue,
-    ScopeRate, ScopeSelection, SessionError, SessionEvent, StreamState,
+    ProblemSnapshot, ProtectionEventFrame, ScopeRate, ScopeSelection, SessionError, SessionEvent, StreamState,
+    parse_protection_event,
 };
 
 #[derive(Debug, Error)]
@@ -69,6 +71,7 @@ struct ApplicationInner {
     plot_capabilities: Mutex<Option<DevicePlotCapabilities>>,
     motion_capabilities: MotionCapabilities,
     commissioning_capabilities: CommissioningCapabilities,
+    problems: ProblemService,
     motion: MotionService,
     scope: Mutex<Option<SharedAcquisition>>,
     tuning_experiment: Mutex<TuningExperimentRuntime>,
@@ -95,9 +98,10 @@ impl ApplicationSession {
         let parameters = ParameterService::new(session.clone(), schema.clone());
         let motion_capabilities = MotionCapabilities::from_schema(&schema);
         let commissioning_capabilities = CommissioningCapabilities::from_schema(&schema);
+        let problems = ProblemService::default();
         let app = Self { inner: Arc::new(ApplicationInner {
             session, schema, parameters, events: Mutex::new(Vec::new()),
-            plot_capabilities: Mutex::new(None), motion_capabilities, commissioning_capabilities, motion,
+            plot_capabilities: Mutex::new(None), motion_capabilities, commissioning_capabilities, problems, motion,
             scope: Mutex::new(None),
             tuning_experiment: Mutex::new(TuningExperimentRuntime::default()),
             motor_gate: MotorGate::default(), workflow_access: WorkflowAccess::default(), tuning_worker: Mutex::new(None),
@@ -106,10 +110,21 @@ impl ApplicationSession {
         thread::spawn(move || {
             while let Ok(event) = events.recv() {
                 let Some(inner) = weak.upgrade() else { break; };
-                if matches!(&event, SessionEvent::ActionCompleted { .. }) {
-                    // Application owns readback, even with no page/CLI subscriber. Failed
-                    // reads are retained as cache errors instead of reviving old values.
-                    let _ = inner.parameters.refresh_all();
+                match &event {
+                    SessionEvent::ActionCompleted { .. } => {
+                        // Application owns readback, even with no page/CLI subscriber. Failed
+                        // reads are retained as cache errors instead of reviving old values.
+                        let _ = inner.parameters.refresh_all();
+                        inner.problems.sync_from_parameters(&inner.parameters, &inner.schema);
+                    }
+                    SessionEvent::DeviceEvent(frame) => {
+                        if let Ok(Some(status)) = parse_protection_event(frame) {
+                            let values = protection_parameter_values(&inner.schema, status);
+                            let _ = inner.parameters.ingest_external_values(&values);
+                            inner.problems.update_protection(status);
+                        }
+                    }
+                    _ => {}
                 }
                 if let Ok(mut subscribers) = inner.events.lock() {
                     subscribers.retain(|sender| sender.send(event.clone()).is_ok());
@@ -185,7 +200,28 @@ impl ApplicationSession {
     }
     pub fn parameter_subscribe(&self) -> Result<mpsc::Receiver<Vec<u16>>, ApplicationError> { Ok(self.inner.parameters.subscribe()?) }
     pub fn parameter_refresh_all(&self) -> Result<Vec<(u16, Result<ParameterValue, ParameterServiceError>)>, ApplicationError> {
-        Ok(self.inner.parameters.refresh_all()?)
+        let results = self.inner.parameters.refresh_all()?;
+        self.inner.problems.sync_from_parameters(&self.inner.parameters, &self.inner.schema);
+        Ok(results)
+    }
+
+    pub fn problems_snapshot(&self) -> ProblemSnapshot {
+        self.inner.problems.snapshot()
+    }
+
+    pub fn problems_recheck(&self) -> Result<ProblemSnapshot, ApplicationError> {
+        let ids = protection_parameter_ids(&self.inner.schema);
+        if !ids.is_empty() {
+            let results = self.inner.parameters.read_many(&ids)?;
+            self.require_refresh(results)?;
+            self.inner.problems.sync_from_parameters(&self.inner.parameters, &self.inner.schema);
+        }
+        Ok(self.inner.problems.snapshot())
+    }
+
+    pub fn problems_clear_history(&self) -> ProblemSnapshot {
+        self.inner.problems.clear_history();
+        self.inner.problems.snapshot()
     }
     pub fn parameter_write(&self, id: u16, value: ParameterValue) -> Result<ParameterValue, ApplicationError> {
         let _workflow = self.workflow_permit()?;
@@ -508,4 +544,24 @@ impl ApplicationSession {
         let scope = slot.as_ref().ok_or(ApplicationError::ScopeNotConfigured)?;
         Ok(call(scope)?)
     }
+}
+
+
+fn protection_parameter_ids(schema: &HostSchema) -> Vec<u16> {
+    ["PARAM_EVENT_REPORT", "PARAM_EVENT_WARNING", "PARAM_EVENT_ERROR", "PARAM_EVENT_TRIP"]
+        .into_iter()
+        .filter_map(|symbol| schema.parameter_by_symbol(symbol).map(|metadata| metadata.id))
+        .collect()
+}
+
+fn protection_parameter_values(schema: &HostSchema, status: ProtectionEventFrame) -> Vec<(u16, ParameterValue)> {
+    [
+        ("PARAM_EVENT_REPORT", status.report),
+        ("PARAM_EVENT_WARNING", status.warning),
+        ("PARAM_EVENT_ERROR", status.error),
+        ("PARAM_EVENT_TRIP", status.trip),
+    ]
+    .into_iter()
+    .filter_map(|(symbol, value)| schema.parameter_by_symbol(symbol).map(|metadata| (metadata.id, ParameterValue::U32(value))))
+    .collect()
 }

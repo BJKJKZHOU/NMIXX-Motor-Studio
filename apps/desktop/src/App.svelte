@@ -14,6 +14,8 @@
   import ControlPage from "./control/ControlPage.svelte";
   import ControlTuningPage from "./control/ControlTuningPage.svelte";
   import MotionPage from "./motion/MotionPage.svelte";
+  import EventsPage from "./events/EventsPage.svelte";
+  import { clearProblemsProjection, problemSnapshot, refreshProblems, startProblemsTracking } from "./problems/state";
   import { canSaveParameters, disableMotor, enableMotor, saveParameters, stopMotor } from "./actions/api";
   import { connectParameters, disconnectParameters, parameterState, pollParameters, refreshParameters, saveParameterBaseline, selectParameters } from "./parameters/state";
   import type { ParameterValue } from "./parameters/types";
@@ -32,6 +34,8 @@
   $: currentIq = numeric($globalParameters.values.PARAM_RUN_IQ);
   $: speedWm = numeric($globalParameters.values.PARAM_RUN_WM);
   $: positionText = position($globalParameters.values.PARAM_RUN_POSITION);
+  $: activeProblems = $problemSnapshot.active;
+  $: topProblem = activeProblems[0];
   let activePage: Page = "connection";
   let activeControlLoop: ControlLoopPage = "current";
   let controlArchitectureExpanded = true;
@@ -47,6 +51,7 @@
   let saveFeedbackTimer: ReturnType<typeof setTimeout> | undefined;
   let readingParameters = false;
   let connectionGeneration = 0;
+  let problemsOpen = false;
 
   const workflowPages: Array<{ id: Page; title: string; icon: string }> = [
     { id: "connection", title: "Connection", icon: "codicon-plug" },
@@ -70,6 +75,8 @@
   async function setConnection(next: ConnectionInfo | undefined) {
     const token = ++connectionGeneration;
     clearAutomationProjection();
+    clearProblemsProjection();
+    problemsOpen = false;
     connection = next;
     errorText = ""; parameterSaveAvailable = false; saveFeedback = "idle";
     if (saveFeedbackTimer) clearTimeout(saveFeedbackTimer);
@@ -82,7 +89,10 @@
     try {
       await connectParameters();
       const available = await canSaveParameters();
-      if (token === connectionGeneration) parameterSaveAvailable = available;
+      if (token === connectionGeneration) {
+        parameterSaveAvailable = available;
+        await refreshProblems();
+      }
     } catch (error) { if (token === connectionGeneration) setError(error); }
   }
   function pageTitle(page: Page): string { return [...workflowPages, ...toolPages].find((item) => item.id === page)?.title ?? page; }
@@ -122,7 +132,8 @@
     } catch { /* Use the development default when storage is unavailable. */ }
     const stopStatus = pollParameters(POLLED_SYMBOLS, 500, setError);
     const stopAutomation = startAutomationTracking(() => !!connection);
-    return () => { stopStatus(); stopAutomation(); };
+    const stopProblems = startProblemsTracking(() => !!connection);
+    return () => { stopStatus(); stopAutomation(); stopProblems(); };
   });
   onDestroy(() => {
     ++connectionGeneration;
@@ -156,7 +167,25 @@
         <i class={`codicon ${saveFeedback === "saved" ? "codicon-check" : "codicon-save"}`}></i>{saveFeedback === "saved" ? "Saved" : "Save"}
       </button>
     </div>
-  </div><button class="problems-indicator" disabled title="Problems service is not implemented yet"><i class="codicon codicon-warning"></i><span>0</span></button></div>
+  </div><div class="problems-host">
+    <button class:has-problems={activeProblems.length > 0} class="problems-indicator" disabled={!connection}
+      title={connection ? "Active problems" : "Connect a device to inspect problems"}
+      onclick={() => problemsOpen = !problemsOpen}>
+      <i class={`codicon ${topProblem?.severity === "FAULT" || topProblem?.severity === "ERROR" ? "codicon-error" : topProblem?.severity === "WARNING" ? "codicon-warning" : "codicon-info"}`}></i><span>{activeProblems.length}</span>
+    </button>
+    {#if problemsOpen && connection}
+      <div class="problems-popover">
+        {#if topProblem}
+          <button class="problem-summary" onclick={() => { activePage = "events"; problemsOpen = false; }}>
+            <strong>{topProblem.summary}</strong>
+            <span>{topProblem.description}</span>
+          </button>
+        {:else}
+          <div class="problem-summary empty">No active problems.</div>
+        {/if}
+      </div>
+    {/if}
+  </div></div>
   <main class="main-area">
     {#if activePage === "connection"}
       <ConnectionPage {connection} bind:port={connectionPort} bind:schemaPath={connectionSchemaPath} onSchemaPathChanged={persistConnectionSchemaPath} onConnected={(next) => void setConnection(next)} onDisconnected={() => void setConnection(undefined)} onError={setError} />
@@ -175,6 +204,7 @@
     {:else if activePage === "tuning"}<div class="domain-page-container"><ControlTuningPage {connection} {motorState} onError={setError} /></div>
     {:else if activePage === "motion"}<div class="domain-page-container"><MotionPage capabilities={connection?.motion} {motorState} onError={setError} /></div>
     {:else if activePage === "parameters"}<div class="domain-page-container"><ParameterTablePage {connection} onError={setError} /></div>
+    {:else if activePage === "events"}<div class="domain-page-container"><EventsPage {connection} onError={setError} /></div>
     {:else if activePage === "automation"}<div class="domain-page-container"><AutomationHost connected={!!connection} /></div>
     {:else if activePage !== "analysis"}
       <section class="page-toolbar"><div class="page-title">{pageTitle(activePage).toUpperCase()}</div></section>
@@ -198,7 +228,16 @@
   .enable-action:not(:disabled) { color: #3fb950; }
   .disable-action:not(:disabled) { color: #f85149; }
   .stop-action:not(:disabled) { font-weight: 600; }
-  .problems-indicator { flex: 0 0 auto; display: inline-flex; align-items: center; gap: 5px; border: 0; background: transparent; color: inherit; padding: 4px 7px; }
+  .problems-host { position: relative; flex: 0 0 auto; }
+  .problems-indicator { display: inline-flex; align-items: center; gap: 5px; border: 0; background: transparent; color: inherit; padding: 4px 7px; }
+  .problems-indicator:not(:disabled) { cursor: pointer; }
+  .problems-indicator.has-problems { color: var(--vscode-errorForeground); }
+  .problems-popover { position: absolute; top: calc(100% + 6px); right: 0; z-index: 30; width: 320px; padding: 6px; border: 1px solid var(--vscode-panel-border); border-radius: 3px; background: var(--vscode-menu-background, #252526); box-shadow: 0 8px 24px rgba(0,0,0,.35); }
+  .problem-summary { width: 100%; display: grid; gap: 5px; padding: 9px 10px; border: 0; text-align: left; color: var(--vscode-menu-foreground, var(--vscode-foreground)); background: transparent; }
+  button.problem-summary { cursor: pointer; }
+  button.problem-summary:hover { background: var(--vscode-list-hoverBackground); }
+  .problem-summary strong { font-size: 12px; }
+  .problem-summary span, .problem-summary.empty { color: var(--vscode-descriptionForeground); font-size: 11px; line-height: 1.4; }
   .domain-page-container { grid-row: 1 / -1; min-width: 0; min-height: 0; display: grid; }
   .control-domain-shell { grid-row: 1 / -1; min-width: 0; min-height: 0; display: grid; grid-template-columns: 196px minmax(0, 1fr); }
   .control-navigation { min-width: 0; min-height: 0; background: var(--vscode-sideBar-background); border-right: 1px solid var(--vscode-panel-border); }

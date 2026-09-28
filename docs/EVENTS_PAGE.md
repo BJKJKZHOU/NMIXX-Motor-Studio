@@ -175,6 +175,36 @@ Resolved entries are not automatically deleted. They remain until the user expli
 
 Active problems must not disappear merely because history was cleared; current state can always repopulate/recreate the Active view from authoritative runtime/device conditions.
 
+## Current implementation
+
+The first implemented Problems source is the firmware Protection snapshot already
+published by `EVENT_NOTIFY` and exposed through `PARAM_EVENT_REPORT / WARNING /
+ERROR / TRIP`.
+
+Application decodes that event into four structured severity records:
+
+```text
+Report  -> Info
+Warning -> Warning
+Error   -> Error
+Trip    -> Fault
+```
+
+Each record retains the raw 32-bit protection mask, active/resolved lifecycle,
+first/last observation time and occurrence count. The event updates Application
+state directly and also updates the shared Parameter cache, so the generic
+Parameters view and Problems view remain consistent without adding a polling read.
+
+The current Host contract does not yet export a per-bit problem dictionary. The
+GUI therefore presents the Protection severity and raw mask without inventing
+specific names for individual bits. Future bit-level labels/domains/help text
+should come from generated Host metadata rather than a second hand-written GUI
+copy of firmware `PROT_*` definitions.
+
+`Recheck` explicitly rereads the four Protection Parameters. `Clear Fault`
+uses the existing semantic Protection Clear action and then rechecks. Clearing
+history removes resolved records only; active conditions remain visible.
+
 ## Application data model
 
 The Application layer should expose structured problem/event information rather than forcing the GUI to parse strings.
