@@ -70,6 +70,15 @@ fn fast_frame(sequence: u16) -> CanFdFrame {
     .unwrap()
 }
 
+fn fast_frame_with_config(sequence: u16, config_id: u8, raw: i16) -> CanFdFrame {
+    let [lo, hi] = raw.to_le_bytes();
+    CanFdFrame::new(
+        can_id(MSG_FAST_DATA, NODE_ID_DEFAULT),
+        &[sequence as u8, (sequence >> 8) as u8, config_id, 1, lo, hi],
+    )
+    .unwrap()
+}
+
 fn mixed_scope_context() -> (DevicePlotCapabilities, HostSchema, Vec<ScopeSelection>) {
     let capabilities = DevicePlotCapabilities {
         fast_max_channels: 8,
@@ -210,6 +219,66 @@ fn scope_live_snapshot_pause_and_clear_follow_fast_samples() {
     assert_eq!(scope.status().unwrap().samples, 0);
     let sent = state.sent.lock().unwrap();
     assert_eq!(&sent[2].data()[..3], &[3, PLOT_STOP, PLOT_FAST_MASK]);
+}
+
+#[test]
+fn live_hot_reconfigure_promotes_new_config_without_restarting_group() {
+    let state = ScriptState::default();
+    {
+        let mut on_send = state.on_send.lock().unwrap();
+        // Initial FAST layout: PARAM_ADC_IA @ config 7.
+        on_send.push_back(vec![Ok(plot_response(
+            1,
+            PLOT_CONFIG,
+            &[PLOT_GROUP_FAST, 7, 1, 0x01, 0x00],
+        ))]);
+        on_send.push_back(vec![Ok(plot_response(2, PLOT_START, &[]))]);
+        // Live hot reconfigure: PARAM_RUN_IQ @ config 8.
+        on_send.push_back(vec![Ok(plot_response(
+            3,
+            PLOT_CONFIG,
+            &[PLOT_GROUP_FAST, 8, 1, 0x11, 0x00],
+        ))]);
+    }
+
+    let session = DeviceSession::spawn(Box::new(ScriptedTransport::new(state.clone())));
+    let (capabilities, schema, _) = mixed_scope_context();
+    let scope = MixedScopeSession::from_capabilities(
+        session,
+        &capabilities,
+        &schema,
+        &[ScopeSelection { id: 0x0001, rate: ScopeRate::Fast }],
+        Duration::from_secs(1),
+        7,
+    ).unwrap();
+
+    scope.live().unwrap();
+    scope.reconfigure(&[ScopeSelection { id: 0x0011, rate: ScopeRate::Fast }]).unwrap();
+
+    // An old-layout frame may already be in flight after the Config response.
+    // It must not poison the runtime while pending config 8 is waiting.
+    {
+        let mut incoming = state.incoming.lock().unwrap();
+        incoming.push_back(Ok(fast_frame_with_config(10, 7, 10)));
+        incoming.push_back(Ok(fast_frame_with_config(11, 8, 4)));
+    }
+
+    let deadline = Instant::now() + Duration::from_millis(100);
+    loop {
+        let snapshot = scope.snapshot_tail(Duration::from_millis(10)).unwrap();
+        if snapshot.series[0].values == vec![2.0] {
+            assert_eq!(snapshot.series[0].id, 0x0011);
+            break;
+        }
+        assert!(Instant::now() < deadline, "new hot-reconfigure layout was not promoted");
+        std::thread::yield_now();
+    }
+
+    let sent = state.sent.lock().unwrap();
+    assert_eq!(sent.len(), 3);
+    assert_eq!(&sent[0].data()[..5], &[1, PLOT_CONFIG, PLOT_GROUP_FAST, 7, 1]);
+    assert_eq!(&sent[1].data()[..3], &[2, PLOT_START, PLOT_FAST_MASK]);
+    assert_eq!(&sent[2].data()[..7], &[3, PLOT_CONFIG, PLOT_GROUP_FAST, 8, 1, 0x11, 0x00]);
 }
 
 #[test]

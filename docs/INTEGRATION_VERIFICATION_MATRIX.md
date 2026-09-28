@@ -231,68 +231,110 @@ The connection-owned baseline is the shared NORMAL 1 kHz source for:
 **Shared consumers:** Scope page, Control Tuning, RuntimeTelemetry, Automation Scope operations  
 **Normative references:** `SCOPE_PAGE.md`, `SHARED_ACQUISITION.md`, `ARCHITECTURE.md`
 
+### Code review pass — 2026-09-28
+
+Core acquisition/record ownership is now internally consistent, but this page is
+**not yet fully Wired** against the normative Scope design because two viewer
+features are still missing from the current ECharts implementation:
+
+- [ ] **[IMPL]** Implement X1/X2 time cursors with X1, X2, Δt and 1/Δt/Hz measurement.
+- [ ] **[IMPL]** Implement Scope view-settings persistence for selected channels/rates, per-channel Scale/div and Y Pos, cursor preference and active channel.
+
+The old pre-ECharts `ScopePage.svelte` / `viewSettings.ts` code is not present in
+the current branch and must not be revived as a parallel Scope implementation.
+These missing features belong in the current `ScopeEchartsPage/ScopeEchartsView`
+surface and should use ECharts/ZRender extension points rather than a second plot
+interaction engine.
+
+A new transport regression was added in this pass for live Config_ID promotion
+during hot reconfiguration. It has not yet been executed in the current workspace.
+
 ### Baseline preview semantics
 
-- [ ] Immediately after connection the physical baseline stream is LIVE.
-- [ ] Immediately after connection the user-owned Scope recording is STOPPED.
-- [ ] Entering Scope before the first Run can display selected baseline NORMAL history.
-- [ ] Baseline preview is explicitly distinguishable from a real Scope recording.
-- [ ] Scope button still shows Run while baseline preview is rolling.
-- [ ] Selected baseline NORMAL Iq is visibility-only.
-- [ ] Selected baseline NORMAL Speed is visibility-only.
-- [ ] Selected baseline NORMAL Position is visibility-only.
-- [ ] Selected baseline NORMAL Vbus is visibility-only.
-- [ ] Hiding all baseline traces does not stop the baseline stream.
-- [ ] Showing/hiding a baseline NORMAL trace does not send unnecessary Plot Config/Start/Stop.
-- [ ] Switching the same baseline-capable channel from NORMAL to FAST turns it into an explicit Scope demand.
+- [x] **[CODE]** Connection-owned baseline is created LIVE while the user Scope record starts STOPPED.
+- [x] **[CODE]** Scope snapshot before the first Run projects selected baseline history and marks it `preview = true`.
+- [x] **[CODE]** Baseline preview reports Scope state STOPPED; the page therefore keeps the Run action visible.
+- [x] **[CODE]** Baseline NORMAL Iq defaults to visibility-only.
+- [x] **[CODE]** Baseline NORMAL Speed defaults to visibility-only.
+- [x] **[CODE]** Baseline NORMAL Position defaults to visibility-only.
+- [x] **[CODE]** Baseline NORMAL Vbus defaults to visibility-only.
+- [x] **[CODE]** Hiding all baseline traces leaves the connection-owned baseline demand intact.
+- [x] **[CODE]** Showing/hiding an already acquired baseline NORMAL trace can update Scope view config while `SharedAcquisition::apply_demand` detects unchanged device demand and sends no Plot reconfiguration.
+- [x] **[CODE]** Selecting the same baseline ID at FAST overrides its NORMAL merged demand and becomes an explicit FAST source.
+- [x] **[CODE]** A FAST source feeding a NORMAL baseline consumer is decimated by integer ratio in `Channel::push`, not interpolated.
+- [ ] **[HW]** Confirm all four baseline NORMAL traces roll before first Scope Run on the real controller.
+- [ ] **[HW]** Toggle baseline trace visibility and verify no observable stream interruption/loss spike.
 
-### Channel configuration
+### Channel configuration / shared demand
 
-- [ ] Available channel list is generated from device Plot capabilities.
-- [ ] Unsupported FAST/NORMAL choices are disabled.
-- [ ] Merged baseline + Scope + Tuning demand respects device FAST/NORMAL channel limits.
-- [ ] Duplicate Parameter IDs are transmitted only once.
-- [ ] FAST wins when multiple consumers request the same ID at different rates.
-- [ ] NORMAL consumers of a FAST source receive valid integer decimation rather than interpolation.
-- [ ] Changing a non-baseline channel while Scope is stopped does not destroy the frozen record.
-- [ ] Hot reconfigure while Scope is LIVE does not freeze/crash the UI.
-- [ ] Reconfigure does not leave an old Config_ID/layout feeding the new record.
+- [x] **[CODE]** Available channels and FAST/NORMAL support come from device Plot capabilities.
+- [x] **[CODE]** GUI disables unsupported FAST/NORMAL selections.
+- [x] **[CODE]** Frontend validates selected demand against device FAST/NORMAL limits including hidden baseline channels.
+- [x] **[CODE]** Backend independently validates merged demand against the same device capabilities.
+- [x] **[CODE]** `merge_demands` sorts/de-duplicates Parameter IDs; one ID is never transmitted twice.
+- [x] **[CODE]** FAST wins when baseline/Scope/Tuning request one ID at different rates.
+- [x] **[CODE]** Scope and Tuning consume one `MixedScopeSession` decoder and separate recording buffers.
+- [x] **[CODE]** Editing a stopped Scope selection updates the next record layout without mutating the frozen record samples.
+- [x] **[CODE]** Live reconfigure uses a pending layout/config marker rather than immediately relabeling old in-flight frames.
+- [x] **[CODE]** First frame carrying the new Config_ID promotes the pending layout and resets its sequence tracker.
+- [x] **[CODE]** Old-layout frames already in flight remain associated with the active old layout until promotion.
+- [x] **[CODE]** Added transport regression for old-frame/new-frame transition during live hot reconfigure without group Stop/Start.
+- [ ] **[HW]** Change NORMAL/FAST/channel selections repeatedly while streaming and confirm no UI freeze, UnknownConfig failure or persistent ReconfigurePending state.
+- [ ] **[HW]** Confirm actual firmware FAST/NORMAL channel limits match discovered capabilities.
 
 ### Run / Stop recording
 
-- [ ] First Run creates the first independent Scope recording.
-- [ ] First Run changes Scope state STOPPED -> LIVE.
-- [ ] First Run resets horizontal view to Follow Latest with the default 0.5 s span.
-- [ ] New Run seeds available recent baseline history for matching baseline NORMAL channels.
-- [ ] Recorded duration increases while Scope is LIVE.
-- [ ] New samples append to the Scope record while LIVE.
-- [ ] Stop changes Scope LIVE -> STOPPED.
-- [ ] Stop freezes Scope samples and loss count.
-- [ ] Stop does not issue Motor Stop.
-- [ ] Stop does not stop baseline RuntimeTelemetry.
-- [ ] Stop does not stop an independently active Tuning recording.
-- [ ] After Stop, newer baseline samples do not overwrite/substitute the frozen Scope record.
-- [ ] Second Run creates a new Scope record instead of resuming/appending to the previous frozen record.
+- [x] **[CODE]** First Scope Run creates the first independent Scope record.
+- [x] **[CODE]** Run changes the record state STOPPED -> LIVE.
+- [x] **[CODE]** Run seeds matching recent baseline history into the new Scope record.
+- [x] **[CODE]** Run returns the frontend viewport to Follow Latest and the default 0.5 s span.
+- [x] **[CODE]** LIVE record receives decoded samples from the shared acquisition sink.
+- [x] **[CODE]** Recorded duration derives from stored Scope samples while a real record exists.
+- [x] **[CODE]** Stop freezes the Scope record and captures the then-current lost-frame count.
+- [x] **[CODE]** Scope Stop only changes acquisition demand; it does not call Motor Stop.
+- [x] **[CODE]** Baseline stays LIVE after Scope Stop.
+- [x] **[CODE]** Tuning record is independent from Scope Stop.
+- [x] **[CODE]** Frozen Scope snapshot remains unchanged while later baseline/Tuning samples arrive.
+- [x] **[CODE]** A subsequent Run allocates a new Scope record rather than appending to the frozen one.
+- [ ] **[HW]** Confirm recorded duration visibly increases during real LIVE capture.
+- [ ] **[HW]** Stop a real capture and verify waveform/history remain byte-for-byte visually stable while status-bar telemetry continues.
+- [ ] **[HW]** Start a second Run and verify it is a new recording seeded from current baseline history.
 
 ### Viewer / interaction
 
-- [ ] ECharts displays every selected series with the correct unit and stable channel identity.
-- [ ] Per-channel Scale/div changes only presentation, not acquisition values.
-- [ ] Per-channel Y position changes only presentation.
-- [ ] Auto vertical scaling uses captured data and remains independent per channel.
-- [ ] Horizontal mouse/trackpad zoom is continuous.
-- [ ] Horizontal pan navigates retained history.
-- [ ] Pan/zoom leaves Follow Latest.
-- [ ] Latest returns the current span to newest data.
-- [ ] Stop preserves pan/zoom and per-channel vertical settings.
-- [ ] Lost-frame count is visible and changes only according to acquisition loss.
-- [ ] Page switching does not start/stop the connection-owned baseline.
+- [x] **[CODE]** Current viewer is one ECharts implementation shared with Control Tuning; no second active Scope renderer exists.
+- [x] **[CODE]** Each selected channel owns an independent Y axis with physical Scale/div and Y Pos.
+- [x] **[CODE]** Only the active channel's Y-axis labels are shown.
+- [x] **[CODE]** Auto vertical scaling derives min/max from currently displayed captured data and changes presentation only.
+- [x] **[CODE]** Horizontal zoom/pan is delegated to ECharts `dataZoom`.
+- [x] **[CODE]** A user ECharts dataZoom event updates `viewRange`, leaves Follow Latest and requests the corresponding history window/offset.
+- [x] **[CODE]** Latest keeps the current span and moves the view back to newest data.
+- [x] **[CODE]** Double-click is wired to Latest through the ECharts ZRender surface.
+- [x] **[CODE]** Page snapshot refresh is debounced for view changes and periodic only through the shared scheduler.
+- [x] **[CODE]** Host downsampling preserves bucket extrema before sending points to ECharts; the chart itself does not enable a second lossy sampler.
+- [x] **[CODE]** Lost-frame count comes from per-group sequence tracking and is frozen with a stopped Scope record.
+- [ ] **[IMPL]** X1/X2 time cursors and Δt / Hz measurement.
+- [ ] **[IMPL]** Per-channel cursor sample values / ΔY described by the Scope design.
+- [ ] **[IMPL]** Persist and restore Scope view settings across application restart.
+- [ ] **[HW/WEBVIEW]** Verify mouse-wheel/trackpad zoom behavior on the actual desktop WebView.
+- [ ] **[HW/WEBVIEW]** Verify drag pan, Latest and double-click interactions with long retained real history.
+- [ ] **[HW]** Verify lost-frame reporting against a deliberately stressed real stream.
+
+### Automated guard status
+
+- [x] **[CODE]** Low-level Plot Config/Start/Stop and FAST decode paths have scripted-transport tests.
+- [x] **[CODE]** Plot capability pagination/discovery has a scripted-transport test.
+- [x] **[CODE]** Shared baseline/Scope/Tuning record ownership has a scripted-transport test.
+- [x] **[CODE]** Baseline preview, Run, Stop and visibility-only frontend behavior have Node harness tests.
+- [x] **[CODE]** View-window/Latest/stale-snapshot handling has focused Node tests.
+- [x] **[CODE]** Added a hot-reconfigure pending Config_ID promotion regression in this pass.
+- [ ] **[TEST RUN]** Execute the current Rust/Node Scope tests after these changes.
 
 ### Exit criteria
 
-- [ ] Wired
-- [ ] Verified
-- [ ] Regression Guarded
+- [ ] **Wired — blocked by missing normative cursor and view-persistence implementation.**
+- [ ] **Verified — requires current real-device/WebView pass.**
+- [ ] **Regression Guarded — coverage exists/improved, but current-pass tests have not been executed.**
 
 ---
 
