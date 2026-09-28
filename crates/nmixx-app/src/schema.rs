@@ -54,6 +54,8 @@ pub struct ParameterMetadata {
     #[serde(default)]
     pub persistent: bool,
     #[serde(default)]
+    pub default: Option<SchemaNumber>,
+    #[serde(default)]
     pub unit: Option<String>,
     pub description: String,
     #[serde(default)]
@@ -354,6 +356,40 @@ readback = ["PARAM_MISSING"]
     }
 
     #[test]
+    fn parses_parameter_default_metadata() {
+        let schema = HostSchema::parse(r#"
+schema_version = 1
+protocol = "axdr-canfd-v1"
+
+[source]
+repository = "fixture"
+git_sha = "abc"
+parameter_schema = 1
+
+[[parameters]]
+symbol = "PARAM_PP"
+label = "Pole pairs"
+id = 1
+type = "u8"
+access = "rw"
+default = 16
+description = "pp"
+
+[[parameters]]
+symbol = "PARAM_RS"
+label = "Rs"
+id = 2
+type = "f32"
+access = "rw"
+default = 0.147
+description = "rs"
+"#).unwrap();
+
+        assert_eq!(schema.parameter_by_symbol("PARAM_PP").unwrap().default, Some(SchemaNumber::Integer(16)));
+        assert_eq!(schema.parameter_by_symbol("PARAM_RS").unwrap().default, Some(SchemaNumber::Float(0.147)));
+    }
+
+    #[test]
     fn parses_persistent_metadata_and_defaults_to_false() {
         let schema = HostSchema::parse(r#"
 schema_version = 1
@@ -390,7 +426,7 @@ description = "ram"
     fn enum_u8_prefers_explicit_allowed_values_and_falls_back_to_ordinal() {
         let explicit = ParameterMetadata {
             symbol: "STATE".into(), label: "State".into(), id: 1, type_name: "u8".into(),
-            access: "ro".into(), persistent: false, unit: None, description: String::new(), write_state: None,
+            access: "ro".into(), persistent: false, default: None, unit: None, description: String::new(), write_state: None,
             range: None, allowed: vec![SchemaNumber::Integer(4), SchemaNumber::Integer(9)],
             allowed_symbols: vec!["IDLE".into(), "RUN".into()], readback: Vec::new(), plot_scale: None,
         };

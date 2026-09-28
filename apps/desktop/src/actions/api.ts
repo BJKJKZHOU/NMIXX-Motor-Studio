@@ -5,6 +5,7 @@ import type { ActionCompletion, ActionHandle } from "./types";
 import type { PreflightIssue } from "../preflight/api";
 
 export type IdentificationKind = "rsLs" | "flux" | "jb";
+function identificationWireKind(kind: IdentificationKind): string { return kind === "rsLs" ? "rs_ls" : kind; }
 export type IdentificationStartResult =
   | { status: "blocked"; issues: PreflightIssue[] }
   | { status: "requires_enable" }
@@ -35,6 +36,11 @@ export async function onActionCompleted(handler: (completion: ActionCompletion) 
 }
 export function onMotorStopIssued(handler: () => void): Promise<UnlistenFn> { return listen("motor-stop-issued", () => handler()); }
 export function startIdentification(kind: IdentificationKind, allowEnable: boolean): Promise<IdentificationStartResult> {
-  return reflected(invoke<IdentificationStartResult>("identification_start", { kind: kind === "rsLs" ? "rs_ls" : kind, allowEnable }));
+  return reflected(invoke<IdentificationStartResult>("identification_start", { kind: identificationWireKind(kind), allowEnable }));
 }
-export function applyIdentification(): Promise<ActionHandle> { return reflected(invoke<ActionHandle>("identification_apply")); }
+export function identificationApplyCandidate(): Promise<IdentificationKind | null> {
+  return invoke<IdentificationKind | null>("identification_apply_candidate");
+}
+export function applyIdentification(kind: IdentificationKind): Promise<ActionHandle> {
+  return reflected(invoke<ActionHandle>("identification_apply", { kind: identificationWireKind(kind) }));
+}

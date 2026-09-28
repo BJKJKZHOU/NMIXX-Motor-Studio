@@ -6,7 +6,7 @@
   import { parameterText } from "../parameters/codec";
   import type { ParameterValue } from "../parameters/types";
   import { modifiedParameterIds } from "../parameters/persistence";
-  import { applyIdentification as applyIdentificationAction, onActionCompleted, startIdentification as startIdentificationAction } from "../actions/api";
+  import { applyIdentification as applyIdentificationAction, identificationApplyCandidate, onActionCompleted, startIdentification as startIdentificationAction } from "../actions/api";
   import type { ActionCompletion, ActionHandle } from "../actions/types";
 
   type Props = { connection: ConnectionInfo | undefined; onError?: (error: unknown) => void };
@@ -56,6 +56,7 @@
   let pendingHandles = $state<Record<string, { identKey: IdentKey; kind: "identify" }>>({});
   let generation = 0;
   let startingIdent = $state<IdentKey | null>(null);
+  let applyCandidate = $state<IdentKey | null>(null);
   let earlyCompletion: ActionCompletion | undefined;
 
   onMount(() => {
@@ -67,15 +68,22 @@
   });
 
   $effect(() => {
-    connection;
-    ++generation;
+    const session = connection;
+    const token = ++generation;
     identStates = initialIdentStates();
     pendingHandles = {};
     startingIdent = null;
+    applyCandidate = null;
     earlyCompletion = undefined;
+    if (session) {
+      void identificationApplyCandidate().then((candidate) => {
+        if (token === generation) applyCandidate = candidate;
+      }).catch(onError);
+    }
   });
   $effect(() => {
     const committed = values;
+    applyCandidate;
     untrack(() => restoreIdentificationStates(committed));
   });
 
@@ -92,6 +100,10 @@
   }
   function unitFor(symbol: string) { return metadata[symbol]?.unit ?? ""; }
   function parameterLabel(symbol: string) { return metadata[symbol]?.label ?? "Unavailable"; }
+  function defaultText(symbol: string) {
+    const value = metadata[symbol]?.default;
+    return value === null || value === undefined ? "—" : String(value);
+  }
   function isWritable(symbol: string) { return !$parameters.loading && !$parameters.saving && !!metadata[symbol]?.access.includes("w"); }
   function identificationAvailable(key: IdentKey): boolean {
     const capabilities = connection?.commissioning;
@@ -103,11 +115,37 @@
   function setIdentState(identKey: IdentKey, phase: IdentPhase, message = "") {
     identStates = { ...identStates, [identKey]: { phase, message } };
   }
+  function near(a: number | null, b: number | null): boolean {
+    if (a === null || b === null) return false;
+    const scale = Math.max(1, Math.abs(a), Math.abs(b));
+    return Math.abs(a - b) <= 1e-6 * scale;
+  }
+  function identifiedMatchesActive(key: IdentKey, committed: Record<string, ParameterValue | null>): boolean {
+    if (numericValue(committed[IDENT_CONFIGS[key].validSymbol]) !== 1) return false;
+    if (key === "rsLs") {
+      const rs = numericValue(committed.PARAM_IDENT_RS_RESULT);
+      const ls = numericValue(committed.PARAM_IDENT_LS_RESULT);
+      return near(numericValue(committed.PARAM_MOTOR_RS), rs)
+        && near(numericValue(committed.PARAM_MOTOR_LD), ls)
+        && near(numericValue(committed.PARAM_MOTOR_LQ), ls);
+    }
+    if (key === "flux") {
+      return near(numericValue(committed.PARAM_MOTOR_FLUX), numericValue(committed.PARAM_IDENT_FLUX_RESULT));
+    }
+    return near(numericValue(committed.PARAM_MOTOR_J), numericValue(committed.PARAM_IDENT_J_RESULT))
+      && near(numericValue(committed.PARAM_MOTOR_B), numericValue(committed.PARAM_IDENT_B_RESULT));
+  }
   function restoreIdentificationStates(committed: Record<string, ParameterValue | null>) {
     const next = { ...identStates };
     for (const key of Object.keys(IDENT_CONFIGS) as IdentKey[]) {
-      if (["running", "applying", "applied", "failed"].includes(next[key].phase)) continue;
-      next[key] = { phase: numericValue(committed[IDENT_CONFIGS[key].validSymbol]) === 1 ? "ready" : "idle", message: "" };
+      if (["running", "applying", "failed"].includes(next[key].phase)) continue;
+      const valid = numericValue(committed[IDENT_CONFIGS[key].validSymbol]) === 1;
+      next[key] = {
+        phase: valid && identifiedMatchesActive(key, committed) ? "applied"
+          : valid && applyCandidate === key ? "ready"
+          : "idle",
+        message: "",
+      };
     }
     identStates = next;
   }
@@ -163,9 +201,14 @@
     }
   }
   async function applyIdentification(identKey: IdentKey) {
-    if (!connection?.commissioning?.identificationApply || identifyBusy() || identStates[identKey].phase !== "ready") return;
+    if (!connection?.commissioning?.identificationApply || identifyBusy()
+        || identStates[identKey].phase !== "ready" || applyCandidate !== identKey) return;
     setIdentState(identKey, "applying");
-    try { await applyIdentificationAction(); setIdentState(identKey, "applied"); }
+    try {
+      await applyIdentificationAction(identKey);
+      applyCandidate = null;
+      setIdentState(identKey, "applied");
+    }
     catch (error) { setIdentState(identKey, "failed", String(error)); onError(error); }
   }
   function handleActionCompleted(completion: ActionCompletion) {
@@ -181,9 +224,16 @@
     const nextPending = { ...pendingHandles };
     delete nextPending[handleKey(completion)];
     pendingHandles = nextPending;
-    if (!completion.ok) { setIdentState(pending.identKey, "failed", completion.status); return; }
+    if (!completion.ok) {
+      applyCandidate = null;
+      setIdentState(pending.identKey, "failed", completion.status);
+      return;
+    }
     const config = IDENT_CONFIGS[pending.identKey];
-    if (numericValue(values[config.validSymbol]) === 1) setIdentState(pending.identKey, "ready");
+    if (numericValue(values[config.validSymbol]) === 1) {
+      applyCandidate = pending.identKey;
+      setIdentState(pending.identKey, "ready");
+    }
     else {
       const reason = numericValue(values[failReasonSymbol]);
       setIdentState(pending.identKey, "failed", reason ? `Reason ${reason}` : "No valid result");
@@ -216,7 +266,7 @@
             {#each ROWS as row}
               <div class="grid-row" role="row">
                 <div class="parameter-name" role="cell">{parameterLabel(row.activeSymbol)}</div>
-                <div class="default-value muted" role="cell" title="Firmware compiled defaults are not exposed by the current HostSchema">—</div>
+                <div class="default-value muted mono" role="cell" title="Firmware compiled default from HostSchema">{defaultText(row.activeSymbol)}</div>
                 <div role="cell">
                   {#if metadata[row.activeSymbol]}
                     <span class="inline-editor">

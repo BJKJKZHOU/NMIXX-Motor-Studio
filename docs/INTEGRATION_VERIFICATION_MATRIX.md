@@ -344,48 +344,137 @@ during hot reconfiguration. It has not yet been executed in the current workspac
 **Shared consumers:** Motor page, Parameters, Problems, Automation, global motor controls  
 **Normative references:** `MOTOR_PAGE.md`, `APPLICATION_PREFLIGHT.md`, `UI_INTERACTION_RULES.md`
 
+### Code review pass — 2026-09-28
+
+Three integration defects were found and corrected at shared owners rather than
+patched locally in the Motor page:
+
+1. **Compiled Default metadata was exported but discarded by NMIXX.**  
+   Firmware HostSchema already emitted motor `default` values. HostSchema/
+   Tauri/TS metadata now preserve that field and Motor Default cells consume it.
+
+2. **Commissioning preflight did not surface blocking Protection state.**  
+   Identification/Phase Search now explicitly read `PARAM_EVENT_ERROR` and
+   `PARAM_EVENT_TRIP`. Non-zero masks produce structured Protection issues that
+   point to Events before the workflow attempts Enable. Warning/Report remain
+   non-blocking at this layer.
+
+3. **Shared Identification Apply could apply the wrong historical result.**  
+   Firmware `Identification_Apply()` applies according to internal current
+   `Ident_Mode`; historical `*_VALID` flags do not select the Apply type.
+   Application now owns a session-scoped Apply candidate created only by a
+   successful finite identification completion with a valid result. GUI/Automation
+   use an explicit kind match. Existing no-argument
+   `ApplicationSession::identification_apply()` remains API-compatible and safely
+   applies only the current candidate.
+
+The Motor page may reconstruct stable **Applied** presentation from
+`Active ~= Identified`, but it only offers **Apply** when Application says that
+identification type is the current candidate. Older valid results remain visible
+without an unsafe Apply button.
+
 ### Motor parameters
 
-- [ ] Motor model Parameters display current shared values after connection.
-- [ ] Editing pole pairs/Rs/Ld/Lq/Flux/J/B follows common Enter/Esc/blur semantics.
-- [ ] Motor model write dependent readbacks update Control/Limits values through HostSchema metadata.
-- [ ] Parameter page immediately reflects Motor-page committed writes.
-- [ ] Save/modified-state semantics match every other Parameter-backed page.
+- [x] **[CODE]** Motor model rows consume the shared Parameter store/editor.
+- [x] **[CODE]** Pole pairs/Rs/Ld/Lq/Flux/J/B use common Enter/Esc/blur RAM-write semantics.
+- [x] **[CODE]** Motor model writes use generated HostSchema dependent readback rather than page-owned Control/Limits refresh lists.
+- [x] **[CODE]** Generic Parameters and Motor views therefore converge on the same committed values.
+- [x] **[CODE]** RAM-modified highlighting now applies only when firmware metadata marks the Motor Parameter persistent.
+- [x] **[CODE]** HostSchema parses firmware compiled `default` values and Motor Default cells display that metadata.
+- [ ] **[HW]** Compare Motor Default/Active values against the actual generated HostSchema/controller configuration.
+- [ ] **[HW]** Edit each Motor model field and confirm Parameters plus affected Control/Limits values update to device readback.
+
+### Common identification start / readiness
+
+- [x] **[CODE]** GUI starts identification only through the semantic Application API.
+- [x] **[CODE]** Application repeats authoritative preflight inside `MotorActionService::identification_start`; GUI does not own readiness rules.
+- [x] **[CODE]** Preflight reads required current/speed/model/setup Parameters from the device through ParameterService.
+- [x] **[CODE]** Preflight now blocks non-zero Protection Error/Trip with a structured Events/Protection issue.
+- [x] **[CODE]** Application rejects identification start while Motor State is RUN.
+- [x] **[CODE]** DISABLED start without authorization returns `RequiresEnable`; GUI asks for explicit user confirmation before retrying with `allowEnable=true`.
+- [x] **[CODE]** Mode/Disable/Enable sequencing needed by firmware IDENT mode is contained in MotorActionService, not reproduced by the page.
+- [x] **[CODE]** MotorGate/workflow checkpoint fences can cancel a pending start before later Action dispatch.
+- [x] **[CODE]** Concurrent active Tuning blocks identification through the shared Application runtime.
+- [x] **[CODE]** Identification start capability comes from HostSchema Actions.
+- [ ] **[HW]** Verify blocked preflight reasons with missing/invalid prerequisites and active Protection fault.
+- [ ] **[HW]** Verify explicit Enable confirmation path from DISABLED.
+- [ ] **[HW]** Verify start from ENABLED/non-IDENT mode performs the intended safe mode transition.
 
 ### Rs/Ls
 
-- [ ] Preflight checks the current authoritative prerequisites.
-- [ ] Start does not silently create a second Enable/Run semantic.
-- [ ] Required Enable confirmation follows the established workflow.
-- [ ] Running state is visible.
-- [ ] Finite Action completion is observed.
-- [ ] Successful result Parameters are read back.
-- [ ] Failure is surfaced explicitly.
-- [ ] Apply uses the semantic identification Apply path.
-- [ ] Successful Apply updates Active/shared Motor Parameters.
-- [ ] Global Stop immediately invokes the shared motor Stop path during the operation.
+- [x] **[CODE]** Rs/Ls preflight requires positive current limit.
+- [x] **[CODE]** Rs/Ls start maps to semantic `IdentificationKind::RsLs` / firmware Rs/Ls Action.
+- [x] **[CODE]** Page tracks the finite Action handle and completion rather than treating accept response as completion.
+- [x] **[CODE]** Application refreshes shared Parameters before completion reaches page subscribers.
+- [x] **[CODE]** Rs/Ls VALID/result Parameters drive the Identified Rs/Ls display.
+- [x] **[CODE]** Successful completion with VALID=1 creates the Rs/Ls Application Apply candidate.
+- [x] **[CODE]** Rs/Ls Apply refreshes Active Rs/Ld/Lq through the immediate Action readback path.
+- [ ] **[HW]** Run Rs/Ls to completion and compare displayed result with firmware/tool result.
+- [ ] **[HW]** Apply Rs/Ls and verify Active Rs/Ld/Lq match the identified values.
+- [ ] **[HW]** Stop during Rs/Ls and verify the shared motor Stop path terminates the workflow cleanly.
 
 ### Flux
 
-- [ ] Same preflight/Enable/Run/Stop semantics as the common identification workflow.
-- [ ] Rs/Ls prerequisites use currently active values.
-- [ ] Result validity and result value are read back after completion.
-- [ ] Apply updates the shared active Flux Parameter.
-- [ ] Failure leaves the application in an observable recoverable state.
+- [x] **[CODE]** Flux preflight requires current/speed limits, pole pairs, active Rs/Ld/Lq and I/F startup current.
+- [x] **[CODE]** Host preflight rejects I/F startup current above the configured current limit.
+- [x] **[CODE]** Flux start/completion/result VALID path shares the same finite Action machinery as Rs/Ls.
+- [x] **[CODE]** Successful Flux completion creates only the Flux Apply candidate, replacing eligibility of older identification types.
+- [x] **[CODE]** Flux Apply refreshes Active Flux through shared Parameter state.
+- [ ] **[HW]** Run Flux to completion with a known motor and verify result/VALID/failure reporting.
+- [ ] **[HW]** Apply Flux and verify Active Flux updates exactly.
+- [ ] **[HW]** Exercise Flux failure/Stop and confirm motor/application remain recoverable.
 
 ### J/B
 
-- [ ] J/B is only available when firmware capability exists.
-- [ ] Flux prerequisite is checked through the established preflight path.
-- [ ] J/B excitation Parameters come from shared Parameter state.
-- [ ] Completion/result/Apply semantics match other identification types.
-- [ ] J/B failure does not leave motor motion owned by an abandoned workflow.
+- [x] **[CODE]** J/B capability comes from firmware Action exposure.
+- [x] **[CODE]** J/B preflight requires current/speed limits, motor model including active Flux, and J/B excitation ratio/frequency.
+- [x] **[CODE]** J/B setup fields use the shared Parameter editor.
+- [x] **[CODE]** J/B completion/result VALID path shares the common Action/readback machinery.
+- [x] **[CODE]** Successful J/B completion creates only the J/B Apply candidate.
+- [x] **[CODE]** J/B Apply refreshes Active J/B through shared Parameter state.
+- [ ] **[HW]** Run J/B to completion and verify identified J/B plus VALID/failure behavior.
+- [ ] **[HW]** Apply J/B and verify Active J/B updates exactly.
+- [ ] **[HW]** Cancel/Stop J/B and confirm no abandoned motor motion/workflow remains.
+
+### Apply / stable presentation
+
+- [x] **[CODE]** Historical `*_VALID` flags alone no longer make an Apply button available.
+- [x] **[CODE]** Application records Apply candidate only after successful Action completion and valid result readback.
+- [x] **[CODE]** Explicit-kind GUI/Automation Apply must match the current Application candidate.
+- [x] **[CODE]** Existing no-kind Application/Tauri Apply remains backward-compatible but resolves only the current candidate.
+- [x] **[CODE]** Apply candidate is cleared once Apply is dispatched, including uncertain transport failure.
+- [x] **[CODE]** Page recreation queries Application candidate rather than reconstructing Apply eligibility from historical VALID flags.
+- [x] **[CODE]** Page recreation can independently derive stable Applied presentation when Active values numerically match the valid identified result.
+- [x] **[CODE]** Identified values remain visible even when an older result is no longer Apply-eligible.
+- [ ] **[HW]** Produce multiple valid identification groups, then confirm only the most recently successful group offers Apply.
+- [ ] **[HW]** Navigate away/back before Apply and confirm the correct candidate remains available.
+- [ ] **[HW]** Reconnect after an old valid result and confirm the Host does not guess an unsafe Apply candidate.
+- [ ] **[HW]** Manually edit an Applied Active parameter and confirm the page no longer implies that unchanged identified result is currently applied.
+
+### Global Stop / failure feedback
+
+- [x] **[CODE]** Motor page does not own an Identification Abort button/path.
+- [x] **[CODE]** Global Stop remains connection-scoped and invokes `ApplicationSession::motor_stop`.
+- [x] **[CODE]** Motor Stop revokes pending workflow starts through MotorGate before dispatch.
+- [x] **[CODE]** Failed finite completion is surfaced in the corresponding identification row.
+- [x] **[CODE]** Firmware failure reason Parameter is available for failed valid-result interpretation.
+- [ ] **[HW]** Verify Stop response latency and final Motor State for each identification type.
+- [ ] **[HW]** Verify a firmware identification failure appears once with useful status/reason and permits rerun.
+
+### Automated guard status
+
+- [x] **[CODE]** Architecture guard enforces semantic Motor/Encoder APIs rather than raw Action discovery.
+- [x] **[CODE]** Added guard that Identification Apply is Application-candidate/kind scoped.
+- [x] **[CODE]** Added guard that commissioning preflight consumes blocking Protection masks.
+- [x] **[CODE]** HostSchema unit coverage includes compiled Parameter default metadata.
+- [ ] **[TEST RUN]** Execute current Rust/frontend tests after these changes.
+- [ ] **[TEST GAP]** Add scripted Application/MotorAction integration coverage for identification start/completion/candidate/apply sequencing if failures appear during real-device verification.
 
 ### Exit criteria
 
-- [ ] Wired
-- [ ] Verified
-- [ ] Regression Guarded
+- [x] **Wired — code-reviewed after shared Apply/preflight/default fixes.**
+- [ ] **Verified — requires current real-device pass.**
+- [ ] **Regression Guarded — static/unit guards added, but current-pass tests have not been executed.**
 
 ---
 

@@ -50,13 +50,14 @@ impl From<&RangeMetadata> for ParameterRangeDto {
 #[serde(rename_all = "camelCase")]
 struct ParameterMetadataDto {
     id: u16, symbol: String, label: String, type_name: String, access: String, persistent: bool,
-    unit: Option<String>, description: String, write_state: Option<String>, range: Option<ParameterRangeDto>,
-    allowed: Vec<SchemaNumberDto>, allowed_symbols: Vec<String>,
+    default: Option<SchemaNumberDto>, unit: Option<String>, description: String, write_state: Option<String>,
+    range: Option<ParameterRangeDto>, allowed: Vec<SchemaNumberDto>, allowed_symbols: Vec<String>,
 }
 impl From<&ParameterMetadata> for ParameterMetadataDto {
     fn from(value: &ParameterMetadata) -> Self {
         Self { id: value.id, symbol: value.symbol.clone(), label: value.label.clone(), type_name: value.type_name.clone(),
-            access: value.access.clone(), persistent: value.persistent, unit: value.unit.clone(), description: value.description.clone(),
+            access: value.access.clone(), persistent: value.persistent, default: value.default.map(Into::into),
+            unit: value.unit.clone(), description: value.description.clone(),
             write_state: value.write_state.clone(), range: value.range.as_ref().map(Into::into),
             allowed: value.allowed.iter().copied().map(Into::into).collect(), allowed_symbols: value.allowed_symbols.clone() }
     }
@@ -74,7 +75,13 @@ struct ActionCompletionDto { txn: u8, action_id: u16, operation: String, status:
 #[serde(rename_all = "camelCase")]
 struct PreflightIssueDto { parameter_id: Option<u16>, reason: String, suggested_domain: &'static str }
 fn preflight_domain_name(domain: PreflightDomain) -> &'static str {
-    match domain { PreflightDomain::LimitsSafety => "limits", PreflightDomain::Motor => "motor", PreflightDomain::Encoder => "encoder", PreflightDomain::Identification => "identification" }
+    match domain {
+        PreflightDomain::LimitsSafety => "limits",
+        PreflightDomain::Motor => "motor",
+        PreflightDomain::Encoder => "encoder",
+        PreflightDomain::Identification => "identification",
+        PreflightDomain::Protection => "events",
+    }
 }
 fn preflight_issue_dto(issue: nmixx_app::PreflightIssue) -> PreflightIssueDto {
     PreflightIssueDto { parameter_id: issue.parameter_id, reason: issue.reason, suggested_domain: preflight_domain_name(issue.suggested_domain) }
@@ -327,6 +334,9 @@ async fn phase_search_preflight(state: State<'_, Mutex<DesktopState>>) -> Result
 fn identification_kind(kind: &str) -> Result<IdentificationKind, String> {
     match kind { "rs_ls" => Ok(IdentificationKind::RsLs), "flux" => Ok(IdentificationKind::Flux), "jb" => Ok(IdentificationKind::Jb), other => Err(format!("unknown identification kind '{other}'")) }
 }
+fn identification_kind_name(kind: IdentificationKind) -> &'static str {
+    match kind { IdentificationKind::RsLs => "rsLs", IdentificationKind::Flux => "flux", IdentificationKind::Jb => "jb" }
+}
 #[tauri::command]
 async fn identification_preflight(state: State<'_, Mutex<DesktopState>>, kind: String) -> Result<Vec<PreflightIssueDto>, String> {
     Ok(application(&state)?.preflight_identification(identification_kind(&kind)?).map_err(|error| error.to_string())?.into_iter().map(preflight_issue_dto).collect())
@@ -348,8 +358,17 @@ async fn identification_start(app_handle: tauri::AppHandle, state: State<'_, Mut
     }
 }
 #[tauri::command]
-async fn identification_apply(state: State<'_, Mutex<DesktopState>>) -> Result<ActionHandleDto, String> {
-    Ok(action_handle_dto(application(&state)?.identification_apply().map_err(|error| error.to_string())?))
+fn identification_apply_candidate(state: State<'_, Mutex<DesktopState>>) -> Result<Option<&'static str>, String> {
+    Ok(application(&state)?.identification_apply_candidate().map_err(|error| error.to_string())?.map(identification_kind_name))
+}
+#[tauri::command]
+async fn identification_apply(state: State<'_, Mutex<DesktopState>>, kind: Option<String>) -> Result<ActionHandleDto, String> {
+    let app = application(&state)?;
+    let handle = match kind {
+        Some(kind) => app.identification_apply_kind(identification_kind(&kind)?),
+        None => app.identification_apply(),
+    }.map_err(|error| error.to_string())?;
+    Ok(action_handle_dto(handle))
 }
 fn start_async_semantic_action(app_handle: tauri::AppHandle, app: ApplicationSession, operation: &str,
     start: impl FnOnce(&ApplicationSession) -> Result<ActionHandle, nmixx_app::ApplicationError>) -> Result<ActionHandleDto, String> {
@@ -519,7 +538,7 @@ fn main() {
             device_list, device_connect, device_disconnect, parameter_list, parameter_read, parameter_read_many,
             parameter_cached_many, parameter_refresh_all, parameter_write, runtime_telemetry, problems_snapshot, problems_recheck,
             problems_clear_history, phase_search_preflight,
-            identification_preflight, identification_start, identification_apply,
+            identification_preflight, identification_start, identification_apply_candidate, identification_apply,
             motor_enable, motor_stop, motor_disable, protection_clear, config_save_available, config_save,
             phase_search_start, homing_start, encoder_set_zero, motion_get, motion_set, motion_preview, motion_run, motion_stop,
             tuning_experiment_defaults, tuning_experiment_start, tuning_experiment_stop, tuning_experiment_status,

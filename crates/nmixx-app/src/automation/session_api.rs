@@ -177,11 +177,17 @@ impl AutomationApi for SessionWorkflowApi {
                 }
             }
             "identification.apply" => {
-                let kind = text(&params,"kind")?;
-                if self.owned.lock().map_err(|_|"workflow lock poisoned")?.identified != Some(kind) {
+                let label = text(&params,"kind")?;
+                let kind = match label {
+                    "rs_ls" => IdentificationKind::RsLs,
+                    "flux" => IdentificationKind::Flux,
+                    "jb" => IdentificationKind::Jb,
+                    _ => return Err("kind must be rs_ls, flux or jb".into()),
+                };
+                if self.owned.lock().map_err(|_|"workflow lock poisoned")?.identified != Some(label) {
                     return Err("Apply requires a matching successful identification from this workflow".into());
                 }
-                let handle = self.app.identification_apply().map_err(|e|e.to_string())?;
+                let handle = self.app.identification_apply_kind(kind).map_err(|e|e.to_string())?;
                 self.owned.lock().map_err(|_|"workflow lock poisoned")?.identified = None;
                 Ok(accepted(handle,true))
             }

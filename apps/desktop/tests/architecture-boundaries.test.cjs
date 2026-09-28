@@ -117,3 +117,23 @@ test("HostSchema persistence metadata owns RAM-modified eligibility", () => {
   assert.match(state, /meta\.persistent/);
   assert.match(persistence, /tracked\.has\(result\.id\)/);
 });
+
+
+test("Identification Apply is scoped by the Application candidate kind", () => {
+  const app = readFileSync(join(repo, "crates/nmixx-app/src/application.rs"), "utf8");
+  const motor = source("motor/MotorPage.svelte");
+  const automation = readFileSync(join(repo, "crates/nmixx-app/src/automation/session_api.rs"), "utf8");
+  assert.match(app, /identification_apply_candidate/);
+  assert.match(app, /pub fn identification_apply\(&self\)/);
+  assert.match(app, /pub fn identification_apply_kind\(&self, kind: IdentificationKind\)/);
+  assert.match(motor, /identificationApplyCandidate/);
+  assert.match(motor, /applyIdentificationAction\(identKey\)/);
+  assert.match(automation, /identification_apply_kind\(kind\)/);
+});
+
+test("Commissioning preflight checks blocking Protection masks", () => {
+  const preflight = readFileSync(join(repo, "crates/nmixx-app/src/preflight.rs"), "utf8");
+  assert.match(preflight, /PARAM_EVENT_ERROR/);
+  assert.match(preflight, /PARAM_EVENT_TRIP/);
+  assert.match(preflight, /PreflightDomain::Protection/);
+});

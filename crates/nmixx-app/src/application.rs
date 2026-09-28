@@ -48,6 +48,10 @@ pub enum ApplicationError {
     #[error("tuning experiment requires motor state ENABLED")] TuningExperimentMotorNotEnabled,
     #[error("required tuning Plot channel '{0}' is not available at the requested rate")] TuningExperimentChannel(String),
     #[error("Parameter synchronization failed: {0}")] ParameterSync(String),
+    #[error("no completed identification result is currently eligible for Apply")]
+    IdentificationApplyUnavailable,
+    #[error("identification Apply candidate is {candidate:?}, not {requested:?}")]
+    IdentificationApplyKindMismatch { requested: IdentificationKind, candidate: IdentificationKind },
     #[error("{0}")] Motion(String),
 }
 
@@ -73,6 +77,7 @@ struct ApplicationInner {
     motion_capabilities: MotionCapabilities,
     commissioning_capabilities: CommissioningCapabilities,
     problems: ProblemService,
+    identification_apply_candidate: Mutex<Option<IdentificationKind>>,
     motion: MotionService,
     scope: Mutex<Option<SharedAcquisition>>,
     tuning_experiment: Mutex<TuningExperimentRuntime>,
@@ -102,7 +107,8 @@ impl ApplicationSession {
         let problems = ProblemService::default();
         let app = Self { inner: Arc::new(ApplicationInner {
             session, schema, parameters, events: Mutex::new(Vec::new()),
-            plot_capabilities: Mutex::new(None), motion_capabilities, commissioning_capabilities, problems, motion,
+            plot_capabilities: Mutex::new(None), motion_capabilities, commissioning_capabilities, problems,
+            identification_apply_candidate: Mutex::new(None), motion,
             scope: Mutex::new(None),
             tuning_experiment: Mutex::new(TuningExperimentRuntime::default()),
             motor_gate: MotorGate::default(), workflow_access: WorkflowAccess::default(), tuning_worker: Mutex::new(None),
@@ -112,11 +118,19 @@ impl ApplicationSession {
             while let Ok(event) = events.recv() {
                 let Some(inner) = weak.upgrade() else { break; };
                 match &event {
-                    SessionEvent::ActionCompleted { .. } => {
+                    SessionEvent::ActionCompleted { handle, status } => {
                         // Application owns readback, even with no page/CLI subscriber. Failed
                         // reads are retained as cache errors instead of reviving old values.
                         let _ = inner.parameters.refresh_all();
                         inner.problems.sync_from_parameters(&inner.parameters, &inner.schema);
+                        if let Some(kind) = identification_kind_for_action(&inner.schema, handle.action_id) {
+                            let candidate = (*status == AxdrStatus::Ok
+                                && identification_result_valid(&inner.schema, &inner.parameters, kind))
+                                .then_some(kind);
+                            if let Ok(mut slot) = inner.identification_apply_candidate.lock() {
+                                *slot = candidate;
+                            }
+                        }
                     }
                     SessionEvent::DeviceEvent(frame) => {
                         if let Ok(Some(status)) = parse_protection_event(frame) {
@@ -321,9 +335,27 @@ impl ApplicationSession {
         if matches!(&result, IdentificationStart::Started(_)) { self.refresh_motor_context()?; }
         Ok(result)
     }
+    pub fn identification_apply_candidate(&self) -> Result<Option<IdentificationKind>, ApplicationError> {
+        Ok(*self.inner.identification_apply_candidate.lock().map_err(|_| ApplicationError::Poisoned)?)
+    }
+    /// Compatibility semantic: apply the one result currently owned by the
+    /// Application. Historical VALID flags are not treated as Apply candidates.
     pub fn identification_apply(&self) -> Result<ActionHandle, ApplicationError> {
+        let kind = self.identification_apply_candidate()?.ok_or(ApplicationError::IdentificationApplyUnavailable)?;
+        self.identification_apply_kind(kind)
+    }
+    pub fn identification_apply_kind(&self, kind: IdentificationKind) -> Result<ActionHandle, ApplicationError> {
         let _workflow = self.workflow_permit()?;
-        let handle = self.motor_actions().identification_apply()?;
+        let candidate = self.identification_apply_candidate()?.ok_or(ApplicationError::IdentificationApplyUnavailable)?;
+        if candidate != kind {
+            return Err(ApplicationError::IdentificationApplyKindMismatch { requested: kind, candidate });
+        }
+        let result = self.motor_actions().identification_apply();
+        // Once Apply has been dispatched, success is uncertain on any transport
+        // failure. Do not leave a stale candidate that could be applied again to
+        // a later firmware Ident_Mode.
+        *self.inner.identification_apply_candidate.lock().map_err(|_| ApplicationError::Poisoned)? = None;
+        let handle = result?;
         self.refresh_after_immediate_action()?;
         Ok(handle)
     }
@@ -551,6 +583,30 @@ impl ApplicationSession {
     }
 }
 
+
+fn identification_kind_for_action(schema: &HostSchema, action_id: u16) -> Option<IdentificationKind> {
+    [
+        ("ACTION_IDENT_RS_LS_START", IdentificationKind::RsLs),
+        ("ACTION_IDENT_FLUX_START", IdentificationKind::Flux),
+        ("ACTION_IDENT_JB_START", IdentificationKind::Jb),
+    ]
+    .into_iter()
+    .find_map(|(symbol, kind)| schema.action_by_key(symbol).filter(|action| action.id == action_id).map(|_| kind))
+}
+
+fn identification_result_valid(
+    schema: &HostSchema,
+    parameters: &ParameterService,
+    kind: IdentificationKind,
+) -> bool {
+    let symbol = match kind {
+        IdentificationKind::RsLs => "PARAM_IDENT_RS_LS_VALID",
+        IdentificationKind::Flux => "PARAM_IDENT_FLUX_VALID",
+        IdentificationKind::Jb => "PARAM_IDENT_JB_VALID",
+    };
+    let Some(metadata) = schema.parameter_by_key(symbol) else { return false; };
+    matches!(parameters.cached(metadata.id), Ok(Some(ParameterValue::U8(1))))
+}
 
 fn protection_parameter_ids(schema: &HostSchema) -> Vec<u16> {
     ["PARAM_EVENT_REPORT", "PARAM_EVENT_WARNING", "PARAM_EVENT_ERROR", "PARAM_EVENT_TRIP"]

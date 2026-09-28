@@ -31,6 +31,7 @@ export type ParameterMetadata = {
   typeName: ParameterTypeName;
   access: string;
   persistent: boolean;
+  default: number | null;
   unit: string | null;
   description: string;
   writeState: string | null;

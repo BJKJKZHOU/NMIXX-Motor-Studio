@@ -117,6 +117,12 @@ A preflight may inspect:
 - previously identified motor data;
 - resources or tasks already in use.
 
+For the current firmware, motor-moving commissioning preflight explicitly reads
+`PARAM_EVENT_ERROR` and `PARAM_EVENT_TRIP`. A non-zero value produces a
+structured Protection issue that points clients to Events / Problems before the
+workflow attempts Enable. Warning/report masks do not by themselves block these
+operations.
+
 Preflight does not implement the identification algorithm itself.
 
 ### GUI business pages

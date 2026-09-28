@@ -5,7 +5,7 @@ export type IdentificationPreflightKind = "rsLs" | "flux" | "jb";
 export type PreflightIssue = {
   parameterId: number | null;
   reason: string;
-  suggestedDomain: "limits" | "motor" | "encoder" | "identification";
+  suggestedDomain: "limits" | "motor" | "encoder" | "identification" | "events";
 };
 
 export function checkIdentificationPreflight(

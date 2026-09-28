@@ -24,7 +24,7 @@ B                —              [...]         B result          —
 
 The columns have different meanings:
 
-- **Default**: firmware-compiled/default value when the Host schema eventually exposes it. Until then the GUI shows `—` rather than inventing a value.
+- **Default**: firmware-compiled/default value exported by the generated HostSchema when available. Missing metadata is shown as `—`; the GUI never invents a default.
 - **Active**: the parameter currently used by firmware control/identification logic. Writable values use the shared Parameter API.
 - **Identified**: the latest valid identification result for the corresponding identification group.
 - **Action**: the semantic identification operation associated with that result.
@@ -82,7 +82,7 @@ The page should present running/success/failure/apply state next to the correspo
 
 `Apply` is an Action, not a direct GUI copy between fields.
 
-The current firmware exposes a shared identification apply action. The Application/UI associates the apply request with the identification result that is currently ready and refreshes the affected Active parameters after completion.
+The current firmware exposes one shared identification Apply action whose device-side meaning is tied to the firmware's current internal identification mode. The Application therefore owns a session-scoped **Apply candidate**: only the identification type whose finite Action most recently completed successfully with a valid result is eligible for Apply. GUI and Automation must pass that type back to the semantic Application API; they must not infer Apply eligibility from historical `*_VALID` flags alone.
 
 The initial mappings are:
 
@@ -102,13 +102,14 @@ J/B result
 
 If an Active value is edited manually after an identified result has been applied, the UI must not continue implying that the active value still represents the unchanged applied result.
 
-Identification presentation must also survive page recreation. When the Motor page is entered, it derives the stable result state from device Parameters rather than assuming `idle`:
+Identification presentation must also survive page recreation without guessing firmware-internal mode:
 
 - result valid and Active values match the identified result -> `Applied`;
-- result valid and Active values differ -> `Apply` remains available;
+- result valid, Active values differ, and Application reports that type as the current Apply candidate -> `Apply`;
+- result valid but no matching Application candidate -> the Identified value remains visible, but Apply is not offered; rerun that identification to create a new candidate;
 - no valid result -> idle.
 
-Transient `Running`, `Applying` and immediate failure feedback remain runtime UI state.
+This deliberately favors correct shared-Action semantics over applying an older valid result to the wrong firmware identification mode. Transient `Running`, `Applying` and immediate failure feedback remain runtime UI state.
 
 ## Identification settings
 
@@ -189,8 +190,8 @@ The current GUI implements:
 - shared I/F startup current when exposed by the Host schema;
 - J/B excitation ratio and frequency when exposed by the Host schema.
 
-Current limitations that must remain explicit rather than simulated:
+Current implementation notes:
 
-- firmware compiled/default values are not yet exported in the current Host schema, so the Default column is `—`;
+- firmware compiled/default motor values are exported by HostSchema and the Default column consumes that generated metadata;
 - additional identification settings appear only when they become intentional Host-visible parameters;
 - detailed internal identification phases remain firmware implementation details.
