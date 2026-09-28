@@ -222,11 +222,19 @@ impl ParameterService {
     }
 
     fn readback_ids(&self, id: u16) -> Result<Vec<u16>, ParameterServiceError> {
-        let symbol = &self.metadata(id)?.symbol;
-        let mut ids = vec![id];
-        ids.extend(self.parameters().iter().filter(|meta| {
-            meta.id != id && meta.access.contains('r') && related_parameter(symbol, &meta.symbol)
-        }).map(|meta| meta.id));
+        let metadata = self.metadata(id)?;
+        let mut ids = Vec::with_capacity(metadata.readback.len() + 1);
+        ids.push(id);
+        for symbol in &metadata.readback {
+            let target = self.schema.parameter_by_symbol(symbol).ok_or_else(|| {
+                ParameterServiceError::Schema(SchemaError::InvalidReadback {
+                    parameter: metadata.symbol.clone(),
+                    target: symbol.clone(),
+                    reason: "target is not present in HostSchema".to_owned(),
+                })
+            })?;
+            ids.push(target.id);
+        }
         Ok(ids)
     }
 
@@ -358,59 +366,8 @@ fn update_cache(
     changed
 }
 
-#[cfg(test)]
-mod linkage_readback_tests {
-    use super::related_parameter;
-
-    #[test]
-    fn motion_limit_write_invalidates_the_effective_speed_view() {
-        assert!(related_parameter("PARAM_MOTION_WM_MAX", "PARAM_LIMIT_WM_EFFECTIVE"));
-    }
-    #[test]
-    fn model_and_encoder_changes_reread_actual_calibration_validity() {
-        for written in ["PARAM_MOTOR_PP", "PARAM_ENCODER_PROTOCOL", "PARAM_ENCODER_SPI_TYPE"] {
-            assert!(related_parameter(written, "PARAM_CAL_VALID"));
-        }
-        assert!(!related_parameter("PARAM_ENCODER_PROTOCOL", "PARAM_POSITION_ZERO_VALID"));
-    }
-    #[test]
-    fn encoder_reset_and_direction_mapping_refresh_user_feedback() {
-        for written in ["PARAM_ENCODER_PROTOCOL", "PARAM_ENCODER_SPI_TYPE", "PARAM_MOTOR_DIR"] {
-            for candidate in ["PARAM_RUN_POSITION", "PARAM_RUN_WM"] {
-                assert!(related_parameter(written, candidate));
-            }
-        }
-    }
-}
-
-// Firmware owns these calculations. The host only rereads their outputs. This small
-// dependency table is shared by every client; pages must not supply readback lists.
-fn related_parameter(written: &str, candidate: &str) -> bool {
-    const CURRENT: &[&str] = &[
-        "PARAM_CTRL_CURRENT_BW_HZ", "PARAM_CTRL_CURRENT_SOURCE",
-        "PARAM_CTRL_ID_KP", "PARAM_CTRL_ID_KI", "PARAM_CTRL_IQ_KP", "PARAM_CTRL_IQ_KI",
-    ];
-    const SPEED: &[&str] = &[
-        "PARAM_CTRL_SPEED_BW_HZ", "PARAM_CTRL_SPEED_SOURCE", "PARAM_CTRL_SPEED_KP", "PARAM_CTRL_SPEED_KI",
-    ];
-    const MODEL: &[&str] = &[
-        "PARAM_MOTOR_PP", "PARAM_MOTOR_RS", "PARAM_MOTOR_LD", "PARAM_MOTOR_LQ",
-        "PARAM_MOTOR_FLUX", "PARAM_MOTOR_J", "PARAM_MOTOR_B",
-    ];
-    (CURRENT.contains(&written) && CURRENT.contains(&candidate))
-        || (SPEED.contains(&written) && SPEED.contains(&candidate))
-        || (MODEL.contains(&written)
-            && (candidate.starts_with("PARAM_CTRL_") || candidate.starts_with("PARAM_LIMIT_")))
-        || (written.starts_with("PARAM_LIMIT_") && candidate.starts_with("PARAM_LIMIT_"))
-        || (written == "PARAM_MOTION_WM_MAX" && candidate == "PARAM_LIMIT_WM_EFFECTIVE")
-        || (written == "PARAM_MOTOR_PP" && candidate == "PARAM_CAL_VALID")
-        || ((written.starts_with("PARAM_ENCODER_") || written == "PARAM_MOTOR_DIR")
-            && (candidate.starts_with("PARAM_ENCODER_") || candidate == "PARAM_CAL_VALID"
-                || candidate == "PARAM_RUN_POSITION" || candidate == "PARAM_RUN_WM"))
-        || (written == "PARAM_MOTOR_MODE"
-            && (candidate == "PARAM_MOTOR_STATE" || candidate.starts_with("PARAM_TARGET_")))
-}
-
+// Firmware/YAML owns dependency declarations. ParameterService only executes
+// the explicit HostSchema readback list after a successful write.
 
 fn validate_static_constraints(
     metadata: &ParameterMetadata,

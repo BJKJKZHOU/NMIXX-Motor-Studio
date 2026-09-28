@@ -32,11 +32,17 @@ selection and uncommitted text are local view state, not firmware parameter copi
 A write validates and sends one firmware value, then rereads the written parameter
 and its affected group in ParameterService. Firmware owns all calculations.
 
-The current affected groups cover current-loop bandwidth/source/gains,
+The affected readback relationships cover current-loop bandwidth/source/gains,
 speed-loop bandwidth/source/gains, model-dependent control and limit values,
 operating limits, encoder/reference configuration and motor-mode targets.
-Only parameters advertised as readable by the loaded schema are included.
-Adding a firmware dependency requires updating this shared table, not each page.
+They are declared once in firmware `Parameter/parameter.yaml` as Host-only
+`host.readback` / `host.readback_prefixes` metadata. The firmware exporter expands
+those declarations into explicit HostSchema `readback` symbols.
+
+ParameterService reads only that HostSchema list after a successful write. It does not
+maintain a second hand-written dependency table, and pages never provide dependent
+readback lists. Adding or changing a dependency therefore starts in firmware YAML,
+while generated firmware C tables/code remain unchanged by this Host-only metadata.
 
 Device read groups and write/readback groups are serialized. Cache changes are
 published as a group after the reads finish. Identical values do not generate a

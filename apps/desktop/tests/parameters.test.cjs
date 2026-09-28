@@ -124,7 +124,9 @@ test("Motion preview implementation uses a cache snapshot, not device reads", ()
 test("dependency readback and changed notification are shared backend responsibilities", () => {
   const source = readFileSync(resolve(desktop, "../../crates/nmixx-app/src/parameter_service.rs"), "utf8");
   assert.match(source, /fn readback_ids/);
+  assert.match(source, /metadata\.readback/);
   assert.match(source, /self\.readback_ids\(id\)/);
+  assert.doesNotMatch(source, /fn related_parameter\b/);
   assert.match(source, /cache\.get\(&id\) != Some\(&entry\)/);
   assert.match(source, /ReadbackFailed/);
 });

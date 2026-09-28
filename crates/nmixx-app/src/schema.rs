@@ -1,3 +1,4 @@
+use std::collections::HashSet;
 use std::fs;
 use std::path::Path;
 
@@ -20,6 +21,8 @@ pub enum SchemaError {
     MissingEnumValue { parameter: String, symbol: String },
     #[error("parameter '{parameter}' enum value '{symbol}' is not a u8 value")]
     InvalidEnumValue { parameter: String, symbol: String },
+    #[error("parameter '{parameter}' has invalid readback target '{target}': {reason}")]
+    InvalidReadback { parameter: String, target: String, reason: String },
 }
 
 #[derive(Debug, Clone, Deserialize)]
@@ -59,6 +62,8 @@ pub struct ParameterMetadata {
     pub allowed: Vec<SchemaNumber>,
     #[serde(default)]
     pub allowed_symbols: Vec<String>,
+    #[serde(default)]
+    pub readback: Vec<String>,
     #[serde(default)]
     pub plot_scale: Option<f64>,
 }
@@ -169,11 +174,60 @@ impl HostSchema {
         if schema.schema_version != 1 {
             return Err(SchemaError::UnsupportedVersion(schema.schema_version));
         }
+        schema.validate_readback()?;
         Ok(schema)
+    }
+
+    fn validate_readback(&self) -> Result<(), SchemaError> {
+        for parameter in &self.parameters {
+            if !parameter.readback.is_empty() && !parameter.access.contains('w') {
+                return Err(SchemaError::InvalidReadback {
+                    parameter: parameter.symbol.clone(),
+                    target: parameter.symbol.clone(),
+                    reason: "readback metadata requires a writable source Parameter".to_owned(),
+                });
+            }
+            let mut seen = HashSet::new();
+            for target in &parameter.readback {
+                if target == &parameter.symbol {
+                    return Err(SchemaError::InvalidReadback {
+                        parameter: parameter.symbol.clone(),
+                        target: target.clone(),
+                        reason: "source Parameter is read back implicitly".to_owned(),
+                    });
+                }
+                if !seen.insert(target) {
+                    return Err(SchemaError::InvalidReadback {
+                        parameter: parameter.symbol.clone(),
+                        target: target.clone(),
+                        reason: "duplicate target".to_owned(),
+                    });
+                }
+                let Some(metadata) = self.parameter_by_symbol(target) else {
+                    return Err(SchemaError::InvalidReadback {
+                        parameter: parameter.symbol.clone(),
+                        target: target.clone(),
+                        reason: "target is not present in HostSchema".to_owned(),
+                    });
+                };
+                if !metadata.access.contains('r') {
+                    return Err(SchemaError::InvalidReadback {
+                        parameter: parameter.symbol.clone(),
+                        target: target.clone(),
+                        reason: "target is not readable".to_owned(),
+                    });
+                }
+            }
+        }
+        Ok(())
     }
 
     pub fn parameter_by_id(&self, id: u16) -> Option<&ParameterMetadata> {
         self.parameters.iter().find(|parameter| parameter.id == id)
+    }
+
+    pub fn parameter_by_symbol(&self, symbol: &str) -> Option<&ParameterMetadata> {
+        self.parameters.iter().find(|parameter| parameter.symbol == symbol)
     }
 
     pub fn parameter_by_key(&self, key: &str) -> Option<&ParameterMetadata> {
@@ -239,12 +293,71 @@ description = "Enable motor"
         assert_eq!(schema.action_by_key("Enable").unwrap().symbol, "ACTION_MOTOR_ENABLE");
     }
     #[test]
+    fn parses_and_validates_parameter_readback_metadata() {
+        let schema = HostSchema::parse(r#"
+schema_version = 1
+protocol = "axdr-canfd-v1"
+
+[source]
+repository = "fixture"
+git_sha = "abc"
+parameter_schema = 1
+
+[[parameters]]
+symbol = "PARAM_SOURCE"
+label = "Source"
+id = 1
+type = "f32"
+access = "rw"
+description = "source"
+readback = ["PARAM_DERIVED"]
+
+[[parameters]]
+symbol = "PARAM_DERIVED"
+label = "Derived"
+id = 2
+type = "f32"
+access = "ro"
+description = "derived"
+"#).unwrap();
+
+        assert_eq!(
+            schema.parameter_by_symbol("PARAM_SOURCE").unwrap().readback,
+            vec!["PARAM_DERIVED".to_owned()]
+        );
+    }
+
+    #[test]
+    fn rejects_unknown_parameter_readback_target() {
+        let error = HostSchema::parse(r#"
+schema_version = 1
+protocol = "axdr-canfd-v1"
+
+[source]
+repository = "fixture"
+git_sha = "abc"
+parameter_schema = 1
+
+[[parameters]]
+symbol = "PARAM_SOURCE"
+label = "Source"
+id = 1
+type = "f32"
+access = "rw"
+description = "source"
+readback = ["PARAM_MISSING"]
+"#).unwrap_err();
+
+        assert!(matches!(error, SchemaError::InvalidReadback { .. }));
+    }
+
+    #[test]
     fn enum_u8_prefers_explicit_allowed_values_and_falls_back_to_ordinal() {
         let explicit = ParameterMetadata {
             symbol: "STATE".into(), label: "State".into(), id: 1, type_name: "u8".into(),
             access: "ro".into(), unit: None, description: String::new(), write_state: None,
             range: None, allowed: vec![SchemaNumber::Integer(4), SchemaNumber::Integer(9)],
-            allowed_symbols: vec!["IDLE".into(), "RUN".into()], plot_scale: None,
+            allowed_symbols: vec!["IDLE".into(), "RUN".into()], readback: Vec::new(), plot_scale: None,
         };
         assert_eq!(explicit.enum_u8("RUN").unwrap(), 9);
         assert_eq!(explicit.enum_symbol_u8(4), Some("IDLE"));
