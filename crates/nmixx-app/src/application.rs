@@ -15,6 +15,7 @@ use crate::preflight::PreflightService;
 use crate::problems::ProblemService;
 #[path = "acquisition.rs"]
 mod acquisition;
+pub use acquisition::RuntimeTelemetry;
 use acquisition::{SharedAcquisition, View};
 #[path = "tuning.rs"]
 mod tuning;
@@ -138,6 +139,9 @@ impl ApplicationSession {
     pub fn is_closing(&self) -> bool { self.inner.motor_gate.is_closed() }
     pub fn runtime_stream_progress(&self) -> Result<crate::RuntimeStreamProgress, ApplicationError> {
         Ok(self.inner.parameters.runtime_stream_progress()?)
+    }
+    pub fn runtime_telemetry(&self) -> Result<RuntimeTelemetry, ApplicationError> {
+        self.with_scope(|source| source.runtime_telemetry())
     }
     pub(crate) fn automation_claim(&self) -> Result<(Self, Arc<std::sync::atomic::AtomicBool>), ApplicationError> {
         let (id, cancelled) = self.inner.workflow_access.claim().map_err(ApplicationError::Motion)?;
@@ -514,6 +518,7 @@ impl ApplicationSession {
         self.with_scope(|source| source.snapshot(View::Scope, window, end_offset))
     }
     pub fn scope_recorded_duration(&self) -> Result<Duration, ApplicationError> { self.with_scope(|source| source.recorded_duration(View::Scope)) }
+    pub fn scope_previewing_baseline(&self) -> Result<bool, ApplicationError> { self.with_scope(|source| source.scope_previewing_baseline()) }
     pub fn scope_config(&self) -> Result<MixedScopeConfig, ApplicationError> { self.with_scope(|source| source.config(View::Scope)) }
     fn read_motion_mode(&self) -> Result<MotionMode, ApplicationError> {
         let metadata = self.inner.schema.parameter_by_key("PARAM_MOTOR_MODE").ok_or_else(|| ApplicationError::Motion("Motor mode is not exposed".to_owned()))?;

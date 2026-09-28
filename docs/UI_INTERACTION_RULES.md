@@ -1,5 +1,7 @@
 # UI Interaction Rules
 
+> **Normative interaction contract.** These rules are not implementation notes and must not be changed merely because current code differs. See `docs/README.md`.
+
 ## Purpose
 
 This document defines interaction rules shared by NMIXX Motor Studio pages. These rules belong to the application workbench rather than to any one Motor, Encoder, Control, Tuning or Analysis page.
@@ -21,7 +23,7 @@ Current page
 
 Bottom status bar
     connection/device identity
-    live Current / Speed / Position
+    live Current / Speed / Position / Vbus
 ```
 
 Do not duplicate the same information in all three areas.
@@ -282,14 +284,21 @@ but single-device sessions should remain visually minimal.
 The right side is right-aligned and keeps this stable order:
 
 ```text
-Current    Speed    Position
+Current    Speed    Position    Vbus
 ```
 
 The intended meanings are:
 
 - **Current**: actual q-axis current `Iq` unless a future product decision explicitly changes the displayed quantity;
 - **Speed**: mechanical speed;
-- **Position**: user mechanical position, retaining the multi-turn `Turn + Theta` representation when appropriate.
+- **Position**: user mechanical position. The persistent status display is derived
+  from the 1 kHz baseline Plot total-turn signal and formats it as `Turn + Theta`
+  for presentation only; it does not replace the exact typed Position Parameter.
+- **Vbus**: sampled DC-bus voltage from the same connection-owned 1 kHz baseline.
+
+Current, Speed, Position and Vbus therefore share one runtime source. The device
+samples that baseline at 1 kHz; the desktop projects the latest values at its
+normal UI refresh cadence rather than issuing four independent Parameter reads.
 
 Page-specific acquisition information such as Scope state, FAST sample rate, selected channels or stream-loss counters belongs to Analysis, not to the global status bar.
 

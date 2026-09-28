@@ -29,7 +29,7 @@ mod stream_pipeline;
 pub use automation::{AutomationApi, AutomationRuntime, AutomationSnapshot, AutomationState, LogLine, OperationEffect, RunControl, ScriptSpec, SessionWorkflowApi, DIAGNOSIS_SCRIPT, ENCODER_TURN_SCRIPT, MOTION_SCRIPT};
 pub use action_completion::{ActionCompletionError, ActionCompletionWaiter};
 pub use application::{
-    ApplicationError, ApplicationSession, TuningExperimentSnapshot, TuningExperimentState,
+    ApplicationError, ApplicationSession, RuntimeTelemetry, TuningExperimentSnapshot, TuningExperimentState,
     TuningExperimentStatus,
 };
 pub use commissioning_capabilities::CommissioningCapabilities;

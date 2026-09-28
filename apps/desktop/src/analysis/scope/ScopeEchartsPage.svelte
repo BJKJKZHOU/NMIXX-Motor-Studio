@@ -394,7 +394,7 @@
 
   onMount(() => {
     refreshUnsubscribe = subscribeRefresh(refreshIntervalMs, () => {
-      if (active && configured && followingLatest && (running || !snapshot)) void refreshSnapshot();
+      if (active && configured && followingLatest && (running || snapshot?.preview || !snapshot)) void refreshSnapshot();
     });
   });
 
@@ -491,7 +491,7 @@
     <div class="scope-spike-meta">
       <span>{followingLatest ? `latest ${viewSpan(viewRange).toFixed(3)} s` : `history ${viewSpan(viewRange).toFixed(3)} s`}</span>
       {#if !followingLatest}<button class="latest-button" onclick={returnToLatest}>Latest</button>{/if}
-      <span>{snapshot?.recordedSeconds?.toFixed(3) ?? "0.000"} s recorded</span>
+      <span>{snapshot?.preview ? "baseline preview" : (snapshot?.recordedSeconds?.toFixed(3) ?? "0.000") + " s recorded"}</span>
       <span>loss {snapshot?.lostFrames ?? 0}</span>
     </div>
     <div class="scope-spike-plot">

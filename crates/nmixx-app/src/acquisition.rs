@@ -5,6 +5,8 @@ use std::collections::{BTreeMap, HashMap};
 use std::sync::{Arc, Mutex};
 use std::time::Duration;
 
+use serde::Serialize;
+
 use crate::mixed_scope::{build_config, SampleSink};
 use crate::parameter_service::ParameterService;
 use crate::{DevicePlotCapabilities, DeviceSession, HostSchema, MixedScopeChannel,
@@ -47,6 +49,15 @@ impl Channel {
         }
         Ok(())
     }
+}
+
+#[derive(Debug, Clone, Copy, Default, PartialEq, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct RuntimeTelemetry {
+    pub current_iq: Option<f32>,
+    pub speed_wm: Option<f32>,
+    pub position_turns: Option<f32>,
+    pub vbus: Option<f32>,
 }
 
 struct Record {
@@ -122,6 +133,9 @@ impl Record {
             .fold(0.0_f64, f64::max);
         Duration::from_secs_f64(seconds)
     }
+    fn latest(&self, id: u16) -> Option<f32> {
+        self.channels.get(&id)?.stream.latest_sample()?.first().copied()
+    }
     fn snapshot(&self, window: Duration, offset: Duration, lost_frames: u64) -> MixedScopeSnapshot {
         let series = self.config.channels.iter().map(|meta| {
             let values = self.channels.get(&meta.id).filter(|channel| channel.meta.rate == meta.rate)
@@ -133,6 +147,33 @@ impl Record {
         }).collect();
         MixedScopeSnapshot { state: self.state(), lost_frames: self.frozen_losses.unwrap_or(lost_frames), series }
     }
+}
+
+fn projected_duration(source: &Record, visible: &MixedScopeConfig) -> Duration {
+    let seconds = visible.channels.iter().filter_map(|meta| {
+        let channel = source.channels.get(&meta.id)?;
+        if channel.meta.rate != meta.rate { return None; }
+        Some(channel.stream.len() as f64 / f64::from(channel.meta.sample_rate_hz))
+    }).fold(0.0_f64, f64::max);
+    Duration::from_secs_f64(seconds)
+}
+
+fn project_snapshot(
+    source: &Record,
+    visible: &MixedScopeConfig,
+    window: Duration,
+    offset: Duration,
+    lost_frames: u64,
+) -> MixedScopeSnapshot {
+    let series = visible.channels.iter().map(|meta| {
+        let values = source.channels.get(&meta.id).filter(|channel| channel.meta.rate == meta.rate)
+            .map(|channel| channel.stream.snapshot_window(
+                (window.as_secs_f64() * f64::from(meta.sample_rate_hz)).ceil().max(1.0) as usize,
+                (offset.as_secs_f64() * f64::from(meta.sample_rate_hz)).round() as usize,
+            ).values).unwrap_or_default();
+        MixedScopeSeries { id: meta.id, sample_rate_hz: meta.sample_rate_hz, values }
+    }).collect();
+    MixedScopeSnapshot { state: StreamState::Stopped, lost_frames, series }
 }
 
 fn check_budget(channels: &[MixedScopeChannel], history: Duration) -> Result<(), MixedScopeError> {
@@ -166,6 +207,7 @@ fn merge_demands(groups: &[&[ScopeSelection]]) -> Vec<ScopeSelection> {
 struct CaptureData {
     baseline: Record,
     scope: Record,
+    scope_has_record: bool,
     tuning: Option<Record>,
     actual: Vec<ScopeSelection>,
     error: Option<String>,
@@ -231,7 +273,7 @@ impl SharedAcquisition {
         // user-owned Scope record stays STOPPED until Scope Run is pressed.
         let scope = Record::new(config.clone(), &config.channels)?;
         let data = Arc::new(Mutex::new(CaptureData {
-            baseline, scope, tuning: None, actual: base.clone(), error: None,
+            baseline, scope, scope_has_record: false, tuning: None, actual: base.clone(), error: None,
         }));
         // The common records own history. The transport decoder needs only one
         // block of scratch history, not another 128 MiB acquisition buffer.
@@ -366,6 +408,7 @@ impl SharedAcquisition {
             record.live();
             record.seed_baseline(&data.baseline)?;
             data.scope = record;
+            data.scope_has_record = true;
         } else {
             let record = data.record_mut(view)?;
             record.clear();
@@ -406,6 +449,7 @@ impl SharedAcquisition {
         self.apply_demand(&demand)?;
         let mut data = self.data.lock().map_err(|_| MixedScopeError::Closed)?;
         data.record_mut(view)?.capture(duration)?;
+        if view == View::Scope { data.scope_has_record = true; }
         data.actual = demand;
         Ok(())
     }
@@ -421,12 +465,35 @@ impl SharedAcquisition {
         }
         Ok(record.status(lost))
     }
+    pub(crate) fn scope_previewing_baseline(&self) -> Result<bool, MixedScopeError> {
+        Ok(!self.data.lock().map_err(|_| MixedScopeError::Closed)?.scope_has_record)
+    }
+    pub(crate) fn runtime_telemetry(&self) -> Result<RuntimeTelemetry, MixedScopeError> {
+        let data = self.data.lock().map_err(|_| MixedScopeError::Closed)?;
+        let latest = |symbol: &str| {
+            self.schema.parameter_by_symbol(symbol).and_then(|meta| data.baseline.latest(meta.id))
+        };
+        Ok(RuntimeTelemetry {
+            current_iq: latest("PARAM_RUN_IQ"),
+            speed_wm: latest("PARAM_RUN_WM"),
+            position_turns: latest("PARAM_RUN_POSITION"),
+            vbus: latest("PARAM_ADC_VBUS"),
+        })
+    }
     pub(crate) fn recorded_duration(&self, view: View) -> Result<Duration, MixedScopeError> {
-        Ok(self.data.lock().map_err(|_| MixedScopeError::Closed)?.record(view)?.duration())
+        let data = self.data.lock().map_err(|_| MixedScopeError::Closed)?;
+        if view == View::Scope && !data.scope_has_record {
+            return Ok(projected_duration(&data.baseline, &data.scope.config));
+        }
+        Ok(data.record(view)?.duration())
     }
     pub(crate) fn snapshot(&self, view: View, window: Duration, offset: Duration) -> Result<MixedScopeSnapshot, MixedScopeError> {
         let lost = self.source.status().map(|status| status.lost_frames).unwrap_or(0);
-        Ok(self.data.lock().map_err(|_| MixedScopeError::Closed)?.record(view)?.snapshot(window, offset, lost))
+        let data = self.data.lock().map_err(|_| MixedScopeError::Closed)?;
+        if view == View::Scope && !data.scope_has_record {
+            return Ok(project_snapshot(&data.baseline, &data.scope.config, window, offset, lost));
+        }
+        Ok(data.record(view)?.snapshot(window, offset, lost))
     }
     pub(crate) fn shutdown(&self) -> Result<(), MixedScopeError> {
         let mut data = self.data.lock().map_err(|_| MixedScopeError::Closed)?;
@@ -467,7 +534,7 @@ mod tests {
         let mut baseline = Record::new(config.clone(), &config.channels).unwrap(); baseline.live();
         let mut scope = Record::new(config.clone(), &config.channels).unwrap(); scope.live();
         let mut tuning = Record::new(config.clone(), &config.channels).unwrap(); tuning.capture(Duration::from_secs(1)).unwrap();
-        let mut data = CaptureData { baseline, scope, tuning: Some(tuning), actual: selections(&config), error: None };
+        let mut data = CaptureData { baseline, scope, scope_has_record: true, tuning: Some(tuning), actual: selections(&config), error: None };
         data.feed(ScopeRate::Normal, &[17], &[1., 2.], 4).unwrap();
         data.scope.stop(StreamState::Stopped);
         for value in 3..10 { data.feed(ScopeRate::Normal, &[17], &[value as f32], 4).unwrap(); }

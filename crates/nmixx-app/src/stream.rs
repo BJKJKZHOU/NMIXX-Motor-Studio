@@ -139,6 +139,15 @@ impl StreamSession {
         self.capacity_samples
     }
 
+    pub fn latest_sample(&self) -> Option<&[f32]> {
+        if self.sample_len == 0 {
+            return None;
+        }
+        let physical = (self.oldest_sample + self.sample_len - 1) % self.capacity_samples;
+        let start = physical * self.config.channel_count;
+        Some(&self.storage[start..start + self.config.channel_count])
+    }
+
     pub fn live(&mut self) {
         self.capture_target = None;
         self.state = StreamState::Live;
@@ -304,6 +313,17 @@ mod tests {
         assert_eq!(snapshot.sample_count(), 4);
         assert_eq!(snapshot.sample(0).unwrap(), &[2.0, -2.0]);
         assert_eq!(snapshot.sample(3).unwrap(), &[5.0, -5.0]);
+    }
+
+    #[test]
+    fn latest_sample_reads_the_ring_tail_without_copying() {
+        let mut stream = StreamSession::new(config()).unwrap();
+        assert_eq!(stream.latest_sample(), None);
+        stream.live();
+        for n in 0..6 {
+            stream.push_sample(&[n as f32, -(n as f32)]).unwrap();
+        }
+        assert_eq!(stream.latest_sample(), Some(&[5.0, -5.0][..]));
     }
 
     #[test]

@@ -4,7 +4,7 @@ use std::time::Duration;
 use nmixx_app::{
     ActionCompletionWaiter, ActionHandle, ApplicationSession, AxdrStatus, CommissioningCapabilities, DEFAULT_USB_BAUD, HostSchema,
     IdentificationKind, IdentificationStart, MixedScopeSeries, MotionCapabilities, MotionConfig, MotionPreview, MotionService,
-    ParameterMetadata, ParameterValue, PositionValue, PreflightDomain, ProblemSnapshot, RangeMetadata,
+    ParameterMetadata, ParameterValue, PositionValue, PreflightDomain, ProblemSnapshot, RangeMetadata, RuntimeTelemetry,
     SchemaNumber, ScopeRate, ScopeSelection, StreamState, TuningExperimentState,
 };
 use serde::{Deserialize, Serialize};
@@ -131,7 +131,14 @@ struct ScopeSeriesDto {
 }
 #[derive(Debug, Serialize)]
 #[serde(rename_all = "camelCase")]
-struct ScopeSnapshotDto { sample_count: usize, recorded_seconds: f64, lost_frames: u64, state: &'static str, series: Vec<ScopeSeriesDto> }
+struct ScopeSnapshotDto {
+    sample_count: usize,
+    recorded_seconds: f64,
+    lost_frames: u64,
+    state: &'static str,
+    preview: bool,
+    series: Vec<ScopeSeriesDto>,
+}
 
 fn scope_series_dto(series: MixedScopeSeries, end_offset_seconds: f64, max_points: usize) -> ScopeSeriesDto {
     let sample_count = series.values.len();
@@ -297,6 +304,10 @@ async fn parameter_refresh_all(state: State<'_, Mutex<DesktopState>>) -> Result<
     Ok(application(&state)?.parameter_refresh_all().map_err(|error| error.to_string())?.into_iter().map(|(id, result)| parameter_result(id, result)).collect())
 }
 #[tauri::command]
+fn runtime_telemetry(state: State<'_, Mutex<DesktopState>>) -> Result<RuntimeTelemetry, String> {
+    application(&state)?.runtime_telemetry().map_err(|error| error.to_string())
+}
+#[tauri::command]
 fn problems_snapshot(state: State<'_, Mutex<DesktopState>>) -> Result<ProblemSnapshot, String> {
     Ok(application(&state)?.problems_snapshot())
 }
@@ -445,7 +456,14 @@ fn tuning_experiment_snapshot(state: State<'_, Mutex<DesktopState>>, window_seco
     let series = snapshot.series.into_iter().map(|series| scope_series_dto(series, end_offset_seconds, max_points)).collect();
     Ok(TuningExperimentSnapshotDto {
         status: tuning_status_dto(status), config: scope_config_dto(&config),
-        snapshot: ScopeSnapshotDto { sample_count: scope_status.samples, recorded_seconds, lost_frames: snapshot.lost_frames, state: stream_state_name(snapshot.state), series },
+        snapshot: ScopeSnapshotDto {
+            sample_count: scope_status.samples,
+            recorded_seconds,
+            lost_frames: snapshot.lost_frames,
+            state: stream_state_name(snapshot.state),
+            preview: false,
+            series,
+        },
         recorded_seconds, window_seconds, end_offset_seconds,
     })
 }
@@ -477,11 +495,19 @@ fn scope_snapshot(state: State<'_, Mutex<DesktopState>>, window_seconds: Option<
     let window = window_seconds.unwrap_or(0.5).clamp(0.0005, recorded_seconds.max(0.0005));
     let max_offset = (recorded_seconds - window).max(0.0);
     let end_offset = end_offset_seconds.unwrap_or(0.0).clamp(0.0, max_offset);
+    let preview = app.scope_previewing_baseline().map_err(|error| error.to_string())?;
     let snapshot = app.scope_snapshot_window(Duration::from_secs_f64(window), Duration::from_secs_f64(end_offset)).map_err(|error| error.to_string())?;
     let max_points = max_points.unwrap_or(2500).clamp(100, 10_000);
     let sample_count = snapshot.series.iter().map(|series| series.values.len()).max().unwrap_or(0);
     let series = snapshot.series.into_iter().map(|series| scope_series_dto(series, end_offset, max_points)).collect();
-    Ok(ScopeSnapshotDto { sample_count, recorded_seconds, lost_frames: snapshot.lost_frames, state: stream_state_name(snapshot.state), series })
+    Ok(ScopeSnapshotDto {
+        sample_count,
+        recorded_seconds,
+        lost_frames: snapshot.lost_frames,
+        state: stream_state_name(snapshot.state),
+        preview,
+        series,
+    })
 }
 fn main() {
     tauri::Builder::default().manage(Mutex::new(DesktopState::default()))
@@ -490,7 +516,7 @@ fn main() {
             automation_commands::automation_start, automation_commands::automation_snapshot,
             automation_commands::automation_cancel, automation_commands::automation_export_log,
             device_list, device_connect, device_disconnect, parameter_list, parameter_read, parameter_read_many,
-            parameter_cached_many, parameter_refresh_all, parameter_write, problems_snapshot, problems_recheck,
+            parameter_cached_many, parameter_refresh_all, parameter_write, runtime_telemetry, problems_snapshot, problems_recheck,
             problems_clear_history, phase_search_preflight,
             identification_preflight, identification_start, identification_apply,
             motor_enable, motor_stop, motor_disable, protection_clear, config_save_available, config_save,

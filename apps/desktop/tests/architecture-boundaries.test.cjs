@@ -88,3 +88,22 @@ test("Events and Problems use the shared Application problem projection", () => 
   assert.match(events, /recheckProblems/);
   assert.match(events, /clearProtection/);
 });
+
+
+test("status bar runtime values come from shared baseline telemetry", () => {
+  const shell = source("App.svelte");
+  assert.match(shell, /runtimeTelemetry/);
+  assert.match(shell, /startRuntimeTelemetryTracking/);
+  assert.match(shell, /Vbus/);
+  assert.match(shell, /const GLOBAL_SYMBOLS = \["PARAM_MOTOR_STATE"\]/);
+  assert.match(shell, /const POLLED_SYMBOLS = \["PARAM_MOTOR_STATE"\]/);
+  assert.doesNotMatch(shell, /PARAM_RUN_POSITION"\] as const/);
+});
+
+test("Scope keeps baseline preview separate from recording state", () => {
+  const scope = source("analysis/scope/ScopeEchartsPage.svelte");
+  assert.match(scope, /snapshot\?\.preview/);
+  assert.match(scope, /running = snapshot\?\.state === "LIVE"/);
+  assert.match(scope, /runtimeChannelIds/);
+  assert.match(scope, /return "normal"/);
+});

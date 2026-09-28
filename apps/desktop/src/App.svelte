@@ -18,22 +18,23 @@
   import { clearProblemsProjection, problemSnapshot, refreshProblems, startProblemsTracking } from "./problems/state";
   import { canSaveParameters, disableMotor, enableMotor, saveParameters, stopMotor } from "./actions/api";
   import { connectParameters, disconnectParameters, parameterState, pollParameters, refreshParameters, saveParameterBaseline, selectParameters } from "./parameters/state";
-  import type { ParameterValue } from "./parameters/types";
   import { motorStateFromParameter } from "./motor/state";
+  import { clearRuntimeTelemetry, refreshRuntimeTelemetry, runtimeTelemetry, startRuntimeTelemetryTracking } from "./runtime/state";
 
   type Page = "connection" | "motor" | "encoder" | "limits" | "control" | "tuning" | "motion" | "analysis" | "parameters" | "events" | "automation";
   type ControlLoopPage = "current" | "speed" | "position";
-  const GLOBAL_SYMBOLS = ["PARAM_MOTOR_STATE", "PARAM_RUN_IQ", "PARAM_RUN_WM", "PARAM_RUN_POSITION"] as const;
-  // Plot position is f32 total turns, not the exact typed turn+rad value.
-  // Keep only that read and non-streamed motor state on the slow polling path.
-  const POLLED_SYMBOLS = ["PARAM_MOTOR_STATE", "PARAM_RUN_POSITION"] as const;
+  const GLOBAL_SYMBOLS = ["PARAM_MOTOR_STATE"] as const;
+  // Motor state is not a Plot signal; runtime Current/Speed/Position/Vbus come
+  // from the connection-owned 1 kHz baseline acquisition instead.
+  const POLLED_SYMBOLS = ["PARAM_MOTOR_STATE"] as const;
   const DEFAULT_SCHEMA_PATH = "../../../AxDr_L_Motor/build/host/axdr-host-schema.toml";
   const SCHEMA_PATH_STORAGE_KEY = "nmixx.connection.hostSchemaPath";
   const globalParameters = selectParameters(GLOBAL_SYMBOLS);
   $: motorState = motorStateFromParameter($globalParameters.metadata.PARAM_MOTOR_STATE, $globalParameters.values.PARAM_MOTOR_STATE);
-  $: currentIq = numeric($globalParameters.values.PARAM_RUN_IQ);
-  $: speedWm = numeric($globalParameters.values.PARAM_RUN_WM);
-  $: positionText = position($globalParameters.values.PARAM_RUN_POSITION);
+  $: currentIq = $runtimeTelemetry.currentIq ?? null;
+  $: speedWm = $runtimeTelemetry.speedWm ?? null;
+  $: positionText = runtimePosition($runtimeTelemetry.positionTurns ?? null);
+  $: vbus = $runtimeTelemetry.vbus ?? null;
   $: activeProblems = $problemSnapshot.active;
   $: topProblem = activeProblems[0];
   let activePage: Page = "connection";
@@ -76,6 +77,7 @@
     const token = ++connectionGeneration;
     clearAutomationProjection();
     clearProblemsProjection();
+    clearRuntimeTelemetry();
     problemsOpen = false;
     connection = next;
     errorText = ""; parameterSaveAvailable = false; saveFeedback = "idle";
@@ -91,13 +93,20 @@
       const available = await canSaveParameters();
       if (token === connectionGeneration) {
         parameterSaveAvailable = available;
+        await refreshRuntimeTelemetry();
         await refreshProblems();
       }
     } catch (error) { if (token === connectionGeneration) setError(error); }
   }
   function pageTitle(page: Page): string { return [...workflowPages, ...toolPages].find((item) => item.id === page)?.title ?? page; }
-  function numeric(value: ParameterValue | null | undefined): number | null { return !value || value.type === "position" ? null : Number(value.value); }
-  function position(value: ParameterValue | null | undefined): string { return value?.type === "position" ? `${value.value.turns} turn + ${Number(value.value.theta).toFixed(3)} rad` : "—"; }
+  function runtimePosition(totalTurns: number | null): string {
+    if (totalTurns === null || !Number.isFinite(totalTurns)) return "—";
+    let turn = Math.floor(totalTurns);
+    let theta = (totalTurns - turn) * Math.PI * 2;
+    if (theta >= Math.PI * 2 - 1e-6) { turn += 1; theta = 0; }
+    if (Object.is(turn, -0)) turn = 0;
+    return `${turn} turn + ${theta.toFixed(3)} rad`;
+  }
   async function refreshAllParameters() {
     if (!connection || readingParameters) return;
     readingParameters = true;
@@ -131,9 +140,10 @@
       if (storedPath?.trim()) connectionSchemaPath = storedPath;
     } catch { /* Use the development default when storage is unavailable. */ }
     const stopStatus = pollParameters(POLLED_SYMBOLS, 500, setError);
+    const stopRuntime = startRuntimeTelemetryTracking(() => !!connection);
     const stopAutomation = startAutomationTracking(() => !!connection);
     const stopProblems = startProblemsTracking(() => !!connection);
-    return () => { stopStatus(); stopAutomation(); stopProblems(); };
+    return () => { stopStatus(); stopRuntime(); stopAutomation(); stopProblems(); };
   });
   onDestroy(() => {
     ++connectionGeneration;
@@ -217,7 +227,7 @@
   </main>
 </div>
 <footer class="statusbar"><div class="connection-status"><span class:connected={!!connection} class="status-dot"></span>{connection ? "AxDr_L" : "Disconnected"}</div><div class="status-spacer"></div>
-  <div class="live-status"><span>Current {currentIq === null ? "—" : `${currentIq.toFixed(3)} A`}</span><span>Speed {speedWm === null ? "—" : `${speedWm.toFixed(3)} rad/s`}</span><span>Position {positionText}</span></div>
+  <div class="live-status"><span>Current {currentIq === null ? "—" : `${currentIq.toFixed(3)} A`}</span><span>Speed {speedWm === null ? "—" : `${speedWm.toFixed(3)} rad/s`}</span><span>Position {positionText}</span><span>Vbus {vbus === null ? "—" : `${vbus.toFixed(2)} V`}</span></div>
 </footer></div>
 
 <style>

@@ -1,5 +1,7 @@
 # Shared runtime acquisition
 
+> **Implementation contract.** This mechanism may evolve, but it must preserve the normative behavior in `ARCHITECTURE.md`, `UI_INTERACTION_RULES.md`, and `SCOPE_PAGE.md`.
+
 ## Data ownership
 
 ```text
@@ -22,6 +24,16 @@ Only this small baseline is always acquired, not the entire parameter dictionary
 Creating the connection starts this baseline only. The Scope recording remains
 STOPPED until an explicit Scope Run; that Run creates the new record and may seed
 it from available recent baseline history.
+
+The baseline also owns the latest RuntimeTelemetry values used by the bottom status
+bar: Iq, Wm, Plot position total turns, and Vbus. The desktop may refresh that
+projection at its normal frame cadence, but no extra device read is generated.
+
+When Scope has never Run, its snapshot API projects selected baseline NORMAL
+channels directly from the rolling baseline and marks that response as a baseline
+preview. Once a Scope record has been created, live/frozen record data takes
+precedence until the next explicit Run; stopped recordings are never replaced by
+newer baseline samples.
 
 `ParameterService` consumes decoded read-only f32 baseline samples without sending
 Read requests. Its cache follows incoming batches; change notifications coalesce

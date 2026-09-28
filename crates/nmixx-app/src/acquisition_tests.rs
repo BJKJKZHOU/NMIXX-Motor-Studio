@@ -55,7 +55,8 @@ fn wait_value(parameters: &ParameterService, value: f32) {
 fn schema() -> HostSchema {
     let mut text = String::from("schema_version=1\nprotocol=\"axdr-canfd-v1\"\n[source]\nrepository=\"test\"\ngit_sha=\"test\"\nparameter_schema=1\n");
     for (id, symbol, ty) in [(4, "PARAM_ADC_VBUS", "f32"), (17, "PARAM_RUN_IQ", "f32"),
-        (18, "PARAM_RUN_UD", "f32"), (1281, "PARAM_RUN_POSITION", "position")] {
+        (18, "PARAM_RUN_UD", "f32"), (1280, "PARAM_RUN_WM", "f32"),
+        (1281, "PARAM_RUN_POSITION", "position")] {
         text.push_str(&format!("\n[[parameters]]\nid={id}\nsymbol=\"{symbol}\"\nlabel=\"{symbol}\"\ntype=\"{ty}\"\naccess=\"ro\"\ndescription=\"test\"\n"));
     }
     HostSchema::parse(&text).unwrap()
@@ -69,7 +70,7 @@ fn baseline_visibility_and_independent_records_share_one_wire_stream() {
     let caps = DevicePlotCapabilities {
         fast_max_channels: 8, normal_max_channels: 15, fast_block_samples: 20,
         fast_rate_hz: 20_000, normal_rate_hz: 1000,
-        channels: [4, 17, 18, 1281].iter().map(|&id| crate::DevicePlotChannel {
+        channels: [4, 17, 18, 1280, 1281].iter().map(|&id| crate::DevicePlotChannel {
             id, modes: crate::PLOT_CAP_NORMAL, fast_scale: 0.0,
         }).collect(),
     };
@@ -82,11 +83,22 @@ fn baseline_visibility_and_independent_records_share_one_wire_stream() {
     wire.sample(0, 1.0); wait_value(&parameters, 1.0);
     source.configure(View::Scope, &[ScopeSelection { id: 17, rate: ScopeRate::Normal }], history).unwrap();
     assert_eq!(source.status(View::Scope).unwrap().state, StreamState::Stopped);
+    assert!(source.scope_previewing_baseline().unwrap());
+    assert_eq!(
+        source.snapshot(View::Scope, history, Duration::ZERO).unwrap().series[0].values,
+        vec![1.0]
+    );
+    let telemetry = source.runtime_telemetry().unwrap();
+    assert_eq!(telemetry.current_iq, Some(1.0));
+    assert_eq!(telemetry.speed_wm, Some(1.0));
+    assert_eq!(telemetry.position_turns, Some(1.0));
+    assert_eq!(telemetry.vbus, Some(1.0));
 
     // Scope Run is the transition that creates the live record. Existing
     // baseline history may seed that new record, as specified by the Scope UX.
     source.live(View::Scope).unwrap();
     assert_eq!(source.status(View::Scope).unwrap().state, StreamState::Live);
+    assert!(!source.scope_previewing_baseline().unwrap());
     wire.sample(1, 2.0); wait_value(&parameters, 2.0);
     assert_eq!(source.snapshot(View::Scope, history, Duration::ZERO).unwrap().series[0].values, vec![1., 2.]);
 

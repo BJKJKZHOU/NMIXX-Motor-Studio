@@ -1,5 +1,7 @@
 # NMIXX Motor Studio architecture
 
+> **Normative architecture contract.** Do not revise these boundaries merely to match a temporary implementation. See `docs/README.md`.
+
 ## Product boundary
 
 NMIXX Motor Studio is centered on a headless Rust Application Runtime.
@@ -460,6 +462,29 @@ Run, Stop and Disable remain distinct:
 - **Disable** removes motor enable and is not an alias for Stop.
 
 Sensorless Speed remains a separate operating mode where the firmware exposes it because startup and observer handover have distinct runtime semantics. Only user-facing Parameters actually exposed by the connected schema are shown.
+
+## Runtime telemetry and Scope ownership
+
+Connection-scoped runtime telemetry and user-owned Scope recording are separate concepts.
+
+```text
+Device Plot NORMAL baseline (1 kHz)
+        |
+        +--> RuntimeTelemetry: Iq / Wm / PositionTotalTurns / Vbus
+        |
+        +--> rolling baseline history
+        |
+        +--> optional Scope record when the user presses Run
+```
+
+The baseline starts with the device session and continues independently of Scope
+Run/Stop. Scope may display baseline NORMAL channels without allocating another
+device channel. Selecting the same baseline ID at FAST rate is no longer the
+baseline view; it becomes an explicit Scope acquisition demand.
+
+The bottom status bar consumes RuntimeTelemetry, not page-local polling and not a
+reconstructed exact Parameter value. Plot position is an f32 total-turn display
+signal; it must not overwrite the exact typed multi-turn Position Parameter.
 
 ## Analysis shares acquisition and plotting infrastructure
 
