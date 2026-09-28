@@ -213,6 +213,30 @@ impl ApplicationSession {
         self.ensure_no_tuning()?;
         Ok(self.inner.session.action_start(action.id)?)
     }
+    /// Expert compatibility entry for nmixxctl action start.
+    ///
+    /// Normal product workflows use semantic methods. This preserves the legacy
+    /// CLI Action behavior without exposing raw transport/session ownership.
+    pub fn expert_action_start(&self, key: &str) -> Result<ActionHandle, ApplicationError> {
+        let action = self.inner.schema.action_by_key(key).ok_or_else(|| ApplicationError::UnknownAction(key.to_owned()))?;
+        match action.symbol.as_str() {
+            "ACTION_MOTOR_STOP" => return self.motor_stop(),
+            "ACTION_MOTOR_DISABLE" => return self.motor_disable(),
+            _ => {}
+        }
+
+        let handle = self.guarded_action_start(key)?;
+        match action.symbol.as_str() {
+            "ACTION_IDENT_APPLY" | "ACTION_POSITION_SET_ZERO" | "ACTION_PROTECTION_CLEAR" => {
+                self.refresh_after_immediate_action()?;
+            }
+            "ACTION_MOTOR_ENABLE" => {
+                self.refresh_motor_context()?;
+            }
+            _ => {}
+        }
+        Ok(handle)
+    }
     pub fn action_completion_waiter(&self) -> Result<ActionCompletionWaiter, ApplicationError> {
         let (sender, receiver) = mpsc::channel();
         self.inner.events.lock().map_err(|_| ApplicationError::Poisoned)?.push(sender);

@@ -1,7 +1,6 @@
 use std::error::Error;
 use std::path::PathBuf;
 use std::str::FromStr;
-use std::sync::mpsc::RecvTimeoutError;
 use std::time::Duration;
 
 use clap::{Parser, Subcommand, ValueEnum};
@@ -11,7 +10,6 @@ use nmixx_app::{
     ParameterMetadata, ParameterType, ParameterValue, PositionCommand, PositionMotionRequest,
     PositionValue, SchemaNumber, SchemaStore, SpeedMotionRequest,
 };
-use nmixx_app::raw::{DeviceSession, SessionEvent};
 
 #[derive(Debug, Parser)]
 #[command(name = "nmixxctl", version, about = "NMIXX Motor Studio CLI")]
@@ -472,16 +470,18 @@ fn run() -> Result<(), Box<dyn Error>> {
             ActionCommand::Start { key, no_wait, timeout } => {
                 let schema = require_schema(schema.as_ref())?;
                 let action = resolve_action_metadata(schema, &key)?;
-                let session = open_raw_session(port.as_deref(), baud)?;
-                let events = if no_wait { None } else { Some(session.subscribe()?) };
-                let handle = session.action_start(action.id)?;
+                let app = open_application(port.as_deref(), baud, schema.clone())?;
+                let completion = if no_wait { None } else { Some(app.action_completion_waiter()?) };
+                let handle = app.expert_action_start(&action.symbol)?;
                 println!(
                     "accepted txn={} action={} (0x{:04X})",
                     handle.txn.get(),
                     action.label,
                     action.id
                 );
-                wait_for_raw_action(events, handle, &action.label, action.id, timeout)?;
+                if let Some(completion) = completion {
+                    wait_for_action(&completion, handle, &action.label, timeout)?;
+                }
             }
         },
     }
@@ -567,38 +567,6 @@ fn wait_for_action(
         }
         status => Err(format!("{label} completed {status:?}").into()),
     }
-}
-
-fn wait_for_raw_action(
-    events: Option<std::sync::mpsc::Receiver<SessionEvent>>,
-    handle: ActionHandle,
-    label: &str,
-    action_id: u16,
-    timeout: u64,
-) -> Result<(), Box<dyn Error>> {
-    let Some(events) = events else { return Ok(()); };
-    loop {
-        match events.recv_timeout(Duration::from_secs(timeout)) {
-            Ok(SessionEvent::ActionCompleted { handle: completed, status }) if completed == handle => {
-                return match status {
-                    AxdrStatus::Ok => { println!("completed OK"); Ok(()) }
-                    other => Err(format!("{label} (0x{action_id:04X}) completed {other:?}").into()),
-                };
-            }
-            Ok(_) => continue,
-            Err(RecvTimeoutError::Timeout) => {
-                return Err(format!("{label} (0x{action_id:04X}) completion timed out after {timeout}s").into());
-            }
-            Err(RecvTimeoutError::Disconnected) => {
-                return Err("device session closed while waiting for action".into());
-            }
-        }
-    }
-}
-
-fn open_raw_session(port: Option<&str>, baud: u32) -> Result<DeviceSession, Box<dyn Error>> {
-    let port = port.ok_or("--port is required for this command")?;
-    Ok(DeviceSession::open_usb(port, baud)?)
 }
 
 fn require_schema(schema: Option<&HostSchema>) -> Result<&HostSchema, Box<dyn Error>> {
