@@ -18,7 +18,6 @@ function apply(snapshot: ProblemSnapshot, token: number) {
 
 export function clearProblemsProjection(): void {
   ++revision;
-  refreshing = false;
   repoll = false;
   problemSnapshot.set(EMPTY);
   problemError.set("");
@@ -32,7 +31,7 @@ export async function refreshProblems(): Promise<void> {
   catch (error) { if (token === revision) problemError.set(String(error)); }
   finally {
     refreshing = false;
-    if (repoll && token === revision) { repoll = false; void refreshProblems(); }
+    if (repoll) { repoll = false; void refreshProblems(); }
   }
 }
 

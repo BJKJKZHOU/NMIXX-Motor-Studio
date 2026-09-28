@@ -168,7 +168,9 @@
       </button>
     </div>
   </div><div class="problems-host">
-    <button class:has-problems={activeProblems.length > 0} class="problems-indicator" disabled={!connection}
+    <button class:problem-error={topProblem?.severity === "FAULT" || topProblem?.severity === "ERROR"}
+      class:problem-warning={topProblem?.severity === "WARNING"} class:problem-info={topProblem?.severity === "INFO"}
+      class="problems-indicator" disabled={!connection}
       title={connection ? "Active problems" : "Connect a device to inspect problems"}
       onclick={() => problemsOpen = !problemsOpen}>
       <i class={`codicon ${topProblem?.severity === "FAULT" || topProblem?.severity === "ERROR" ? "codicon-error" : topProblem?.severity === "WARNING" ? "codicon-warning" : "codicon-info"}`}></i><span>{activeProblems.length}</span>
@@ -231,7 +233,9 @@
   .problems-host { position: relative; flex: 0 0 auto; }
   .problems-indicator { display: inline-flex; align-items: center; gap: 5px; border: 0; background: transparent; color: inherit; padding: 4px 7px; }
   .problems-indicator:not(:disabled) { cursor: pointer; }
-  .problems-indicator.has-problems { color: var(--vscode-errorForeground); }
+  .problems-indicator.problem-error { color: var(--vscode-errorForeground); }
+  .problems-indicator.problem-warning { color: var(--vscode-inputValidation-warningBorder, #cca700); }
+  .problems-indicator.problem-info { color: var(--vscode-descriptionForeground); }
   .problems-popover { position: absolute; top: calc(100% + 6px); right: 0; z-index: 30; width: 320px; padding: 6px; border: 1px solid var(--vscode-panel-border); border-radius: 3px; background: var(--vscode-menu-background, #252526); box-shadow: 0 8px 24px rgba(0,0,0,.35); }
   .problem-summary { width: 100%; display: grid; gap: 5px; padding: 9px 10px; border: 0; text-align: left; color: var(--vscode-menu-foreground, var(--vscode-foreground)); background: transparent; }
   button.problem-summary { cursor: pointer; }
