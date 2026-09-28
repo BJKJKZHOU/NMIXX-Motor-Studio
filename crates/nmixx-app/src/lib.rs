@@ -7,6 +7,7 @@
 mod action_completion;
 mod application;
 mod automation;
+mod commissioning_capabilities;
 mod config_service;
 mod motor_actions;
 mod motor_state;
@@ -31,6 +32,7 @@ pub use application::{
     ApplicationError, ApplicationSession, TuningExperimentSnapshot, TuningExperimentState,
     TuningExperimentStatus,
 };
+pub use commissioning_capabilities::CommissioningCapabilities;
 pub use config_service::ConfigServiceError;
 pub use connection::DEFAULT_USB_BAUD;
 pub use parameter_service::{ParameterServiceError, RuntimeChannelProgress, RuntimeStreamProgress};

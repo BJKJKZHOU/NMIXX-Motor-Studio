@@ -189,13 +189,6 @@ impl MotorActionService {
         self.start_action(IDENT_APPLY)
     }
 
-    pub(crate) fn phase_search_available(&self) -> bool {
-        let Some(mode) = self.schema.parameter_by_key(MOTOR_MODE) else { return false; };
-        mode.enum_u8(PHASE_SEARCH_MODE).is_ok()
-            && self.schema.action_by_key(MOTOR_ENABLE).is_some()
-            && self.schema.action_by_key(MOTOR_RUN).is_some()
-    }
-
     /// Start servo phase search as one application-level operation.
     ///
     /// The current AxDr_L firmware exposes phase search through the generic

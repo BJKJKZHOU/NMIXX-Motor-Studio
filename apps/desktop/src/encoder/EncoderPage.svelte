@@ -1,12 +1,12 @@
 <script lang="ts">
-  import { onMount, untrack } from "svelte";
+  import { onMount } from "svelte";
   import type { ConnectionInfo } from "../connection/types";
   import { selectParameters } from "../parameters/state";
   import { createParameterEditor } from "../parameters/editor";
   import { modifiedParameterIds } from "../parameters/persistence";
   import { parameterEnumSymbol, parameterEnumValue } from "../parameters/codec";
-  import { listActions, onActionCompleted, onMotorStopIssued } from "../actions/api";
-  import type { ActionCompletion, ActionHandle, ActionMetadata } from "../actions/types";
+  import { onActionCompleted, onMotorStopIssued } from "../actions/api";
+  import type { ActionCompletion, ActionHandle } from "../actions/types";
   import { setPositionZero, startHoming as startHomingAction, startPhaseSearch as startPhaseSearchAction } from "./api";
 
   type Props = { connection: ConnectionInfo | undefined; onError?: (error: unknown) => void };
@@ -20,9 +20,6 @@
   const ENCODER_SPI_TYPE_SYMBOL = "PARAM_ENCODER_SPI_TYPE";
   const ABZ_PPR_SYMBOL = "PARAM_ENCODER_ABZ_PPR";
   const ZERO_VALID_SYMBOL = "PARAM_POSITION_ZERO_VALID";
-  const PHASE_SEARCH_ACTION = "ACTION_PHASE_SEARCH_START";
-  const SET_ZERO_ACTION = "ACTION_POSITION_SET_ZERO";
-  const HOMING_ACTION = "ACTION_HOME_START";
   const ALL_PARAMETER_SYMBOLS = [PHASE_CURRENT_SYMBOL, MOTOR_DIR_SYMBOL,
     ENCODER_PROTOCOL_SYMBOL, ENCODER_SPI_TYPE_SYMBOL, ABZ_PPR_SYMBOL, ZERO_VALID_SYMBOL];
 
@@ -37,7 +34,6 @@
   let encoderSpiTypeValue = $derived(numericValue(ENCODER_SPI_TYPE_SYMBOL));
   let motorDirectionValue = $derived(numericValue(MOTOR_DIR_SYMBOL) === -1 ? "reversed"
     : numericValue(MOTOR_DIR_SYMBOL) === 1 ? "normal" : "");
-  let actions = $state<Record<string, ActionMetadata>>({});
   let phaseState = $state<PhaseState>("idle");
   let phaseMessage = $state("");
   let pendingPhaseHandle = $state<string | null>(null);
@@ -47,18 +43,10 @@
   let zeroActionBusy = $state(false);
 
   $effect(() => {
-    const activeConnection = connection;
-    let disposed = false;
-    actions = {};
+    connection;
     phaseState = "idle"; phaseMessage = ""; pendingPhaseHandle = null;
     homingState = "idle"; homingMessage = ""; pendingHomingHandle = null;
     zeroActionBusy = false;
-    if (activeConnection) untrack(() => {
-      void listActions().then((registry) => {
-        if (!disposed) actions = Object.fromEntries(registry.map((item) => [item.symbol, item]));
-      }).catch((error) => { if (!disposed) onError(error); });
-    });
-    return () => { disposed = true; };
   });
 
   onMount(() => {
@@ -84,10 +72,10 @@
   }
   function unitFor(symbol: string): string { return metadata[symbol]?.unit ?? ""; }
   function parameterLabel(symbol: string, fallback?: string): string { return metadata[symbol]?.label ?? fallback ?? "Unavailable"; }
-  function actionLabel(symbol: string, fallback?: string): string { return actions[symbol]?.label ?? fallback ?? "Unavailable"; }
   function isWritable(symbol: string): boolean { return !$parameters.loading && !$parameters.saving && (metadata[symbol]?.access.includes("w") ?? false); }
-  function actionAvailable(symbol: string): boolean { return !!actions[symbol]; }
-  function phaseSearchAvailable(): boolean { return connection?.phaseSearchAvailable ?? false; }
+  function phaseSearchAvailable(): boolean { return connection?.commissioning?.phaseSearch ?? false; }
+  function setZeroAvailable(): boolean { return connection?.commissioning?.positionSetZero ?? false; }
+  function homingAvailable(): boolean { return connection?.commissioning?.homing ?? false; }
   function enumLabel(symbol: string): string { return symbol.replace(/^ENC_PROTOCOL_/, "").replace(/^ENC_SPI_/, "").replaceAll("_", " "); }
   function enumOptions(symbol: string): EnumOption[] {
     const meta = metadata[symbol];
@@ -122,26 +110,26 @@
     catch (error) { phaseState = "failed"; phaseMessage = String(error); onError(error); }
   }
   function handleActionCompleted(completion: ActionCompletion) {
-    if (phaseState === "running" && (completion.symbol === PHASE_SEARCH_ACTION || handleKey(completion) === pendingPhaseHandle)) {
+    if (phaseState === "running" && (completion.operation === "encoder.phaseSearch" || handleKey(completion) === pendingPhaseHandle)) {
       pendingPhaseHandle = null;
       phaseState = completion.ok ? "success" : "failed";
       phaseMessage = completion.ok ? "" : completion.status;
       return;
     }
-    if (homingState === "running" && (completion.symbol === HOMING_ACTION || handleKey(completion) === pendingHomingHandle)) {
+    if (homingState === "running" && (completion.operation === "encoder.homing" || handleKey(completion) === pendingHomingHandle)) {
       pendingHomingHandle = null;
       homingState = completion.ok ? "success" : "failed";
       homingMessage = completion.ok ? "" : completion.status;
     }
   }
   async function setCurrentAsZero() {
-    if (!actionAvailable(SET_ZERO_ACTION) || zeroActionBusy) return;
+    if (!setZeroAvailable() || zeroActionBusy) return;
     zeroActionBusy = true;
     try { await setPositionZero(); }
     catch (error) { onError(error); } finally { zeroActionBusy = false; }
   }
   async function startHoming() {
-    if (!actionAvailable(HOMING_ACTION) || homingState === "running") return;
+    if (!homingAvailable() || homingState === "running") return;
     homingState = "running"; homingMessage = "";
     try { pendingHomingHandle = handleKey(await startHomingAction()); }
     catch (error) { homingState = "failed"; homingMessage = String(error); onError(error); }
@@ -212,7 +200,7 @@
                   <!-- svelte-ignore a11y_click_events_have_key_events a11y_no_static_element_interactions -->
                   <vscode-button secondary disabled={!phaseSearchAvailable() || phaseState === "running"}
                     title={phaseSearchAvailable() ? "Start phase search" : "Required phase-search capabilities are not exposed by this firmware"}
-                    onclick={() => void startPhaseSearch()}>{actionLabel(PHASE_SEARCH_ACTION, "Start")}</vscode-button>
+                    onclick={() => void startPhaseSearch()}>Start</vscode-button>
                   {#if phaseState === "running"}<span class="action-status state-running"><i class="codicon codicon-loading codicon-modifier-spin"></i> Running</span>
                   {:else if phaseState === "success"}<span class="action-status state-success"><i class="codicon codicon-check"></i> Success</span>
                   {:else if phaseState === "stopped"}<span class="action-status muted"><i class="codicon codicon-debug-stop"></i> Stopped</span>
@@ -236,18 +224,18 @@
               <div class="section-title">Mechanical Reference</div>
               <div class="reference-row"><span class="field-label">{parameterLabel(ZERO_VALID_SYMBOL, "Zero reference")}</span><span class="readonly-value">{zeroReferenceText()}</span></div>
               <div class="reference-actions">
-                <vscode-button secondary disabled={!actionAvailable(SET_ZERO_ACTION) || zeroActionBusy}
-                  title={actionAvailable(SET_ZERO_ACTION) ? "Set current position as mechanical zero" : "Firmware/Application zero action is not exposed yet"}
-                  onclick={() => void setCurrentAsZero()}>{actionLabel(SET_ZERO_ACTION, "Set Current as Zero")}</vscode-button>
-                <vscode-button secondary disabled={!actionAvailable(HOMING_ACTION) || homingState === "running"}
-                  title={actionAvailable(HOMING_ACTION) ? "Start software homing" : "Firmware/Application homing action is not exposed yet"}
-                  onclick={() => void startHoming()}>{actionLabel(HOMING_ACTION, "Software Homing")}</vscode-button>
+                <vscode-button secondary disabled={!setZeroAvailable() || zeroActionBusy}
+                  title={setZeroAvailable() ? "Set current position as mechanical zero" : "Position-zero operation is not exposed by this firmware"}
+                  onclick={() => void setCurrentAsZero()}>Set Current as Zero</vscode-button>
+                <vscode-button secondary disabled={!homingAvailable() || homingState === "running"}
+                  title={homingAvailable() ? "Start software homing" : "Homing operation is not exposed by this firmware"}
+                  onclick={() => void startHoming()}>Software Homing</vscode-button>
               </div>
               {#if homingState === "running"}<div class="action-status state-running"><i class="codicon codicon-loading codicon-modifier-spin"></i> Homing</div>
               {:else if homingState === "success"}<div class="action-status state-success"><i class="codicon codicon-check"></i> Homed</div>
               {:else if homingState === "stopped"}<div class="action-status muted"><i class="codicon codicon-debug-stop"></i> Homing stopped</div>
               {:else if homingState === "failed"}<div class="action-status state-failed" title={homingMessage}><i class="codicon codicon-error"></i> Homing failed</div>{/if}
-              {#if !metadata[ZERO_VALID_SYMBOL] && !actionAvailable(SET_ZERO_ACTION) && !actionAvailable(HOMING_ACTION)}<div class="future-note">Firmware unavailable</div>{/if}
+              {#if !metadata[ZERO_VALID_SYMBOL] && !setZeroAvailable() && !homingAvailable()}<div class="future-note">Firmware unavailable</div>{/if}
             </section>
           </aside>
         </div>

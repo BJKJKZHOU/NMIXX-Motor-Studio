@@ -2,7 +2,7 @@ mod automation_commands;
 use std::sync::Mutex;
 use std::time::Duration;
 use nmixx_app::{
-    ActionCompletionWaiter, ActionHandle, ActionMetadata, ApplicationSession, AxdrStatus, DEFAULT_USB_BAUD, HostSchema,
+    ActionCompletionWaiter, ActionHandle, ApplicationSession, AxdrStatus, CommissioningCapabilities, DEFAULT_USB_BAUD, HostSchema,
     IdentificationKind, IdentificationStart, MixedScopeSeries, MotionCapabilities, MotionConfig, MotionPreview,
     ParameterMetadata, ParameterValue, PositionValue, PreflightDomain, RangeMetadata,
     SchemaNumber, ScopeRate, ScopeSelection, StreamState, TuningExperimentState,
@@ -20,7 +20,7 @@ struct PlotChannelDto { id: u16, label: String, unit: Option<String>, supports_f
 struct ConnectionDto {
     port: String, fast_max_channels: u8, normal_max_channels: u8, fast_block_samples: u8,
     fast_rate_hz: u32, normal_rate_hz: u32, channels: Vec<PlotChannelDto>, motion: MotionCapabilities,
-    runtime_channel_ids: Vec<u16>, phase_search_available: bool,
+    commissioning: CommissioningCapabilities, runtime_channel_ids: Vec<u16>,
 }
 #[derive(Debug, Clone, Copy, Serialize)]
 #[serde(untagged)]
@@ -56,20 +56,14 @@ impl From<&ParameterMetadata> for ParameterMetadataDto {
     }
 }
 #[derive(Debug, Serialize)]
-#[serde(rename_all = "camelCase")]
-struct ActionMetadataDto { id: u16, symbol: String, label: String, description: String }
-impl From<&ActionMetadata> for ActionMetadataDto {
-    fn from(value: &ActionMetadata) -> Self { Self { id: value.id, symbol: value.symbol.clone(), label: value.label.clone(), description: value.description.clone() } }
-}
-#[derive(Debug, Serialize)]
 #[serde(tag = "status", rename_all = "snake_case")]
 enum IdentificationStartDto { Blocked { issues: Vec<PreflightIssueDto> }, RequiresEnable, Started { handle: ActionHandleDto } }
 #[derive(Debug, Clone, Serialize)]
 #[serde(rename_all = "camelCase")]
-struct ActionHandleDto { txn: u8, action_id: u16, symbol: String }
+struct ActionHandleDto { txn: u8, action_id: u16 }
 #[derive(Debug, Clone, Serialize)]
 #[serde(rename_all = "camelCase")]
-struct ActionCompletionDto { txn: u8, action_id: u16, symbol: String, status: String, ok: bool }
+struct ActionCompletionDto { txn: u8, action_id: u16, operation: String, status: String, ok: bool }
 #[derive(Debug, Serialize)]
 #[serde(rename_all = "camelCase")]
 struct PreflightIssueDto { parameter_id: Option<u16>, reason: String, suggested_domain: &'static str }
@@ -200,7 +194,7 @@ fn spawn_parameter_change_bridge(app_handle: tauri::AppHandle, changes: std::syn
         while let Ok(ids) = changes.recv() { if !ids.is_empty() { let _ = app_handle.emit("parameters-changed", ids); } }
     });
 }
-fn spawn_action_completion(app_handle: tauri::AppHandle, completion: ActionCompletionWaiter, handle: ActionHandle, symbol: String) {
+fn spawn_action_completion(app_handle: tauri::AppHandle, completion: ActionCompletionWaiter, handle: ActionHandle, operation: String) {
     std::thread::spawn(move || {
         let (status, ok) = match completion.wait(handle, None) {
             Ok(status) => (format!("{status:?}"), status == AxdrStatus::Ok),
@@ -208,11 +202,11 @@ fn spawn_action_completion(app_handle: tauri::AppHandle, completion: ActionCompl
         };
         // Application updates its shared Parameter cache before forwarding finite
         // Action completion to this waiter.
-        let payload = ActionCompletionDto { txn: handle.txn.get(), action_id: handle.action_id, symbol, status, ok };
+        let payload = ActionCompletionDto { txn: handle.txn.get(), action_id: handle.action_id, operation, status, ok };
         let _ = app_handle.emit("action-completed", payload);
     });
 }
-fn action_handle_dto(handle: ActionHandle, symbol: String) -> ActionHandleDto { ActionHandleDto { txn: handle.txn.get(), action_id: handle.action_id, symbol } }
+fn action_handle_dto(handle: ActionHandle) -> ActionHandleDto { ActionHandleDto { txn: handle.txn.get(), action_id: handle.action_id } }
 
 #[tauri::command]
 fn device_list() -> Result<Vec<String>, String> { ApplicationSession::available_usb_ports().map_err(|error| error.to_string()) }
@@ -235,8 +229,9 @@ async fn device_connect(app_handle: tauri::AppHandle, state: State<'_, Mutex<Des
     let runtime_channel_ids = app.runtime_start().map_err(|error| error.to_string())?;
     let result = ConnectionDto { port: port.clone(), fast_max_channels: capabilities.fast_max_channels,
         normal_max_channels: capabilities.normal_max_channels, fast_block_samples: capabilities.fast_block_samples,
-        fast_rate_hz: capabilities.fast_rate_hz, normal_rate_hz: capabilities.normal_rate_hz, channels, motion: app.motion_capabilities().clone(),
-        runtime_channel_ids, phase_search_available: app.phase_search_available() };
+        fast_rate_hz: capabilities.fast_rate_hz, normal_rate_hz: capabilities.normal_rate_hz, channels,
+        motion: app.motion_capabilities().clone(), commissioning: app.commissioning_capabilities().clone(),
+        runtime_channel_ids };
     let mut guard = state.lock().map_err(|_| "desktop state is poisoned".to_owned())?;
     guard.app = Some(app); guard.port = Some(port);
     Ok(result)
@@ -309,68 +304,66 @@ async fn identification_preflight(state: State<'_, Mutex<DesktopState>>, kind: S
 #[tauri::command]
 async fn identification_start(app_handle: tauri::AppHandle, state: State<'_, Mutex<DesktopState>>, kind: String, allow_enable: bool) -> Result<IdentificationStartDto, String> {
     let kind_value = identification_kind(&kind)?;
-    let symbol = match kind_value { IdentificationKind::RsLs => "ACTION_IDENT_RS_LS_START", IdentificationKind::Flux => "ACTION_IDENT_FLUX_START", IdentificationKind::Jb => "ACTION_IDENT_JB_START" };
+    let operation = match kind_value { IdentificationKind::RsLs => "identification.rsLs", IdentificationKind::Flux => "identification.flux", IdentificationKind::Jb => "identification.jb" };
     let app = application(&state)?;
     let completion = app.action_completion_waiter().map_err(|error| error.to_string())?;
     match app.identification_start(kind_value, allow_enable).map_err(|error| error.to_string())? {
         IdentificationStart::Blocked(issues) => Ok(IdentificationStartDto::Blocked { issues: issues.into_iter().map(preflight_issue_dto).collect() }),
         IdentificationStart::RequiresEnable => Ok(IdentificationStartDto::RequiresEnable),
         IdentificationStart::Started(handle) => {
-            let dto = action_handle_dto(handle, symbol.to_owned());
-            spawn_action_completion(app_handle, completion, handle, symbol.to_owned());
+            let dto = action_handle_dto(handle);
+            spawn_action_completion(app_handle, completion, handle, operation.to_owned());
             Ok(IdentificationStartDto::Started { handle: dto })
         }
     }
 }
 #[tauri::command]
 async fn identification_apply(state: State<'_, Mutex<DesktopState>>) -> Result<ActionHandleDto, String> {
-    Ok(action_handle_dto(application(&state)?.identification_apply().map_err(|error| error.to_string())?, "ACTION_IDENT_APPLY".to_owned()))
+    Ok(action_handle_dto(application(&state)?.identification_apply().map_err(|error| error.to_string())?))
 }
-#[tauri::command]
-fn action_list(state: State<'_, Mutex<DesktopState>>) -> Result<Vec<ActionMetadataDto>, String> { Ok(application(&state)?.schema().actions.iter().map(Into::into).collect()) }
-fn start_async_semantic_action(app_handle: tauri::AppHandle, app: ApplicationSession, symbol: &str,
+fn start_async_semantic_action(app_handle: tauri::AppHandle, app: ApplicationSession, operation: &str,
     start: impl FnOnce(&ApplicationSession) -> Result<ActionHandle, nmixx_app::ApplicationError>) -> Result<ActionHandleDto, String> {
     let completion = app.action_completion_waiter().map_err(|error| error.to_string())?;
     let handle = start(&app).map_err(|error| error.to_string())?;
-    let result = action_handle_dto(handle, symbol.to_owned());
-    spawn_action_completion(app_handle, completion, handle, symbol.to_owned());
+    let result = action_handle_dto(handle);
+    spawn_action_completion(app_handle, completion, handle, operation.to_owned());
     Ok(result)
 }
 #[tauri::command]
 async fn motor_enable(state: State<'_, Mutex<DesktopState>>) -> Result<ActionHandleDto, String> {
-    Ok(action_handle_dto(application(&state)?.motor_enable().map_err(|error| error.to_string())?, "ACTION_MOTOR_ENABLE".to_owned()))
+    Ok(action_handle_dto(application(&state)?.motor_enable().map_err(|error| error.to_string())?))
 }
 #[tauri::command]
 async fn motor_stop(app_handle: tauri::AppHandle, state: State<'_, Mutex<DesktopState>>) -> Result<ActionHandleDto, String> {
     let handle = application(&state)?.motor_stop().map_err(|error| error.to_string())?;
     let _ = app_handle.emit("motor-stop-issued", ());
-    Ok(action_handle_dto(handle, "ACTION_MOTOR_STOP".to_owned()))
+    Ok(action_handle_dto(handle))
 }
 #[tauri::command]
 async fn motor_disable(state: State<'_, Mutex<DesktopState>>) -> Result<ActionHandleDto, String> {
-    Ok(action_handle_dto(application(&state)?.motor_disable().map_err(|error| error.to_string())?, "ACTION_MOTOR_DISABLE".to_owned()))
+    Ok(action_handle_dto(application(&state)?.motor_disable().map_err(|error| error.to_string())?))
 }
 #[tauri::command]
 fn config_save_available(state: State<'_, Mutex<DesktopState>>) -> Result<bool, String> { Ok(application(&state)?.config_save_available()) }
 #[tauri::command]
 async fn config_save(state: State<'_, Mutex<DesktopState>>) -> Result<ActionHandleDto, String> {
-    Ok(action_handle_dto(application(&state)?.config_save().map_err(|error| error.to_string())?, "ACTION_PARAMETER_SAVE".to_owned()))
+    Ok(action_handle_dto(application(&state)?.config_save().map_err(|error| error.to_string())?))
 }
 #[tauri::command]
 async fn phase_search_start(app_handle: tauri::AppHandle, state: State<'_, Mutex<DesktopState>>) -> Result<ActionHandleDto, String> {
-    start_async_semantic_action(app_handle, application(&state)?, "ACTION_PHASE_SEARCH_START", |app| app.phase_search_start())
+    start_async_semantic_action(app_handle, application(&state)?, "encoder.phaseSearch", |app| app.phase_search_start())
 }
 #[tauri::command]
 async fn homing_start(app_handle: tauri::AppHandle, state: State<'_, Mutex<DesktopState>>) -> Result<ActionHandleDto, String> {
-    start_async_semantic_action(app_handle, application(&state)?, "ACTION_HOME_START", |app| app.homing_start())
+    start_async_semantic_action(app_handle, application(&state)?, "encoder.homing", |app| app.homing_start())
 }
 #[tauri::command]
 async fn encoder_set_zero(state: State<'_, Mutex<DesktopState>>) -> Result<ActionHandleDto, String> {
-    Ok(action_handle_dto(application(&state)?.encoder_set_zero().map_err(|error| error.to_string())?, "ACTION_POSITION_SET_ZERO".to_owned()))
+    Ok(action_handle_dto(application(&state)?.encoder_set_zero().map_err(|error| error.to_string())?))
 }
 #[tauri::command]
 async fn protection_clear(state: State<'_, Mutex<DesktopState>>) -> Result<ActionHandleDto, String> {
-    Ok(action_handle_dto(application(&state)?.protection_clear().map_err(|error| error.to_string())?, "ACTION_PROTECTION_CLEAR".to_owned()))
+    Ok(action_handle_dto(application(&state)?.protection_clear().map_err(|error| error.to_string())?))
 }
 #[tauri::command]
 fn motion_get(state: State<'_, Mutex<DesktopState>>) -> Result<MotionConfig, String> { Ok(application(&state)?.motion_get()) }
@@ -480,7 +473,7 @@ fn main() {
             automation_commands::automation_cancel, automation_commands::automation_export_log,
             device_list, device_connect, device_disconnect, parameter_list, parameter_read, parameter_read_many,
             parameter_cached_many, parameter_refresh_all, parameter_write, phase_search_preflight,
-            identification_preflight, identification_start, identification_apply, action_list,
+            identification_preflight, identification_start, identification_apply,
             motor_enable, motor_stop, motor_disable, protection_clear, config_save_available, config_save,
             phase_search_start, homing_start, encoder_set_zero, motion_get, motion_set, motion_preview, motion_run, motion_stop,
             tuning_experiment_defaults, tuning_experiment_start, tuning_experiment_stop, tuning_experiment_status,

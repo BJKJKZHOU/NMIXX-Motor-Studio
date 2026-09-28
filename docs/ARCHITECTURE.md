@@ -79,7 +79,7 @@ Normal product clients must not assemble `DeviceSession + ParameterService + Sco
 
 Host-only models that are meaningful while disconnected, such as the editable Motion command model and theoretical preview, may outlive a device connection. When connected, the same shared model instance is injected into `ApplicationSession`; a second copy must not be created.
 
-The Application API exposes domain concepts such as `parameter.get`, `motor.enable`, `motor.disable`, `motor.stop`, `motion.run`, `encoder.phase_search`, `config.save` and `protection.clear`, not raw CAN IDs or payload bytes. HostSchema Action metadata may be listed or inspected, but normal product clients do not execute arbitrary schema Actions through a generic dispatch endpoint.
+The Application API exposes domain concepts such as `parameter.get`, `motor.enable`, `motor.disable`, `motor.stop`, `motion.run`, `encoder.phase_search`, `config.save` and `protection.clear`, not raw CAN IDs or payload bytes. HostSchema Action metadata may be listed or inspected, but normal product clients do not execute arbitrary schema Actions through a generic dispatch endpoint. GUI pages also use Application-level capability discovery for semantic operations; they do not inspect `ACTION_*` symbols to decide which workflow buttons exist.
 
 ### clients
 

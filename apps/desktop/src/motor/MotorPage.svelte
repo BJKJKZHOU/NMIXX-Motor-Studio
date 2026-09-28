@@ -6,28 +6,28 @@
   import { parameterText } from "../parameters/codec";
   import type { ParameterValue } from "../parameters/types";
   import { modifiedParameterIds } from "../parameters/persistence";
-  import { applyIdentification as applyIdentificationAction, listActions, onActionCompleted, startIdentification as startIdentificationAction } from "../actions/api";
-  import type { ActionCompletion, ActionHandle, ActionMetadata } from "../actions/types";
+  import { applyIdentification as applyIdentificationAction, onActionCompleted, startIdentification as startIdentificationAction } from "../actions/api";
+  import type { ActionCompletion, ActionHandle } from "../actions/types";
 
   type Props = { connection: ConnectionInfo | undefined; onError?: (error: unknown) => void };
   type IdentKey = "rsLs" | "flux" | "jb";
   type IdentPhase = "idle" | "running" | "ready" | "applying" | "applied" | "failed";
   type IdentState = { phase: IdentPhase; message: string };
-  type IdentConfig = { startAction: string; validSymbol: string; resultSymbols: string[]; activeSymbols: string[] };
+  type IdentConfig = { label: string; operation: string; validSymbol: string; resultSymbols: string[]; activeSymbols: string[] };
   type RowSpec = { activeSymbol: string; identifiedSymbol?: string; identifiedValidSymbol?: string; identKey?: IdentKey };
 
   const IDENT_CONFIGS: Record<IdentKey, IdentConfig> = {
     rsLs: {
-      startAction: "ACTION_IDENT_RS_LS_START", validSymbol: "PARAM_IDENT_RS_LS_VALID",
+      label: "Rs/Ls", operation: "identification.rsLs", validSymbol: "PARAM_IDENT_RS_LS_VALID",
       resultSymbols: ["PARAM_IDENT_RS_RESULT", "PARAM_IDENT_LS_RESULT"],
       activeSymbols: ["PARAM_MOTOR_RS", "PARAM_MOTOR_LD", "PARAM_MOTOR_LQ"],
     },
     flux: {
-      startAction: "ACTION_IDENT_FLUX_START", validSymbol: "PARAM_IDENT_FLUX_VALID",
+      label: "Flux", operation: "identification.flux", validSymbol: "PARAM_IDENT_FLUX_VALID",
       resultSymbols: ["PARAM_IDENT_FLUX_RESULT"], activeSymbols: ["PARAM_MOTOR_FLUX"],
     },
     jb: {
-      startAction: "ACTION_IDENT_JB_START", validSymbol: "PARAM_IDENT_JB_VALID",
+      label: "J/B", operation: "identification.jb", validSymbol: "PARAM_IDENT_JB_VALID",
       resultSymbols: ["PARAM_IDENT_J_RESULT", "PARAM_IDENT_B_RESULT"], activeSymbols: ["PARAM_MOTOR_J", "PARAM_MOTOR_B"],
     },
   };
@@ -42,7 +42,6 @@
   ];
   const IDENTIFICATION_SETTING_SYMBOLS = ["PARAM_IDENT_IF_CURRENT", "PARAM_IDENT_JB_EXCITE_RATIO", "PARAM_IDENT_JB_EXCITE_HZ"] as const;
   const failReasonSymbol = "PARAM_IDENT_FAIL_REASON";
-  const applyActionSymbol = "ACTION_IDENT_APPLY";
   const parameters = selectParameters([
     ...ROWS.flatMap((row) => [row.activeSymbol, row.identifiedSymbol, row.identifiedValidSymbol].filter((symbol): symbol is string => !!symbol)),
     ...IDENTIFICATION_SETTING_SYMBOLS, failReasonSymbol,
@@ -53,7 +52,6 @@
   let values = $derived($parameters.values);
   let drafts = $derived($edits.drafts);
   let writing = $derived($edits.writing);
-  let actions = $state<Record<string, ActionMetadata>>({});
   let identStates = $state<Record<IdentKey, IdentState>>(initialIdentStates());
   let pendingHandles = $state<Record<string, { identKey: IdentKey; kind: "identify" }>>({});
   let generation = 0;
@@ -69,20 +67,12 @@
   });
 
   $effect(() => {
-    const activeConnection = connection;
-    const token = ++generation;
+    connection;
+    ++generation;
     identStates = initialIdentStates();
     pendingHandles = {};
     startingIdent = null;
     earlyCompletion = undefined;
-    actions = {};
-    if (activeConnection) {
-      untrack(() => void listActions().then((registry) => {
-        if (token === generation && connection === activeConnection) {
-          actions = Object.fromEntries(registry.map((action) => [action.symbol, action]));
-        }
-      }).catch(onError));
-    }
   });
   $effect(() => {
     const committed = values;
@@ -102,9 +92,14 @@
   }
   function unitFor(symbol: string) { return metadata[symbol]?.unit ?? ""; }
   function parameterLabel(symbol: string) { return metadata[symbol]?.label ?? "Unavailable"; }
-  function actionLabel(symbol: string) { return actions[symbol]?.label ?? "Unavailable"; }
   function isWritable(symbol: string) { return !$parameters.loading && !$parameters.saving && !!metadata[symbol]?.access.includes("w"); }
-  function actionAvailable(symbol: string) { return !!actions[symbol]; }
+  function identificationAvailable(key: IdentKey): boolean {
+    const capabilities = connection?.commissioning;
+    if (!capabilities) return false;
+    return key === "rsLs" ? capabilities.identificationRsLs
+      : key === "flux" ? capabilities.identificationFlux
+      : capabilities.identificationJb;
+  }
   function setIdentState(identKey: IdentKey, phase: IdentPhase, message = "") {
     identStates = { ...identStates, [identKey]: { phase, message } };
   }
@@ -139,7 +134,7 @@
   }
   async function startIdentification(identKey: IdentKey) {
     const config = IDENT_CONFIGS[identKey];
-    if (!actionAvailable(config.startAction) || identifyBusy()) return;
+    if (!identificationAvailable(identKey) || identifyBusy()) return;
     const token = generation;
     startingIdent = identKey;
     earlyCompletion = undefined;
@@ -150,7 +145,7 @@
         setIdentState(identKey, "failed", result.issues.map((issue) => issue.reason).join("\n")); return;
       }
       if (result.status === "requires_enable") {
-        if (!window.confirm(`${actionLabel(config.startAction)} identification requires enabling the motor.\n\nEnable motor and continue?`)) return;
+        if (!window.confirm(`${config.label} identification requires enabling the motor.\n\nEnable motor and continue?`)) return;
         result = await startIdentificationAction(identKey, true);
         if (token !== generation) return;
         if (result.status === "blocked") {
@@ -168,7 +163,7 @@
     }
   }
   async function applyIdentification(identKey: IdentKey) {
-    if (!actionAvailable(applyActionSymbol) || identifyBusy() || identStates[identKey].phase !== "ready") return;
+    if (!connection?.commissioning?.identificationApply || identifyBusy() || identStates[identKey].phase !== "ready") return;
     setIdentState(identKey, "applying");
     try { await applyIdentificationAction(); setIdentState(identKey, "applied"); }
     catch (error) { setIdentState(identKey, "failed", String(error)); onError(error); }
@@ -176,11 +171,11 @@
   function handleActionCompleted(completion: ActionCompletion) {
     let pending = pendingHandles[handleKey(completion)];
     if (!pending) {
-      const key = (Object.keys(IDENT_CONFIGS) as IdentKey[]).find((key) => identStates[key].phase === "running" && IDENT_CONFIGS[key].startAction === completion.symbol);
+      const key = (Object.keys(IDENT_CONFIGS) as IdentKey[]).find((key) => identStates[key].phase === "running" && IDENT_CONFIGS[key].operation === completion.operation);
       if (key) pending = { identKey: key, kind: "identify" };
     }
     if (!pending) {
-      if (startingIdent && IDENT_CONFIGS[startingIdent].startAction === completion.symbol) earlyCompletion = completion;
+      if (startingIdent && IDENT_CONFIGS[startingIdent].operation === completion.operation) earlyCompletion = completion;
       return;
     }
     const nextPending = { ...pendingHandles };
@@ -244,13 +239,12 @@
                 <div class="action-cell" role="cell">
                   {#if row.identKey}
                     {@const state = identStates[row.identKey]}
-                    {@const startSymbol = IDENT_CONFIGS[row.identKey].startAction}
-                    {@const startLabel = actionLabel(startSymbol)}
+                    {@const startLabel = IDENT_CONFIGS[row.identKey].label}
                     <!-- svelte-ignore a11y_click_events_have_key_events a11y_no_static_element_interactions -->
                     <vscode-button
                       secondary
-                      disabled={!actionAvailable(startSymbol) || identifyBusy()}
-                      title={actionAvailable(startSymbol) ? `Start ${startLabel}` : `${startLabel} is not exposed by this firmware`}
+                      disabled={!identificationAvailable(row.identKey) || identifyBusy()}
+                      title={identificationAvailable(row.identKey) ? `Start ${startLabel}` : `${startLabel} is not exposed by this firmware`}
                       onclick={() => void startIdentification(row.identKey!)}
                     >{startLabel}</vscode-button>
 
@@ -258,7 +252,7 @@
                       <span class="action-status state-running"><i class="codicon codicon-loading codicon-modifier-spin"></i> Running</span>
                     {:else if state.phase === "ready"}
                       <!-- svelte-ignore a11y_click_events_have_key_events a11y_no_static_element_interactions -->
-                      <vscode-button class="apply-button" disabled={!actionAvailable(applyActionSymbol)} onclick={() => void applyIdentification(row.identKey!)} title="Apply the latest valid identification result to Active parameters">{actionLabel(applyActionSymbol)}</vscode-button>
+                      <vscode-button class="apply-button" disabled={!connection?.commissioning?.identificationApply} onclick={() => void applyIdentification(row.identKey!)} title="Apply the latest valid identification result to Active parameters">Apply</vscode-button>
                     {:else if state.phase === "applying"}
                       <span class="action-status state-running"><i class="codicon codicon-loading codicon-modifier-spin"></i> Applying</span>
                     {:else if state.phase === "applied"}

@@ -1,7 +1,7 @@
 import { invoke } from "@tauri-apps/api/core";
 import { listen, type UnlistenFn } from "@tauri-apps/api/event";
 import { synchronizeParameters } from "../parameters/state";
-import type { ActionCompletion, ActionHandle, ActionMetadata } from "./types";
+import type { ActionCompletion, ActionHandle } from "./types";
 import type { PreflightIssue } from "../preflight/api";
 
 export type IdentificationKind = "rsLs" | "flux" | "jb";
@@ -15,7 +15,6 @@ async function reflected<T>(operation: Promise<T>): Promise<T> {
   await synchronizeParameters();
   return result;
 }
-export function listActions(): Promise<ActionMetadata[]> { return invoke<ActionMetadata[]>("action_list"); }
 export function enableMotor(): Promise<ActionHandle> { return reflected(invoke<ActionHandle>("motor_enable")); }
 export function disableMotor(): Promise<ActionHandle> { return reflected(invoke<ActionHandle>("motor_disable")); }
 export function stopMotor(): Promise<ActionHandle> { return reflected(invoke<ActionHandle>("motor_stop")); }

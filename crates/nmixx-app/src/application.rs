@@ -21,7 +21,7 @@ use tuning::TuningExperimentRuntime;
 
 use thiserror::Error;
 use crate::{
-    ActionHandle, AxdrStatus, ConfigServiceError, DevicePlotCapabilities, DeviceSession,
+    ActionHandle, AxdrStatus, CommissioningCapabilities, ConfigServiceError, DevicePlotCapabilities, DeviceSession,
     HostSchema, IdentificationKind, IdentificationStart, MixedScopeConfig, MixedScopeError,
     MixedScopeSnapshot, MixedScopeStatus, MotionCapabilities, MotionConfig, MotionMode, MotionPreview,
     MotorState, PositionCommand, MotionService, MotorActionError, ParameterMetadata,
@@ -68,6 +68,7 @@ struct ApplicationInner {
     events: Mutex<Vec<mpsc::Sender<SessionEvent>>>,
     plot_capabilities: Mutex<Option<DevicePlotCapabilities>>,
     motion_capabilities: MotionCapabilities,
+    commissioning_capabilities: CommissioningCapabilities,
     motion: MotionService,
     scope: Mutex<Option<SharedAcquisition>>,
     tuning_experiment: Mutex<TuningExperimentRuntime>,
@@ -92,9 +93,10 @@ impl ApplicationSession {
         let events = session.subscribe()?;
         let parameters = ParameterService::new(session.clone(), schema.clone());
         let motion_capabilities = MotionCapabilities::from_schema(&schema);
+        let commissioning_capabilities = CommissioningCapabilities::from_schema(&schema);
         let app = Self { inner: Arc::new(ApplicationInner {
             session, schema, parameters, events: Mutex::new(Vec::new()),
-            plot_capabilities: Mutex::new(None), motion_capabilities, motion,
+            plot_capabilities: Mutex::new(None), motion_capabilities, commissioning_capabilities, motion,
             scope: Mutex::new(None),
             tuning_experiment: Mutex::new(TuningExperimentRuntime::default()),
             motor_gate: MotorGate::default(), workflow_access: WorkflowAccess::default(), tuning_worker: Mutex::new(None),
@@ -162,6 +164,7 @@ impl ApplicationSession {
         Ok(slot.as_ref().expect("Plot capabilities initialized").clone())
     }
     pub fn motion_capabilities(&self) -> &MotionCapabilities { &self.inner.motion_capabilities }
+    pub fn commissioning_capabilities(&self) -> &CommissioningCapabilities { &self.inner.commissioning_capabilities }
     pub fn parameter_metadata(&self) -> &[ParameterMetadata] { self.inner.parameters.parameters() }
     pub fn parameter_read(&self, id: u16) -> Result<ParameterValue, ApplicationError> { Ok(self.inner.parameters.read(id)?) }
     pub fn parameter_read_many(&self, ids: &[u16]) -> Result<Vec<(u16, Result<ParameterValue, ParameterServiceError>)>, ApplicationError> {
@@ -227,7 +230,6 @@ impl ApplicationSession {
         self.refresh_after_immediate_action()?;
         Ok(handle)
     }
-    pub fn phase_search_available(&self) -> bool { self.motor_actions().phase_search_available() }
     pub fn preflight_phase_search(&self) -> Result<Vec<PreflightIssue>, ApplicationError> {
         Ok(PreflightService::new(self.inner.parameters.clone()).check_phase_search()?)
     }
