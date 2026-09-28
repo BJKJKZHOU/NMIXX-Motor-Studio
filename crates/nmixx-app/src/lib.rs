@@ -21,7 +21,6 @@ mod motion_capabilities;
 mod plot_capabilities;
 mod schema;
 mod schema_store;
-mod scope;
 mod session;
 mod stream;
 mod stream_pipeline;
@@ -59,7 +58,6 @@ pub use stream::StreamState;
 // Internal modules keep short crate-local names while external low-level users
 // opt in explicitly through nmixx_app::raw.
 pub(crate) use mixed_scope::MixedScopeSession;
-pub(crate) use scope::{ScopeChannel, ScopeConfig, ScopeError, ScopeSession, ScopeStatus};
 pub(crate) use session::{DeviceSession, SessionError, SessionEvent};
 pub(crate) use stream::{StreamConfig, StreamError, StreamSession, StreamSnapshot};
 pub(crate) use stream_pipeline::{
@@ -81,7 +79,6 @@ pub(crate) use nmixx_core::protocol::{
 /// ApplicationSession and the typed application-facing values at crate root.
 pub mod raw {
     pub use crate::mixed_scope::MixedScopeSession;
-    pub use crate::scope::{ScopeChannel, ScopeConfig, ScopeError, ScopeSession, ScopeStatus};
     pub use crate::session::{DeviceSession, SessionError, SessionEvent};
     pub use crate::stream::{StreamConfig, StreamError, StreamSession, StreamSnapshot, StreamState};
     pub use crate::stream_pipeline::{

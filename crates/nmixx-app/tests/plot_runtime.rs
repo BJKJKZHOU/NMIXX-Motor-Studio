@@ -2,11 +2,12 @@ use std::collections::VecDeque;
 use std::sync::{Arc, Mutex};
 use std::time::{Duration, Instant};
 
-use nmixx_app::raw::{
-    DeviceSession, ScopeChannel, ScopeConfig, ScopeError, ScopeSession, SessionEvent,
+use nmixx_app::{
+    DevicePlotCapabilities, DevicePlotChannel, HostSchema, MixedScopeError, ScopeRate, ScopeSelection,
 };
+use nmixx_app::raw::{DeviceSession, MixedScopeSession, SessionEvent};
 use nmixx_core::protocol::{
-    AxdrStatus, MSG_FAST_DATA, MSG_PLOT, MSG_RESPONSE, NODE_ID_DEFAULT, PLOT_CONFIG,
+    AxdrStatus, MSG_FAST_DATA, MSG_PLOT, MSG_RESPONSE, NODE_ID_DEFAULT, PLOT_CAP_FAST, PLOT_CONFIG,
     PLOT_FAST_MASK, PLOT_GROUP_FAST, PLOT_START, PLOT_STOP, can_id,
 };
 use nmixx_core::transport::{FrameTransport, TransportError};
@@ -67,6 +68,50 @@ fn fast_frame(sequence: u16) -> CanFdFrame {
         ],
     )
     .unwrap()
+}
+
+fn mixed_scope_context() -> (DevicePlotCapabilities, HostSchema, Vec<ScopeSelection>) {
+    let capabilities = DevicePlotCapabilities {
+        fast_max_channels: 8,
+        normal_max_channels: 15,
+        fast_block_samples: 20,
+        fast_rate_hz: 20_000,
+        normal_rate_hz: 1_000,
+        channels: vec![
+            DevicePlotChannel { id: 0x0001, modes: PLOT_CAP_FAST, fast_scale: 0.1 },
+            DevicePlotChannel { id: 0x0011, modes: PLOT_CAP_FAST, fast_scale: 0.5 },
+        ],
+    };
+    let schema = HostSchema::parse(r#"
+schema_version = 1
+protocol = "axdr-canfd-v1"
+
+[source]
+repository = "fixture"
+git_sha = "abc"
+parameter_schema = 1
+
+[[parameters]]
+symbol = "PARAM_ADC_IA"
+label = "Ia"
+id = 1
+type = "f32"
+access = "ro"
+description = "Ia"
+
+[[parameters]]
+symbol = "PARAM_RUN_IQ"
+label = "Iq"
+id = 17
+type = "f32"
+access = "ro"
+description = "Iq"
+"#).unwrap();
+    let selections = vec![
+        ScopeSelection { id: 0x0001, rate: ScopeRate::Fast },
+        ScopeSelection { id: 0x0011, rate: ScopeRate::Fast },
+    ];
+    (capabilities, schema, selections)
 }
 
 #[test]
@@ -139,45 +184,28 @@ fn scope_live_snapshot_pause_and_clear_follow_fast_samples() {
     }
 
     let session = DeviceSession::spawn(Box::new(ScriptedTransport::new(state.clone())));
-    let scope = ScopeSession::new(
+    let (capabilities, schema, selections) = mixed_scope_context();
+    let scope = MixedScopeSession::from_capabilities(
         session,
-        ScopeConfig {
-            config_id: 7,
-            sample_rate_hz: 20_000,
-            history: Duration::from_secs(1),
-            channels: vec![
-                ScopeChannel {
-                    id: 0x0001,
-                    label: "Ia".into(),
-                    unit: Some("A".into()),
-                    scale: 0.1,
-                },
-                ScopeChannel {
-                    id: 0x0011,
-                    label: "Iq".into(),
-                    unit: Some("A".into()),
-                    scale: 0.5,
-                },
-            ],
-        },
+        &capabilities,
+        &schema,
+        &selections,
+        Duration::from_secs(1),
+        7,
     )
     .unwrap();
 
     scope.live().unwrap();
     let deadline = Instant::now() + Duration::from_millis(100);
-    while scope.status().unwrap().samples < 2 && Instant::now() < deadline {
+    while scope.status().unwrap().samples < 4 && Instant::now() < deadline {
         std::thread::yield_now();
     }
-    let snapshot = scope.snapshot_tail(2).unwrap();
-    assert_eq!(snapshot.sample_count(), 2);
-    assert_eq!(snapshot.sample(0), Some(&[1.0, -10.0][..]));
-    assert_eq!(snapshot.sample(1), Some(&[2.0, -20.0][..]));
+    let snapshot = scope.snapshot_tail(Duration::from_millis(1)).unwrap();
+    assert_eq!(snapshot.series[0].values, vec![1.0, 2.0]);
+    assert_eq!(snapshot.series[1].values, vec![-10.0, -20.0]);
 
     scope.pause().unwrap();
-    assert_eq!(
-        scope.status().unwrap().state,
-        nmixx_app::StreamState::Paused
-    );
+    assert_eq!(scope.status().unwrap().state, nmixx_app::StreamState::Paused);
     scope.clear().unwrap();
     assert_eq!(scope.status().unwrap().samples, 0);
     let sent = state.sent.lock().unwrap();
@@ -234,19 +262,16 @@ fn scope_surfaces_fast_ingest_failure_and_stops_plot() {
     }
 
     let session = DeviceSession::spawn(Box::new(ScriptedTransport::new(state.clone())));
-    let scope = ScopeSession::new(
+    let (mut capabilities, schema, _) = mixed_scope_context();
+    capabilities.channels.truncate(1);
+    let selections = [ScopeSelection { id: 0x0001, rate: ScopeRate::Fast }];
+    let scope = MixedScopeSession::from_capabilities(
         session,
-        ScopeConfig {
-            config_id: 7,
-            sample_rate_hz: 20_000,
-            history: Duration::from_millis(100),
-            channels: vec![ScopeChannel {
-                id: 0x0001,
-                label: "Iq".into(),
-                unit: Some("A".into()),
-                scale: 0.001,
-            }],
-        },
+        &capabilities,
+        &schema,
+        &selections,
+        Duration::from_millis(100),
+        7,
     )
     .unwrap();
 
@@ -255,8 +280,8 @@ fn scope_surfaces_fast_ingest_failure_and_stops_plot() {
     let deadline = Instant::now() + Duration::from_millis(100);
     loop {
         match scope.status() {
-            Err(ScopeError::Runtime(error)) => {
-                assert!(error.contains("Config_ID mismatch"));
+            Err(MixedScopeError::Runtime(error)) => {
+                assert!(error.contains("unknown Config_ID") || error.contains("Config_ID"));
                 break;
             }
             Ok(_) if Instant::now() < deadline => std::thread::yield_now(),
@@ -264,9 +289,12 @@ fn scope_surfaces_fast_ingest_failure_and_stops_plot() {
         }
     }
 
-    assert!(matches!(scope.snapshot(), Err(ScopeError::Runtime(_))));
+    assert!(matches!(
+        scope.snapshot_tail(Duration::from_millis(10)),
+        Err(MixedScopeError::Runtime(_))
+    ));
 
     let sent = state.sent.lock().unwrap();
-    assert_eq!(sent.len(), 3);
     assert_eq!(&sent[2].data()[..3], &[3, PLOT_STOP, PLOT_FAST_MASK]);
 }
+

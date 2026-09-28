@@ -75,7 +75,7 @@ CLI -----------+--> ApplicationSession --> domain services --> DeviceSession
 Automation ----+
 ```
 
-Normal product clients must not assemble `DeviceSession + ParameterService + ScopeSession + MotionService` themselves. Tauri is a thin IPC bridge over `ApplicationSession`; the formal CLI uses the same runtime. Low-level smoke/protocol tests may intentionally use the explicit `nmixx_app::raw` namespace because their purpose is to validate the lower layer itself. Raw session/stream types are not re-exported beside the normal Application API.
+Normal product clients must not assemble `DeviceSession + ParameterService + MixedScopeSession + MotionService` themselves. Tauri is a thin IPC bridge over `ApplicationSession`; the formal CLI uses the same runtime. Low-level smoke/protocol tests may intentionally use the explicit `nmixx_app::raw` namespace because their purpose is to validate the lower layer itself. Raw session/stream types are not re-exported beside the normal Application API.
 
 Host-only models that are meaningful while disconnected, such as the editable Motion command model and theoretical preview, may outlive a device connection. The desktop owns one shared `MotionService` and injects that same instance into each new `ApplicationSession`; a second host model must not be created. Connection-specific execution state such as Repeat A/B endpoints is reset when a new session is attached, while the editable Motion command configuration is retained.
 
