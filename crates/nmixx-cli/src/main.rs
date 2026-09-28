@@ -203,7 +203,7 @@ enum PreflightCommand {
 enum ActionCommand {
     List,
     Info { key: String },
-    /// Expert/raw Action dispatch kept for protocol bring-up and compatibility.
+    /// Expert Action dispatch kept for protocol bring-up and compatibility.
     Start {
         key: String,
         #[arg(long)]
