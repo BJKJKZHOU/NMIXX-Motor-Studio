@@ -36,9 +36,9 @@ The action group is aligned to the left edge of the main content area and must n
 
 ## Human-facing labels
 
-HostSchema `label` is the user-facing name for Parameters and Actions. Business pages, notifications, validation errors and accessibility text must use the label rather than firmware macro/symbol names.
+HostSchema `label` is the user-facing name for Parameters and metadata-driven expert surfaces. Semantic business operations such as Identification, Phase Search or Set Zero may use stable product labels owned by that workflow instead of exposing the underlying firmware Action metadata.
 
-`symbol` remains the stable programmatic key used by Application/GUI code to look up metadata and actions. It may be shown deliberately in expert/debug surfaces such as the generic Parameters table, logs or diagnostics, but it is not a fallback UI label.
+`symbol` remains the stable programmatic key used by Application code and expert tooling. It may be shown deliberately in expert/debug surfaces such as the generic Parameters table, logs or diagnostics, but it is never a fallback UI label for normal business pages.
 
 If expected metadata is unavailable, normal business UI should show an unavailable/missing state or an explicit human fallback defined by that workflow. It must not expose `PARAM_*`, `ACTION_*` or C variable-style names merely because schema lookup failed.
 
@@ -59,7 +59,7 @@ The `Enable / Disable` control is one stable stateful button, not two separate b
 
 The control must not rely on color alone. Text, icon and color change together so its action remains unambiguous across themes and for users who do not distinguish the colors reliably.
 
-`Stop` remains a separate button because stopping motion and changing motor enable state are different operations. The Stop control keeps a stable location even when it is currently unavailable; when no stoppable operation is active it is disabled/muted rather than removed.
+`Stop` remains a separate button because stopping motion and changing motor enable state are different operations. The host must not decide that Stop is unavailable merely because the current motor state is DISABLED or ENABLED. While a device is connected, pressing Stop immediately invokes the shared Application motor-stop semantic; the control is disabled only when the session is unavailable or a Stop request is already being issued.
 
 `Run` is not a generic global action. Run/Start belongs to the domain that defines what operation will execute.
 

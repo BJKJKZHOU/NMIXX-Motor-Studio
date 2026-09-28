@@ -139,12 +139,12 @@ Connection configuration and Connect/Disconnect are not duplicated in the shell.
 Global motor controls follow these semantics:
 
 ```text
-DISABLED   [ Enable ]   [ Stop ] disabled
-ENABLED    [ Disable ]  [ Stop ] disabled
-RUN        [ Disable ]  [ Stop ] active
+DISABLED   [ Enable ]   [ Stop ]
+ENABLED    [ Disable ]  [ Stop ]
+RUN        [ Disable ]  [ Stop ]
 ```
 
-`Enable / Disable` is one stateful button in a stable location. Text, icon and color change together to indicate the action that pressing the button will perform. `Stop` is a separate persistent button because stopping current motion/task and changing motor enable state are different operations.
+`Enable / Disable` is one stateful button in a stable location. Text, icon and color change together to indicate the action that pressing the button will perform. `Stop` is a separate persistent button because stopping current motion/task and changing motor enable state are different operations. The host does not gate Stop on the current motor state; while connected, pressing Stop immediately invokes the shared Application stop semantic. Only connection loss or an already in-flight Stop request may temporarily disable the control.
 
 `Run` is not a global shell action. Run always has workflow context: position/speed/torque motion, a tuning experiment, identification internals, Bode excitation, or another domain operation. The page/domain that defines the command owns the Run/Start action.
 
