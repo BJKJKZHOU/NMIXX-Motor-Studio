@@ -132,69 +132,65 @@ Important findings:
 
 ### Code review pass — 2026-09-28
 
-A checked `[CODE]` item means the current source path was traced in this pass.
-Real-device values, Flash persistence and current test execution remain separate.
+Reviewed against `feat/motion-cli-headless @ 41df381` plus the current source tree.
+A checked `[CODE]` item means the ownership/call path was traced in this pass;
+it is not a real-device result.
 
-Two shared-layer defects were found during this pass and fixed at their owners:
+Important findings:
 
-1. **Uncertain/failed Parameter write left stale cache.**  
-   A write transport/protocol error previously returned before authoritative
-   readback. If firmware had accepted the write but its response was lost/corrupt,
-   every page could continue displaying the old value. `ParameterService` now
-   best-effort rereads the same schema-defined readback group on write failure,
-   updates/invalidate cache from that result, and still returns the original write
-   error to the caller.
-
-2. **RAM-modified state could include RAM-only commands.**  
-   The frontend previously had no HostSchema persistence metadata and initialized
-   its presentation baseline from every readable value. RAM-only target/command
-   Parameters could therefore appear as unsaved configuration. Firmware YAML
-   `persistent` is now exported to HostSchema; NMIXX tracks modified state only
-   for Parameters with `persistent = true`. No page owns a persistence symbol list.
-
-Firmware HostSchema exporter change for this pass:
-`AxDr_L_Motor feat/host-readback-schema @ 6712bcf`.
-
-A stale Rust unit test that still called the removed `related_parameter()` helper
-was also found and replaced; before this correction, `cargo test` would fail at
-test compilation even though normal non-test compilation could succeed.
+- backend Connection performs the real initial device Read; frontend Parameter
+  initialization mirrors `parameter_cached_many`, so there is no duplicate full
+  device Read after Connect;
+- every business page reviewed uses `selectParameters()` /
+  `createParameterEditor()`; committed values therefore come from one frontend
+  projection of the Application-owned cache;
+- dependent readback IDs are read from HostSchema `metadata.readback`; the old
+  handwritten `related_parameter()` table is absent;
+- a successful write performs device write -> written/dependent readback -> shared
+  cache update before the frontend mirrors that cache;
+- a write/readback failure is reflected into cache error state; frontend recovery
+  mirrors cache instead of inventing a local fallback value;
+- RAM-modified tracking is limited to HostSchema `persistent=true` Parameters;
+- firmware `ACTION_PARAMETER_SAVE` runs `NVS_Storage_Save_All()` before sending
+  its Action response, so a successful Host response means persistence completed;
+- RuntimeTelemetry reads only the connection-owned baseline ring in Host memory;
+  its 16 ms UI projection does not send periodic Parameter requests;
+- Plot Position remains an f32 total-turn display/history value and is deliberately
+  prevented from replacing the exact typed Position Parameter.
 
 ### Shared Parameter source
 
-- [x] **[CODE]** Backend Connect performs the authoritative initial device `parameter_refresh_all()`.
-- [x] **[CODE]** Frontend Connect initializes from `parameter_cached_many`; it does not perform a second full device read.
-- [x] **[CODE]** Generic Parameters page and business pages consume the same shared Parameter store/editor rather than page-owned committed value stores.
-- [x] **[CODE]** Typing edits only a local `ParameterDrafts` draft.
-- [x] **[CODE]** Enter validates the captured draft and performs one shared RAM write path.
-- [x] **[CODE]** Escape discards the local draft and restores the current committed value.
-- [x] **[CODE]** Blur discards an uncommitted draft rather than writing the device.
-- [x] **[CODE]** Shared enum/select commit uses `createParameterEditor.select -> commitParameter`, the same Parameter write path as numeric edits.
-- [x] **[CODE]** Successful backend write performs written-value + schema-defined dependent readback before returning.
-- [x] **[CODE]** Dependent readback comes from generated HostSchema `readback` metadata; NMIXX has no `related_parameter()` dependency table.
-- [x] **[CODE]** Shared cache change notifications fan out to all frontend Parameter views.
-- [x] **[CODE]** A failed/uncertain write now performs best-effort authoritative reconciliation of the same readback group.
-- [x] **[CODE]** Failed reconciliation replaces stale cache success with a cached read failure.
-- [x] **[CODE]** Explicit global Read performs a real device `parameter_refresh_all()`, then the frontend mirrors the resulting cache.
-- [x] **[CODE]** Application handles finite Action completion by refreshing shared Parameters before forwarding completion to subscribers.
-- [ ] **[HW]** Edit the same Parameter from one business page and confirm every other presenting page updates to the exact device readback.
-- [ ] **[HW]** Force/reproduce a rejected or uncertain Parameter write and confirm the displayed value reconciles to actual device state.
+- [x] **[CODE]** Connection initial device Read populates the Application Parameter cache before frontend workflows become available.
+- [x] **[CODE]** Frontend connection initialization mirrors the Application cache rather than rereading every Parameter from the device.
+- [x] **[CODE]** Generic Parameters page and reviewed business pages consume the same shared Parameter view/editor.
+- [x] **[CODE]** Typing edits only the editor-local draft.
+- [x] **[CODE]** Enter captures the draft, performs one shared RAM write, and adopts backend canonical readback.
+- [x] **[CODE]** Escape discards only the local draft and restores the committed shared value.
+- [x] **[CODE]** Blur with an uncommitted draft discards it and does not issue a write.
+- [x] **[CODE]** Enum/select/checkbox helpers route complete values through the same shared `commitParameter` / editor select path.
+- [x] **[CODE]** Backend write/readback updates the shared Application cache and emits changed IDs to all frontend projections.
+- [x] **[CODE]** Dependent readback comes from HostSchema `metadata.readback`, not page-specific dependency rules.
+- [x] **[CODE]** HostSchema validates dependent readback targets when the schema is loaded.
+- [x] **[CODE]** Read failures replace stale cache success with an explicit error entry instead of reviving an old value.
+- [x] **[CODE]** Explicit Read performs a real `parameter_refresh_all` device read and then mirrors the resulting cache.
+- [x] **[CODE]** Action completion refresh is Application-owned and frontend action listeners mirror the updated cache before domain handlers consume completion.
+- [ ] **[HW]** Edit representative Parameters from Motor, Encoder, Limits, Control, Motion and Parameters pages and confirm all alternate views update to the exact firmware readback value.
+- [ ] **[HW]** Force one rejected/invalid write and confirm every view returns to the authoritative device/cache state with a visible error.
 
 ### RAM modified / Save
 
-- [x] **[CODE]** HostSchema carries firmware YAML `persistent` metadata with backward-compatible default `false`.
-- [x] **[CODE]** Frontend persistence baseline tracks only IDs whose metadata has `persistent = true`.
-- [x] **[CODE]** RAM-only command/target Parameters are excluded from modified-state eligibility.
-- [x] **[CODE]** A successful persistent RAM write updates the tracked current value and can mark that Parameter modified relative to baseline.
-- [x] **[CODE]** Modified state is session-wide and independent of page mounting/navigation.
-- [x] **[CODE]** Writing a persistent Parameter back to the baseline value removes its modified state.
-- [x] **[CODE]** Save availability comes from firmware exposure of `ACTION_PARAMETER_SAVE`.
-- [x] **[CODE]** Save validates authoritative Motor State and requires DISABLED in the Application layer.
-- [x] **[CODE]** Save uses the firmware persistence Action; Host does not replay a hand-maintained configuration list.
-- [x] **[CODE]** Successful Save is followed by a real Parameter refresh before establishing the new presentation baseline.
-- [x] **[CODE]** Failed Save/failed synchronization does not call `commitParameterPersistence`.
-- [ ] **[HW]** Change one persistent Parameter and one RAM-only target; confirm only the persistent Parameter receives RAM-modified highlighting.
-- [ ] **[HW]** Save, power-cycle/reset the controller, reconnect, and confirm the persistent value survives while RAM-only target state does not masquerade as saved configuration.
-- [ ] **[HW]** Attempt Save outside DISABLED and confirm firmware/Application rejection leaves modified indications intact.
+- [x] **[CODE]** HostSchema `persistent` metadata is carried through the Tauri Parameter metadata DTO into frontend state.
+- [x] **[CODE]** RAM-modified tracking includes only firmware-declared persistent Parameters.
+- [x] **[CODE]** Successful shared Parameter updates are observed by the persistence projection and compared with the saved baseline.
+- [x] **[CODE]** Page navigation does not own/reset the persistence projection.
+- [x] **[CODE]** Restoring a persistent value to the baseline removes it from the modified set.
+- [x] **[CODE]** Save availability is derived from firmware Action capability.
+- [x] **[CODE]** Save checks the authoritative motor state and requires DISABLED.
+- [x] **[CODE]** Firmware performs `NVS_Storage_Save_All()` before the successful Save Action response.
+- [x] **[CODE]** After successful Save, frontend performs authoritative refresh and establishes current persistent RAM values as the new presentation baseline.
+- [x] **[CODE]** Failed/unavailable Save cannot reach baseline commit.
+- [ ] **[HW]** Change multiple persistent Parameters, confirm modified highlighting across pages, Save, power-cycle/reset, and confirm the persisted values reload.
+- [ ] **[HW]** Attempt Save while not DISABLED and confirm firmware rejection does not clear modified highlighting.
 
 ### RuntimeTelemetry baseline
 
@@ -202,26 +198,26 @@ The connection-owned baseline is the shared NORMAL 1 kHz source for:
 
 `PARAM_RUN_IQ`, `PARAM_RUN_WM`, `PARAM_RUN_POSITION`, `PARAM_ADC_VBUS`.
 
-- [x] **[CODE]** Baseline starts on connection and is independent of user Scope Run/Stop.
-- [x] **[CODE]** Current status reads the latest baseline Iq sample.
-- [x] **[CODE]** Speed status reads the latest baseline mechanical-speed sample.
-- [x] **[CODE]** Position status reads the latest baseline Plot total-turn sample.
-- [x] **[CODE]** Vbus status reads the latest baseline Vbus sample.
-- [x] **[CODE]** Bottom status bar presents Current / Speed / Position / Vbus in the normative order.
-- [x] **[CODE]** Status projection uses the shared desktop `requestAnimationFrame` scheduler rather than an independent interval.
-- [x] **[CODE]** `runtime_telemetry` reads Host ring-buffer latest samples only; it sends no device Parameter/Plot request.
-- [x] **[CODE]** Latest runtime sample lookup reads the ring tail without allocating a snapshot Vec.
-- [x] **[CODE]** Plot Position is excluded from `ParameterService::ingest_stream_values` because typed Position must not be reconstructed from f32 total turns.
-- [x] **[CODE]** Motor State remains on the Parameter path and is the only global status item in the 500 ms Parameter polling set.
-- [ ] **[HW]** Confirm Current/Speed/Position/Vbus all update from real 1 kHz telemetry while staying off the Scope page.
-- [ ] **[HW]** Confirm global Position display follows motion smoothly while exact typed Position Parameter reads remain correct.
-- [ ] **[HW]** Stop/freeze Scope and confirm all four status values continue updating.
+- [x] **[CODE]** Baseline acquisition is created by `runtime_start()` and remains independent of user Scope Run/Stop.
+- [x] **[CODE]** Current status value comes from baseline Iq latest sample.
+- [x] **[CODE]** Speed status value comes from baseline mechanical-speed latest sample.
+- [x] **[CODE]** Position status value comes from baseline Plot total-turn latest sample.
+- [x] **[CODE]** Vbus status value comes from baseline Vbus latest sample.
+- [x] **[CODE]** Bottom status bar presents Current / Speed / Position / Vbus in the established order.
+- [x] **[CODE]** Status projection uses the shared `refreshScheduler` rather than a private `setInterval`.
+- [x] **[CODE]** RuntimeTelemetry Tauri call reads Host memory only; it does not issue a device Parameter request.
+- [x] **[CODE]** Runtime latest-sample lookup reads the ring tail without allocating/copying a snapshot.
+- [x] **[CODE]** Plot Position is excluded from scalar Parameter-stream ingestion because its firmware Parameter type is exact `position`.
+- [x] **[CODE]** Motor State remains on the authoritative Parameter polling/readback path and is not inferred from RuntimeTelemetry.
+- [ ] **[HW]** With the controller connected, confirm Current/Speed/Position/Vbus update continuously while never opening Scope.
+- [ ] **[HW]** Move the encoder slowly across turn boundaries and confirm runtime Position presentation is continuous/consistent while exact Position Parameter remains independently readable.
+- [ ] **[HW]** Stop/freeze Scope and confirm all four RuntimeTelemetry status values continue updating.
 
 ### Exit criteria
 
-- [x] **Wired — code-reviewed after shared-layer fixes.**
+- [x] **Wired — code-reviewed.**
 - [ ] **Verified — requires current real-device pass.**
-- [ ] **Regression Guarded — new/existing tests were updated, but the current workspace test suite has not yet been executed.**
+- [ ] **Regression Guarded — relevant tests exist, but they have not been executed in this current pass.**
 
 ---
 
