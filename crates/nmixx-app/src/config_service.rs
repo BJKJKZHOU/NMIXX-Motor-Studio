@@ -1,7 +1,8 @@
 use thiserror::Error;
 
+use crate::parameter_service::ParameterService;
 use crate::{
-    ActionHandle, DeviceSession, HostSchema, ParameterService, ParameterServiceError,
+    ActionHandle, DeviceSession, HostSchema, ParameterServiceError,
     ParameterValue, SessionError,
 };
 
@@ -35,15 +36,6 @@ pub struct ConfigService {
 }
 
 impl ConfigService {
-    pub(crate) fn new(session: DeviceSession, schema: HostSchema) -> Self {
-        let parameters = ParameterService::new(session.clone(), schema.clone());
-        Self {
-            session,
-            schema,
-            parameters,
-        }
-    }
-
     pub(crate) fn from_shared(
         session: DeviceSession,
         schema: HostSchema,

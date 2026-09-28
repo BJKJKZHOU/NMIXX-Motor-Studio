@@ -1,8 +1,9 @@
 use thiserror::Error;
 use std::sync::Arc;
 
+use crate::parameter_service::ParameterService;
 use crate::{
-    ActionHandle, DeviceSession, HostSchema, IdentificationKind, ParameterService,
+    ActionHandle, DeviceSession, HostSchema, IdentificationKind,
     ParameterServiceError, ParameterValue, PreflightError, PreflightIssue, PreflightService, SchemaNumber,
     SessionError,
 };
@@ -65,11 +66,6 @@ pub struct MotorActionService {
 }
 
 impl MotorActionService {
-    pub(crate) fn new(session: DeviceSession, schema: HostSchema) -> Self {
-        let parameters = ParameterService::new(session.clone(), schema.clone());
-        Self { session, schema, parameters, checkpoint: None }
-    }
-
     pub(crate) fn from_shared(
         session: DeviceSession,
         schema: HostSchema,

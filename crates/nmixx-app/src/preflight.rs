@@ -1,6 +1,7 @@
 use thiserror::Error;
 
-use crate::{HostSchema, ParameterService, ParameterServiceError, ParameterValue};
+use crate::parameter_service::ParameterService;
+use crate::{HostSchema, ParameterServiceError, ParameterValue};
 
 const MOTOR_PP: &str = "PARAM_MOTOR_PP";
 const MOTOR_RS: &str = "PARAM_MOTOR_RS";

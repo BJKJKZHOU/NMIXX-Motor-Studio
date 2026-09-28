@@ -3,7 +3,8 @@ use std::sync::{Arc, RwLock};
 
 use serde::{Deserialize, Serialize};
 
-use crate::{ActionHandle, DeviceSession, ParameterService, ParameterValue, PositionValue};
+use crate::parameter_service::ParameterService;
+use crate::{ActionHandle, DeviceSession, ParameterValue, PositionValue};
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "kebab-case")]
@@ -53,7 +54,7 @@ impl MotionService {
 
     /// A display preview uses one committed cache snapshot. It never reads the device
     /// or publishes Parameter events. Execution-time reads remain in `run`/Application.
-    pub fn preview_with_parameters(
+    pub(crate) fn preview_with_parameters(
         &self,
         parameters: &ParameterService,
         effective_speed_limit: Option<f64>,

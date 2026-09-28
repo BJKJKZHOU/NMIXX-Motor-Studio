@@ -6,9 +6,10 @@ use std::sync::{Arc, Mutex};
 use std::time::Duration;
 
 use crate::mixed_scope::{build_config, SampleSink};
+use crate::parameter_service::ParameterService;
 use crate::{DevicePlotCapabilities, DeviceSession, HostSchema, MixedScopeChannel,
     MixedScopeConfig, MixedScopeError, MixedScopeSeries, MixedScopeSession,
-    MixedScopeSnapshot, MixedScopeStatus, ParameterService, ScopeRate,
+    MixedScopeSnapshot, MixedScopeStatus, ScopeRate,
     ScopeSelection, StreamConfig, StreamSession, StreamState};
 
 pub(crate) const BASE_SYMBOLS: &[&str] = &[

@@ -7,18 +7,22 @@ use std::time::{Duration, Instant};
 mod motor_gate;
 use motor_gate::MotorGate;
 use crate::automation::access::{WorkflowAccess, Permit};
+use crate::config_service::ConfigService;
+use crate::motor_actions::MotorActionService;
+use crate::parameter_service::ParameterService;
+use crate::preflight::PreflightService;
 #[path = "acquisition.rs"]
 mod acquisition;
 use acquisition::{SharedAcquisition, View};
 
 use thiserror::Error;
 use crate::{
-    ActionHandle, AxdrStatus, ConfigService, ConfigServiceError, DevicePlotCapabilities, DeviceSession,
+    ActionHandle, AxdrStatus, ConfigServiceError, DevicePlotCapabilities, DeviceSession,
     HostSchema, IdentificationKind, IdentificationStart, MixedScopeConfig, MixedScopeError,
     MixedScopeSnapshot, MixedScopeStatus, MotionCapabilities, MotionConfig, MotionMode, MotionPreview,
-    PositionCommand, MotionService, MotorActionError, MotorActionService, ParameterMetadata, ParameterService,
+    PositionCommand, MotionService, MotorActionError, ParameterMetadata,
     ParameterServiceError, ParameterValue, PlotCapabilitiesError, PreflightError, PreflightIssue,
-    PreflightService, ScopeRate, ScopeSelection, SessionError, SessionEvent, StreamState,
+    ScopeRate, ScopeSelection, SessionError, SessionEvent, StreamState,
 };
 
 #[derive(Debug, Error)]

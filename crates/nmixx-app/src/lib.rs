@@ -28,20 +28,18 @@ pub use application::{
     ApplicationError, ApplicationSession, TuningExperimentSnapshot, TuningExperimentState,
     TuningExperimentStatus,
 };
-pub use config_service::{ConfigService, ConfigServiceError};
+pub use config_service::ConfigServiceError;
 pub use connection::DEFAULT_USB_BAUD;
-pub use parameter_service::{ParameterService, ParameterServiceError, RuntimeChannelProgress, RuntimeStreamProgress};
+pub use parameter_service::{ParameterServiceError, RuntimeChannelProgress, RuntimeStreamProgress};
 pub use motion::{MotionConfig, MotionMode, MotionPreview, MotionService, PositionCommand};
 pub use motion_commands::{MotionRuntimeStatus, PositionMotionRequest, SpeedMotionRequest};
 pub use motion_capabilities::MotionCapabilities;
-pub use motor_actions::{IdentificationStart, MotorActionError, MotorActionService};
+pub use motor_actions::{IdentificationStart, MotorActionError};
 pub use mixed_scope::{
     MixedScopeChannel, MixedScopeConfig, MixedScopeError, MixedScopeSeries, MixedScopeSession,
     MixedScopeSnapshot, MixedScopeStatus, ScopeRate, ScopeSelection,
 };
-pub use preflight::{
-    IdentificationKind, PreflightDomain, PreflightError, PreflightIssue, PreflightService,
-};
+pub use preflight::{IdentificationKind, PreflightDomain, PreflightError, PreflightIssue};
 pub use plot_capabilities::{
     DevicePlotCapabilities, DevicePlotChannel, PlotCapabilitiesError, PlotChannelInfo,
 };
