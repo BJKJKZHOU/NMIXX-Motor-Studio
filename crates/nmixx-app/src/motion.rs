@@ -1,10 +1,10 @@
 use std::collections::HashMap;
-use std::sync::{Arc, RwLock};
+use std::sync::{Arc, Mutex, RwLock};
 
 use serde::{Deserialize, Serialize};
 
 use crate::parameter_service::ParameterService;
-use crate::{ActionHandle, DeviceSession, HostSchema, MotorState, ParameterValue, PositionValue};
+use crate::{ActionHandle, AxdrStatus, DeviceSession, HostSchema, MotorState, ParameterValue, PositionValue};
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "kebab-case")]
@@ -60,8 +60,32 @@ pub struct MotionPreview {
     pub secondary_unit: Option<&'static str>,
 }
 
-#[derive(Debug, Clone, Default)]
-pub struct MotionService { config: Arc<RwLock<MotionConfig>> }
+#[derive(Debug)]
+struct MotionRepeatRuntime {
+    endpoint_a: Option<f64>,
+    endpoint_b: Option<f64>,
+    next_is_b: bool,
+    pending_target_is_b: Option<bool>,
+}
+impl Default for MotionRepeatRuntime {
+    fn default() -> Self {
+        Self { endpoint_a: None, endpoint_b: None, next_is_b: true, pending_target_is_b: None }
+    }
+}
+
+#[derive(Debug, Clone)]
+pub struct MotionService {
+    config: Arc<RwLock<MotionConfig>>,
+    repeat: Arc<Mutex<MotionRepeatRuntime>>,
+}
+impl Default for MotionService {
+    fn default() -> Self {
+        Self {
+            config: Arc::new(RwLock::new(MotionConfig::default())),
+            repeat: Arc::new(Mutex::new(MotionRepeatRuntime::default())),
+        }
+    }
+}
 
 impl MotionService {
     pub fn get(&self) -> MotionConfig {
@@ -69,8 +93,66 @@ impl MotionService {
     }
     pub fn set(&self, config: MotionConfig) -> Result<MotionConfig, String> {
         validate_host_config(&config)?;
+        let current = self.get();
+        let reset_repeat = current.repeat != config.repeat
+            || current.position_command != config.position_command
+            || current.incremental_delta_turn != config.incremental_delta_turn;
         *self.config.write().map_err(|_| "Motion config lock poisoned")? = config.clone();
+        if reset_repeat { self.reset_repeat()?; }
         Ok(config)
+    }
+
+    pub(crate) fn repeat_target(
+        &self,
+        current_position_turn: f64,
+        absolute_target_turn: Option<f64>,
+    ) -> Result<Option<(f64, bool)>, String> {
+        let config = self.get();
+        if !config.repeat { return Ok(None); }
+
+        let mut runtime = self.repeat.lock().map_err(|_| "Motion repeat lock poisoned")?;
+        if runtime.endpoint_a.is_none() || runtime.endpoint_b.is_none() {
+            let target = match config.position_command {
+                PositionCommand::Absolute => absolute_target_turn
+                    .ok_or_else(|| "Absolute repeat target is unavailable".to_owned())?,
+                PositionCommand::Incremental => current_position_turn + config.incremental_delta_turn,
+            };
+            if (target - current_position_turn).abs() <= 1e-9 {
+                return Err("Repeat position endpoints must be different".to_owned());
+            }
+            runtime.endpoint_a = Some(current_position_turn);
+            runtime.endpoint_b = Some(target);
+            runtime.next_is_b = true;
+            runtime.pending_target_is_b = None;
+        }
+
+        let target_is_b = runtime.next_is_b;
+        let target = (if target_is_b { runtime.endpoint_b } else { runtime.endpoint_a })
+            .ok_or_else(|| "Repeat position endpoints are not initialized".to_owned())?;
+        Ok(Some((target, target_is_b)))
+    }
+
+    pub(crate) fn repeat_mark_started(&self, target_is_b: bool) -> Result<(), String> {
+        self.repeat.lock().map_err(|_| "Motion repeat lock poisoned")?.pending_target_is_b = Some(target_is_b);
+        Ok(())
+    }
+
+    pub(crate) fn repeat_completed(&self, status: AxdrStatus) -> Result<(), String> {
+        let mut runtime = self.repeat.lock().map_err(|_| "Motion repeat lock poisoned")?;
+        if let Some(target_is_b) = runtime.pending_target_is_b.take() {
+            if status == AxdrStatus::Ok { runtime.next_is_b = !target_is_b; }
+        }
+        Ok(())
+    }
+
+    pub(crate) fn cancel_repeat_leg(&self) -> Result<(), String> {
+        self.repeat.lock().map_err(|_| "Motion repeat lock poisoned")?.pending_target_is_b = None;
+        Ok(())
+    }
+
+    fn reset_repeat(&self) -> Result<(), String> {
+        *self.repeat.lock().map_err(|_| "Motion repeat lock poisoned")? = MotionRepeatRuntime::default();
+        Ok(())
     }
 
     /// A display preview uses one committed cache snapshot. It never reads the device
@@ -323,5 +405,31 @@ allowed_symbols = ["TORQUE", "SPEED", "POSITION", "SENSORLESS_SPEED"]
 
         assert_eq!(mode_wire_value(&schema, MotionMode::Position).unwrap(), 9);
         assert_eq!(mode_from_wire_value(&schema, 12).unwrap(), MotionMode::SensorlessSpeed);
+    }
+
+    #[test]
+    fn repeat_advances_only_after_successful_leg() {
+        let service = MotionService::default();
+        let mut config = service.get();
+        config.repeat = true;
+        config.position_command = PositionCommand::Incremental;
+        config.incremental_delta_turn = 1.0;
+        service.set(config).unwrap();
+
+        let (target, target_is_b) = service.repeat_target(2.0, None).unwrap().unwrap();
+        assert_eq!(target, 3.0);
+        assert!(target_is_b);
+        service.repeat_mark_started(target_is_b).unwrap();
+        service.repeat_completed(AxdrStatus::ErrState).unwrap();
+
+        let (target, target_is_b) = service.repeat_target(2.0, None).unwrap().unwrap();
+        assert_eq!(target, 3.0);
+        assert!(target_is_b);
+        service.repeat_mark_started(target_is_b).unwrap();
+        service.repeat_completed(AxdrStatus::Ok).unwrap();
+
+        let (target, target_is_b) = service.repeat_target(3.0, None).unwrap().unwrap();
+        assert_eq!(target, 2.0);
+        assert!(!target_is_b);
     }
 }

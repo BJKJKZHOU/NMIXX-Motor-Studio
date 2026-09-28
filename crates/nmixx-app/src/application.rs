@@ -60,11 +60,6 @@ struct TuningExperimentRuntime { generation: u64, state: TuningExperimentState, 
 impl Default for TuningExperimentRuntime {
     fn default() -> Self { Self { generation: 0, state: TuningExperimentState::Idle, stop_requested: false, message: None } }
 }
-#[derive(Debug)]
-struct MotionRepeatRuntime { endpoint_a: Option<f64>, endpoint_b: Option<f64>, next_is_b: bool, pending_target_is_b: Option<bool> }
-impl Default for MotionRepeatRuntime {
-    fn default() -> Self { Self { endpoint_a: None, endpoint_b: None, next_is_b: true, pending_target_is_b: None } }
-}
 const TUNING_CAPTURE_BUDGET_BYTES: usize = 128 * 1024 * 1024;
 const TUNING_LIVE_WINDOW: Duration = Duration::from_secs(3);
 const TUNING_PRE_CAPTURE: Duration = Duration::from_millis(500);
@@ -81,7 +76,6 @@ struct ApplicationInner {
     plot_capabilities: Mutex<Option<DevicePlotCapabilities>>,
     motion_capabilities: MotionCapabilities,
     motion: MotionService,
-    motion_repeat: Mutex<MotionRepeatRuntime>,
     scope: Mutex<Option<SharedAcquisition>>,
     tuning_experiment: Mutex<TuningExperimentRuntime>,
     motor_gate: MotorGate,
@@ -108,7 +102,7 @@ impl ApplicationSession {
         let app = Self { inner: Arc::new(ApplicationInner {
             session, schema, parameters, events: Mutex::new(Vec::new()),
             plot_capabilities: Mutex::new(None), motion_capabilities, motion,
-            motion_repeat: Mutex::new(MotionRepeatRuntime::default()), scope: Mutex::new(None),
+            scope: Mutex::new(None),
             tuning_experiment: Mutex::new(TuningExperimentRuntime::default()),
             motor_gate: MotorGate::default(), workflow_access: WorkflowAccess::default(), tuning_worker: Mutex::new(None),
         }), workflow_owner: None, workflow_cleanup: false };
@@ -371,12 +365,7 @@ impl ApplicationSession {
     pub fn motion_get(&self) -> MotionConfig { self.inner.motion.get() }
     pub fn motion_set(&self, config: MotionConfig) -> Result<MotionConfig, ApplicationError> {
         let _workflow = self.workflow_permit()?;
-        let current = self.inner.motion.get();
-        let reset_repeat = current.repeat != config.repeat || current.position_command != config.position_command
-            || current.incremental_delta_turn != config.incremental_delta_turn;
-        let canonical = self.inner.motion.set(config).map_err(ApplicationError::Motion)?;
-        if reset_repeat { self.reset_motion_repeat()?; }
-        Ok(canonical)
+        self.inner.motion.set(config).map_err(ApplicationError::Motion)
     }
     pub fn motion_preview(&self) -> Result<MotionPreview, ApplicationError> {
         self.inner.motion.preview_with_parameters(&self.inner.parameters, None).map_err(ApplicationError::Motion)
@@ -401,33 +390,21 @@ impl ApplicationSession {
         let completion = self.action_completion_waiter()?;
         let config = self.inner.motion.get();
         let mode = self.read_motion_mode()?;
-        let mut repeat_target: Option<(f64, bool)> = None;
-        if mode == MotionMode::Position && config.repeat {
-            let needs_init = {
-                let runtime = self.inner.motion_repeat.lock().map_err(|_| ApplicationError::Poisoned)?;
-                runtime.endpoint_a.is_none() || runtime.endpoint_b.is_none()
+        let repeat_target = if mode == MotionMode::Position && config.repeat {
+            let current = self.read_position_turns("PARAM_RUN_POSITION")?;
+            let absolute_target = if config.position_command == PositionCommand::Absolute {
+                Some(self.read_position_turns("PARAM_TARGET_POSITION")?)
+            } else {
+                None
             };
-            if needs_init {
-                let current = self.read_position_turns("PARAM_RUN_POSITION")?;
-                let target = match config.position_command {
-                    PositionCommand::Absolute => self.read_position_turns("PARAM_TARGET_POSITION")?,
-                    PositionCommand::Incremental => current + config.incremental_delta_turn,
-                };
-                if (target - current).abs() <= 1e-9 { return Err(ApplicationError::Motion("Repeat position endpoints must be different".to_owned())); }
-                let mut runtime = self.inner.motion_repeat.lock().map_err(|_| ApplicationError::Poisoned)?;
-                runtime.endpoint_a = Some(current); runtime.endpoint_b = Some(target);
-                runtime.next_is_b = true; runtime.pending_target_is_b = None;
-            }
-            let runtime = self.inner.motion_repeat.lock().map_err(|_| ApplicationError::Poisoned)?;
-            let target_is_b = runtime.next_is_b;
-            let target = (if target_is_b { runtime.endpoint_b } else { runtime.endpoint_a })
-                .ok_or_else(|| ApplicationError::Motion("Repeat position endpoints are not initialized".to_owned()))?;
-            repeat_target = Some((target, target_is_b));
-        }
+            self.inner.motion.repeat_target(current, absolute_target).map_err(ApplicationError::Motion)?
+        } else {
+            None
+        };
         let handle = self.inner.motion.run_checked(&self.inner.parameters, &self.inner.session, repeat_target.map(|(target, _)| target), || self.workflow_checkpoint(ticket))
             .map_err(ApplicationError::Motion)?;
         if let Some((_, target_is_b)) = repeat_target {
-            self.inner.motion_repeat.lock().map_err(|_| ApplicationError::Poisoned)?.pending_target_is_b = Some(target_is_b);
+            self.inner.motion.repeat_mark_started(target_is_b).map_err(ApplicationError::Motion)?;
             // Do not keep the whole connection alive while waiting for an Action.
             let weak = Arc::downgrade(&self.inner);
             thread::spawn(move || {
@@ -440,13 +417,12 @@ impl ApplicationSession {
         Ok(handle)
     }
     pub fn motion_run_completed(&self, status: AxdrStatus) -> Result<(), ApplicationError> {
-        let mut runtime = self.inner.motion_repeat.lock().map_err(|_| ApplicationError::Poisoned)?;
-        if let Some(target_is_b) = runtime.pending_target_is_b.take() {
-            if status == AxdrStatus::Ok { runtime.next_is_b = !target_is_b; }
-        }
-        Ok(())
+        self.inner.motion.repeat_completed(status).map_err(ApplicationError::Motion)
     }
-    pub fn motion_stop(&self) -> Result<ActionHandle, ApplicationError> { self.cancel_motion_repeat_leg()?; self.motor_stop() }
+    pub fn motion_stop(&self) -> Result<ActionHandle, ApplicationError> {
+        self.inner.motion.cancel_repeat_leg().map_err(ApplicationError::Motion)?;
+        self.motor_stop()
+    }
     /// Start only telemetry acquisition, never the motor. Called once on connection.
     pub fn runtime_start(&self) -> Result<Vec<u16>, ApplicationError> {
         if self.inner.motor_gate.is_closed() {
@@ -646,12 +622,6 @@ impl ApplicationSession {
             ParameterValue::Position(value) => Ok(f64::from(value.turns) + f64::from(value.theta) / std::f64::consts::TAU),
             _ => Err(ApplicationError::Motion(format!("{key} has an unexpected type"))),
         }
-    }
-    fn reset_motion_repeat(&self) -> Result<(), ApplicationError> {
-        *self.inner.motion_repeat.lock().map_err(|_| ApplicationError::Poisoned)? = MotionRepeatRuntime::default(); Ok(())
-    }
-    fn cancel_motion_repeat_leg(&self) -> Result<(), ApplicationError> {
-        self.inner.motion_repeat.lock().map_err(|_| ApplicationError::Poisoned)?.pending_target_is_b = None; Ok(())
     }
     pub fn motor_state(&self) -> Result<MotorState, ApplicationError> {
         self.read_motor_state()

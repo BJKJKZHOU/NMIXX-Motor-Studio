@@ -119,7 +119,7 @@ impl ApplicationSession {
         if request.command == PositionCommand::Absolute {
             self.write_motion_value(
                 "PARAM_TARGET_POSITION",
-                ParameterValue::Position(turns_to_position(request.target_turn)?),
+                ParameterValue::Position(crate::motion::turns_to_position(request.target_turn).map_err(ApplicationError::Motion)?),
             )?;
         }
 
@@ -326,27 +326,13 @@ fn require_optional_positive(
     Ok(())
 }
 
-fn turns_to_position(turns: f64) -> Result<PositionValue, ApplicationError> {
-    let whole = turns.floor();
-    if whole < f64::from(i32::MIN) || whole > f64::from(i32::MAX) {
-        return Err(ApplicationError::Motion(
-            "Position target is outside the supported turn range".to_owned(),
-        ));
-    }
-
-    Ok(PositionValue {
-        turns: whole as i32,
-        theta: ((turns - whole) * std::f64::consts::TAU) as f32,
-    })
-}
-
 #[cfg(test)]
 mod tests {
     use super::*;
 
     #[test]
     fn absolute_position_conversion_keeps_negative_fraction_canonical() {
-        let value = turns_to_position(-0.25).unwrap();
+        let value = crate::motion::turns_to_position(-0.25).unwrap();
         assert_eq!(value.turns, -1);
         assert!((f64::from(value.theta) - 0.75 * std::f64::consts::TAU).abs() < 1.0e-6);
     }
