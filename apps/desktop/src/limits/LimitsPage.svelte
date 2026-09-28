@@ -10,16 +10,18 @@
   const SPEED_USER_SYMBOL = "PARAM_LIMIT_WM_MAX";
   const CURRENT_HARDWARE_SYMBOL = "PARAM_LIMIT_I_HARDWARE";
   const SPEED_HARDWARE_SYMBOL = "PARAM_LIMIT_WM_HARDWARE";
+  const CURRENT_EFFECTIVE_SYMBOL = "PARAM_LIMIT_I_EFFECTIVE";
+  const SPEED_EFFECTIVE_SYMBOL = "PARAM_LIMIT_WM_EFFECTIVE";
   const VBUS_MIN_SYMBOL = "PARAM_LIMIT_VBUS_MIN";
   const VBUS_ACTUAL_SYMBOL = "PARAM_ADC_VBUS";
   const VBUS_MAX_SYMBOL = "PARAM_LIMIT_VBUS_MAX";
   const OPERATING_LIMITS = [
-    { userSymbol: CURRENT_USER_SYMBOL, hardwareSymbol: CURRENT_HARDWARE_SYMBOL },
-    { userSymbol: SPEED_USER_SYMBOL, hardwareSymbol: SPEED_HARDWARE_SYMBOL },
+    { userSymbol: CURRENT_USER_SYMBOL, hardwareSymbol: CURRENT_HARDWARE_SYMBOL, effectiveSymbol: CURRENT_EFFECTIVE_SYMBOL },
+    { userSymbol: SPEED_USER_SYMBOL, hardwareSymbol: SPEED_HARDWARE_SYMBOL, effectiveSymbol: SPEED_EFFECTIVE_SYMBOL },
   ];
   const parameters = selectParameters([
     CURRENT_USER_SYMBOL, SPEED_USER_SYMBOL, CURRENT_HARDWARE_SYMBOL, SPEED_HARDWARE_SYMBOL,
-    VBUS_MIN_SYMBOL, VBUS_ACTUAL_SYMBOL, VBUS_MAX_SYMBOL,
+    CURRENT_EFFECTIVE_SYMBOL, SPEED_EFFECTIVE_SYMBOL, VBUS_MIN_SYMBOL, VBUS_ACTUAL_SYMBOL, VBUS_MAX_SYMBOL,
   ]);
   const edits = createParameterEditor(parameters);
   let { connection, onError = () => undefined }: Props = $props();
@@ -39,11 +41,6 @@
     return Number.isFinite(number) ? number : null;
   }
   function isConfigured(symbol: string) { return numericValue(symbol) !== null; }
-  function activeSource(userSymbol: string, hardwareSymbol: string): "user" | "hardware" | null {
-    const user = numericValue(userSymbol);
-    const hardware = numericValue(hardwareSymbol);
-    return user === null || hardware === null ? null : user <= hardware ? "user" : "hardware";
-  }
   function busState(): "under" | "normal" | "over" | null {
     const min = numericValue(VBUS_MIN_SYMBOL);
     const actual = numericValue(VBUS_ACTUAL_SYMBOL);
@@ -71,13 +68,13 @@
               <div role="columnheader">Parameter</div>
               <div role="columnheader">User Limit</div>
               <div role="columnheader">Hardware Limit</div>
+              <div role="columnheader">Effective</div>
             </div>
 
             {#each OPERATING_LIMITS as row}
-              {@const source = activeSource(row.userSymbol, row.hardwareSymbol)}
               <div class="operating-row" role="row">
                 <div class="parameter-name" role="cell">{parameterLabel(row.userSymbol)}</div>
-                <div class:configured-cell={isConfigured(row.userSymbol)} class:active-limit-cell={source === "user"} class="limit-cell" role="cell">
+                <div class:configured-cell={isConfigured(row.userSymbol)} class="limit-cell" role="cell">
                   {#if metadata[row.userSymbol]}
                     <span class="inline-editor">
                       <input
@@ -95,10 +92,19 @@
                     <span class="muted">—</span>
                   {/if}
                 </div>
-                <div class:active-limit-cell={source === "hardware"} class="limit-cell hardware-value mono" role="cell">
+                <div class="limit-cell hardware-value mono" role="cell">
                   {#if metadata[row.hardwareSymbol]}
                     <span>{displayText(row.hardwareSymbol)}</span>
                     <span class="unit">{unitFor(row.hardwareSymbol)}</span>
+                  {:else}
+                    <span class="muted">—</span>
+                  {/if}
+                </div>
+                <div class:active-limit-cell={isConfigured(row.effectiveSymbol)} class="limit-cell hardware-value mono" role="cell"
+                  title="Actual limit currently used by firmware">
+                  {#if metadata[row.effectiveSymbol]}
+                    <span>{displayText(row.effectiveSymbol)}</span>
+                    <span class="unit">{unitFor(row.effectiveSymbol)}</span>
                   {:else}
                     <span class="muted">—</span>
                   {/if}
@@ -269,7 +275,7 @@
   .operating-header,
   .operating-row {
     display: grid;
-    grid-template-columns: minmax(180px, 0.9fr) minmax(260px, 1.25fr) minmax(220px, 1fr);
+    grid-template-columns: minmax(160px, 0.8fr) minmax(210px, 1.05fr) minmax(190px, 0.95fr) minmax(190px, 0.95fr);
     column-gap: 18px;
     align-items: stretch;
   }

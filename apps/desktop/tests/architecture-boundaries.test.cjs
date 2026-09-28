@@ -67,3 +67,12 @@ test("Control Tuning reuses the shared Scope ECharts viewer", () => {
   assert.match(experiment, /ScopeEchartsView/);
   assert.doesNotMatch(experiment, /from "echarts\//);
 });
+
+
+test("Limits displays firmware Effective values instead of deriving an active source", () => {
+  const limits = source("limits/LimitsPage.svelte");
+  assert.match(limits, /PARAM_LIMIT_I_EFFECTIVE/);
+  assert.match(limits, /PARAM_LIMIT_WM_EFFECTIVE/);
+  assert.doesNotMatch(limits, /activeSource\s*\(/);
+  assert.doesNotMatch(limits, /user\s*<=\s*hardware/);
+});

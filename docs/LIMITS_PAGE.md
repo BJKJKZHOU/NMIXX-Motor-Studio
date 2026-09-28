@@ -13,31 +13,21 @@ Current and speed limits have two independent sources:
 ```text
 Operating Limits
 
-Parameter          User Limit              Hardware Limit
-----------------------------------------------------------
-Current            [ 8.000 ] A             10.000 A
-Maximum speed      [ 400.0 ] rad/s         300.0 rad/s
+Parameter          User Limit              Hardware Limit          Effective
+--------------------------------------------------------------------------------
+Current            [ 8.000 ] A             10.000 A               8.000 A
+Maximum speed      [ 400.0 ] rad/s         300.0 rad/s             100.0 rad/s
 ```
 
 - **User Limit** is editable and expresses the user's preferred operating boundary.
-- **Hardware Limit** is read-only and expresses the device-side absolute boundary.
-- the active operating value is the stricter of the two.
+- **Hardware Limit** is read-only and expresses the device-side absolute boundary when firmware exposes it.
+- **Effective** is read-only and comes directly from the firmware's `PARAM_LIMIT_*_EFFECTIVE` Parameter. It is the authoritative value currently used by control.
 
-Conceptually:
+The GUI must not recompute Effective from User/Hardware values. Additional firmware-owned constraints may participate in the effective value. In the current firmware, for example, speed Effective may also include `Motion_Config.Wm_Max`.
 
-```text
-CurrentLimit = min(UserCurrentLimit, HardwareCurrentLimit)
-SpeedLimit   = min(UserSpeedLimit, HardwareSpeedLimit)
-```
+A user value higher than the hardware value is not inherently an error. The firmware should preserve the configured user value and enforce its own final limit at runtime.
 
-A user value higher than the hardware value is not inherently an error. The firmware should preserve the configured user value and enforce the hardware limit at runtime.
-
-The GUI uses two different low-intensity visual states:
-
-- a neutral background lift for a configured user value;
-- a distinct accent background for the source that is currently active.
-
-These are source/selection states, not success/error colors.
+The GUI uses a neutral background lift for a configured user value and a distinct accent background for the firmware-reported Effective value. These are configuration/active-value states, not success/error colors.
 
 ## Bus voltage safety window
 
@@ -201,7 +191,7 @@ This is an intentional capability placeholder rather than a simulated implementa
 
 Bus-voltage minimum/actual/maximum support is now defined by the page contract above. Remaining deferred firmware work:
 
-- expose hardware current and speed limits as read-only Parameters;
+- expose hardware current and speed limits as read-only Parameters; the GUI already treats Hardware as optional and never synthesizes it;
 - allow a user limit to exceed the hardware limit without rejecting the write solely for that reason;
 - remove `Motion_Config.Wm_Max` from the operating-limit source calculation;
 - expose mechanical zero validity;
