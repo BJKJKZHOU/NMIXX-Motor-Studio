@@ -28,6 +28,16 @@ Documents such as `SHARED_ACQUISITION.md` describe the current internal mechanis
 used to satisfy normative behavior. They may evolve during refactoring, but must
 preserve externally visible behavior and the architectural invariants above.
 
+## Integration execution/status documents
+
+`INTEGRATION_VERIFICATION_MATRIX.md` is the current end-to-end verification
+checklist. It is intentionally mutable operational state: checkboxes, test results,
+hardware observations and issue records should be updated as integration proceeds.
+
+It does not override normative design. If a verification item exposes a mismatch,
+first identify the owning layer and fix the implementation. Do not weaken or rewrite
+a normative architecture/page rule merely to make the checklist pass.
+
 ## Architecture Decision Records
 
 Files under `docs/adr/` are historical decisions. Do not rewrite an accepted ADR
