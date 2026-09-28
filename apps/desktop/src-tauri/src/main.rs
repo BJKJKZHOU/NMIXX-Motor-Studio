@@ -13,7 +13,6 @@ use tauri::{Emitter, State};
 #[derive(Default)]
 struct DesktopState {
     app: Option<ApplicationSession>,
-    port: Option<String>,
     automation: nmixx_app::AutomationRuntime,
     motion: MotionService,
     disconnecting: bool,
@@ -241,7 +240,7 @@ async fn device_connect(app_handle: tauri::AppHandle, state: State<'_, Mutex<Des
         motion: app.motion_capabilities().clone(), commissioning: app.commissioning_capabilities().clone(),
         runtime_channel_ids };
     let mut guard = state.lock().map_err(|_| "desktop state is poisoned".to_owned())?;
-    guard.app = Some(app); guard.port = Some(port);
+    guard.app = Some(app);
     Ok(result)
 }
 #[tauri::command]
@@ -267,7 +266,6 @@ fn disconnect_application(state: &State<'_, Mutex<DesktopState>>) -> Result<(), 
         let mut guard = state.lock().map_err(|_| "desktop state is poisoned".to_owned())?;
         guard.disconnecting = false;
         if result.is_ok() && guard.app.as_ref().is_some_and(|current| current.is_same_session(&app)) {
-            guard.port = None;
             guard.app.take()
         } else { None }
     };
