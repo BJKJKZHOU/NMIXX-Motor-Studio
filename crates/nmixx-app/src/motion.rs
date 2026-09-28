@@ -150,6 +150,10 @@ impl MotionService {
         Ok(())
     }
 
+    pub(crate) fn reset_runtime(&self) -> Result<(), String> {
+        self.reset_repeat()
+    }
+
     fn reset_repeat(&self) -> Result<(), String> {
         *self.repeat.lock().map_err(|_| "Motion repeat lock poisoned")? = MotionRepeatRuntime::default();
         Ok(())
@@ -431,5 +435,12 @@ allowed_symbols = ["TORQUE", "SPEED", "POSITION", "SENSORLESS_SPEED"]
         let (target, target_is_b) = service.repeat_target(3.0, None).unwrap().unwrap();
         assert_eq!(target, 2.0);
         assert!(!target_is_b);
+
+        service.reset_runtime().unwrap();
+        assert!(service.get().repeat);
+        assert_eq!(service.get().incremental_delta_turn, 1.0);
+        let (target, target_is_b) = service.repeat_target(10.0, None).unwrap().unwrap();
+        assert_eq!(target, 11.0);
+        assert!(target_is_b);
     }
 }

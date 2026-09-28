@@ -77,7 +77,7 @@ Automation ----+
 
 Normal product clients must not assemble `DeviceSession + ParameterService + ScopeSession + MotionService` themselves. Tauri is a thin IPC bridge over `ApplicationSession`; the formal CLI uses the same runtime. Low-level smoke/protocol tests may intentionally use the explicit `nmixx_app::raw` namespace because their purpose is to validate the lower layer itself. Raw session/stream types are not re-exported beside the normal Application API.
 
-Host-only models that are meaningful while disconnected, such as the editable Motion command model and theoretical preview, may outlive a device connection. When connected, the same shared model instance is injected into `ApplicationSession`; a second copy must not be created.
+Host-only models that are meaningful while disconnected, such as the editable Motion command model and theoretical preview, may outlive a device connection. The desktop owns one shared `MotionService` and injects that same instance into each new `ApplicationSession`; a second host model must not be created. Connection-specific execution state such as Repeat A/B endpoints is reset when a new session is attached, while the editable Motion command configuration is retained.
 
 The Application API exposes domain concepts such as `parameter.get`, `motor.enable`, `motor.disable`, `motor.stop`, `motion.run`, `encoder.phase_search`, `config.save` and `protection.clear`, not raw CAN IDs or payload bytes. HostSchema Action metadata may be listed or inspected, but normal product clients do not execute arbitrary schema Actions through a generic dispatch endpoint. GUI pages also use Application-level capability discovery for semantic operations; they do not inspect `ACTION_*` symbols to decide which workflow buttons exist.
 

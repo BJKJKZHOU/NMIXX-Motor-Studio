@@ -3,7 +3,7 @@ use std::sync::Mutex;
 use std::time::Duration;
 use nmixx_app::{
     ActionCompletionWaiter, ActionHandle, ApplicationSession, AxdrStatus, CommissioningCapabilities, DEFAULT_USB_BAUD, HostSchema,
-    IdentificationKind, IdentificationStart, MixedScopeSeries, MotionCapabilities, MotionConfig, MotionPreview,
+    IdentificationKind, IdentificationStart, MixedScopeSeries, MotionCapabilities, MotionConfig, MotionPreview, MotionService,
     ParameterMetadata, ParameterValue, PositionValue, PreflightDomain, RangeMetadata,
     SchemaNumber, ScopeRate, ScopeSelection, StreamState, TuningExperimentState,
 };
@@ -11,7 +11,13 @@ use serde::{Deserialize, Serialize};
 use tauri::{Emitter, State};
 
 #[derive(Default)]
-struct DesktopState { app: Option<ApplicationSession>, port: Option<String>, automation: nmixx_app::AutomationRuntime, disconnecting: bool }
+struct DesktopState {
+    app: Option<ApplicationSession>,
+    port: Option<String>,
+    automation: nmixx_app::AutomationRuntime,
+    motion: MotionService,
+    disconnecting: bool,
+}
 #[derive(Debug, Serialize)]
 #[serde(rename_all = "camelCase")]
 struct PlotChannelDto { id: u16, label: String, unit: Option<String>, supports_fast: bool, supports_normal: bool, fast_scale: Option<f32> }
@@ -213,8 +219,10 @@ fn device_list() -> Result<Vec<String>, String> { ApplicationSession::available_
 #[tauri::command]
 async fn device_connect(app_handle: tauri::AppHandle, state: State<'_, Mutex<DesktopState>>, port: String, schema_path: String, baud: Option<u32>) -> Result<ConnectionDto, String> {
     disconnect_application(&state)?;
+    let motion = state.lock().map_err(|_| "desktop state is poisoned".to_owned())?.motion.clone();
     let schema = HostSchema::load(&schema_path).map_err(|error| error.to_string())?;
-    let app = ApplicationSession::open_usb(&port, baud.unwrap_or(DEFAULT_USB_BAUD), schema).map_err(|error| error.to_string())?;
+    let app = ApplicationSession::open_usb_with_motion(&port, baud.unwrap_or(DEFAULT_USB_BAUD), schema, motion)
+        .map_err(|error| error.to_string())?;
     for (id, result) in app.parameter_refresh_all().map_err(|error| error.to_string())? {
         let label = app.parameter_metadata().iter().find(|meta| meta.id == id).map(|meta| meta.label.as_str()).unwrap_or("Parameter");
         result.map_err(|error| format!("Initial read of {label} failed: {error}"))?;
