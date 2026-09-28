@@ -408,7 +408,7 @@
 </script>
 
 <section class="page-toolbar">
-  <div class="page-title">ANALYSIS / SCOPE · ECHARTS SPIKE</div>
+  <div class="page-title">ANALYSIS / SCOPE</div>
   <div class="toolbar-actions">
     <!-- svelte-ignore a11y_click_events_have_key_events a11y_no_static_element_interactions -->
     <vscode-button
