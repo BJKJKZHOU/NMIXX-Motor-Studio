@@ -12,7 +12,9 @@
     "test:automation": "node --test tests/automation-view.test.cjs tests/automation-assets.test.cjs",
     "check:parameter-syntax": "node scripts/check-parameter-syntax.mjs",
     "test:startup": "python3 scripts/test-startup.py",
-    "test:plots": "node --test tests/scope-window.test.cjs tests/motion-plot.test.cjs tests/scope-channel-reactivity.test.cjs"
+    "test:plots": "node --test tests/scope-window.test.cjs tests/motion-plot.test.cjs tests/scope-channel-reactivity.test.cjs",
+    "test:runtime": "node --test tests/connection-lifecycle.test.cjs tests/runtime-view.test.cjs tests/architecture-boundaries.test.cjs",
+    "test:all": "npm run test:parameters && npm run test:automation && npm run test:plots && npm run test:runtime"
   },
   "dependencies": {
     "@tanstack/svelte-table": "9.2.4",

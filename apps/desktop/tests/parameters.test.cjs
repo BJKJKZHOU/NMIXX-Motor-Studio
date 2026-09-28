@@ -113,7 +113,11 @@ for (const page of ["motor/MotorPage", "encoder/EncoderPage", "limits/LimitsPage
 }
 test("Motion preview implementation uses a cache snapshot, not device reads", () => {
   const source = readFileSync(resolve(desktop, "../../crates/nmixx-app/src/motion.rs"), "utf8");
-  const preview = source.slice(source.indexOf("pub fn preview_with_parameters"), source.indexOf("pub(crate) fn run"));
+  const start = source.indexOf("pub(crate) fn preview_with_parameters");
+  const end = source.indexOf("pub(crate) fn run_checked", start);
+  assert.notEqual(start, -1, "preview_with_parameters must remain an internal MotionService method");
+  assert.notEqual(end, -1, "run_checked boundary must remain discoverable");
+  const preview = source.slice(start, end);
   assert.match(preview, /parameters\.snapshot\(\)/);
   assert.doesNotMatch(preview, /parameters\.read\(/);
 });
