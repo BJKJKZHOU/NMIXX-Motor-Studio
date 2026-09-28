@@ -10,11 +10,16 @@ export type IdentificationStartResult =
   | { status: "requires_enable" }
   | { status: "started"; handle: ActionHandle };
 
-export function enableMotor(): Promise<ActionHandle> { return invoke<ActionHandle>("motor_enable"); }
-export function disableMotor(): Promise<ActionHandle> { return invoke<ActionHandle>("motor_disable"); }
-export function stopMotor(): Promise<ActionHandle> { return invoke<ActionHandle>("motor_stop"); }
+async function reflected<T>(operation: Promise<T>): Promise<T> {
+  const result = await operation;
+  await synchronizeParameters();
+  return result;
+}
+export function enableMotor(): Promise<ActionHandle> { return reflected(invoke<ActionHandle>("motor_enable")); }
+export function disableMotor(): Promise<ActionHandle> { return reflected(invoke<ActionHandle>("motor_disable")); }
+export function stopMotor(): Promise<ActionHandle> { return reflected(invoke<ActionHandle>("motor_stop")); }
 export function canSaveParameters(): Promise<boolean> { return invoke<boolean>("config_save_available"); }
-export function saveParameters(): Promise<ActionHandle> { return invoke<ActionHandle>("config_save"); }
+export function saveParameters(): Promise<ActionHandle> { return reflected(invoke<ActionHandle>("config_save")); }
 export async function onActionCompleted(handler: (completion: ActionCompletion) => void): Promise<UnlistenFn> {
   let disposed = false;
   const stop = await listen<ActionCompletion>("action-completed", (event) => {
@@ -29,6 +34,6 @@ export async function onActionCompleted(handler: (completion: ActionCompletion) 
 }
 export function onMotorStopIssued(handler: () => void): Promise<UnlistenFn> { return listen("motor-stop-issued", () => handler()); }
 export function startIdentification(kind: IdentificationKind, allowEnable: boolean): Promise<IdentificationStartResult> {
-  return invoke<IdentificationStartResult>("identification_start", { kind: kind === "rsLs" ? "rs_ls" : kind, allowEnable });
+  return reflected(invoke<IdentificationStartResult>("identification_start", { kind: kind === "rsLs" ? "rs_ls" : kind, allowEnable }));
 }
-export function applyIdentification(): Promise<ActionHandle> { return invoke<ActionHandle>("identification_apply"); }
+export function applyIdentification(): Promise<ActionHandle> { return reflected(invoke<ActionHandle>("identification_apply")); }

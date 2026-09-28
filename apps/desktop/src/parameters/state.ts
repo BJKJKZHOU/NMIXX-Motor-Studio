@@ -130,11 +130,15 @@ export function commitParameter(id: number, value: ParameterValue): Promise<Para
   pendingWrites.set(id, (pendingWrites.get(id) ?? 0) + 1);
   mutable.update((state) => ({ ...state, writing: new Set(pendingWrites.keys()) }));
   const result = enqueue(async () => {
-    const result = await transport.writeParameter(id, value);
-    // The backend already performed the authoritative write + dependent readback.
-    // Adopt the returned canonical primary value immediately; dependent cache
-    // changes arrive through the normal parameters-changed(ids) subscription.
-    apply([{ id: result.id, value: result.value, error: null }], token);
+    let result: ParameterRead;
+    try {
+      result = await transport.writeParameter(id, value);
+    } catch (error) {
+      await sync(readableIds(), token).catch((syncError) => report(syncError, token));
+      throw error;
+    }
+    // The backend owns dependent readback. Mirroring its cache is not a second device read.
+    await sync(readableIds(), token);
     requireSession(token);
     return result;
   }, token);
@@ -158,7 +162,7 @@ export async function refreshParameters(): Promise<void> {
   const token = epoch;
   requireSession(token);
   const results = await transport.refreshAllParameters();
-  apply(results, token);
+  await sync(readableIds(), token);
   requireSession(token);
   const failure = results.find((result) => result.error);
   if (failure) throw new Error(`Parameter Read failed: ${failure.error}`);
