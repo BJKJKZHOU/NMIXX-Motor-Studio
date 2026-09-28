@@ -126,7 +126,16 @@ test("dependency readback and changed notification are shared backend responsibi
   assert.match(source, /fn readback_ids/);
   assert.match(source, /metadata\.readback/);
   assert.match(source, /self\.readback_ids\(id\)/);
-  assert.doesNotMatch(source, /fn related_parameter\b/);
+  assert.doesNotMatch(source, /\brelated_parameter\s*\(/);
   assert.match(source, /cache\.get\(&id\) != Some\(&entry\)/);
   assert.match(source, /ReadbackFailed/);
+});
+
+
+test("RAM-modified tracking is limited to HostSchema persistent Parameters", () => {
+  const state = readFileSync(join(desktop, "src/parameters/state.ts"), "utf8");
+  const persistence = readFileSync(join(desktop, "src/parameters/persistence.ts"), "utf8");
+  assert.match(state, /registry\.filter\(\(meta\) => meta\.persistent\)/);
+  assert.match(persistence, /const tracked = new Set<number>\(\)/);
+  assert.match(persistence, /tracked\.has\(result\.id\)/);
 });

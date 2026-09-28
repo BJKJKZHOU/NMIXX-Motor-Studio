@@ -79,10 +79,16 @@ reported and successful partial readbacks remain visible.
 ## Persistence presentation
 
 The frontend baseline is presentation state, not a host implementation of Flash.
-It is initialized from the first successful connection snapshot. Existing unsaved
-changes made before that connection cannot be inferred without a firmware persisted
-snapshot. Within the connection, all views compare the same canonical values against
-that baseline.
+It is initialized from the first successful connection snapshot, but only for
+Parameters whose generated HostSchema metadata declares `persistent = true`.
+Existing unsaved changes made before that connection cannot be inferred without a
+firmware persisted snapshot. Within the connection, all views compare the same
+canonical persistent values against that baseline.
+
+Writable RAM-only command/target Parameters are deliberately excluded from the
+modified set. The GUI must not keep a hand-written persistence list: firmware YAML
+owns the persistence declaration and HostSchema exports it to the shared Parameter
+metadata.
 
 Save is serialized with GUI writes. Only a successful firmware Save followed by
 successful synchronization establishes a new presentation baseline. Failed Save or

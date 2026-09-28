@@ -107,3 +107,13 @@ test("Scope keeps baseline preview separate from recording state", () => {
   assert.match(scope, /runtimeChannelIds/);
   assert.match(scope, /return "normal"/);
 });
+
+
+test("HostSchema persistence metadata owns RAM-modified eligibility", () => {
+  const types = source("parameters/types.ts");
+  const state = source("parameters/state.ts");
+  const persistence = source("parameters/persistence.ts");
+  assert.match(types, /persistent: boolean/);
+  assert.match(state, /meta\.persistent/);
+  assert.match(persistence, /tracked\.has\(result\.id\)/);
+});

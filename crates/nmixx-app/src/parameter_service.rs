@@ -313,7 +313,14 @@ impl ParameterService {
 
         let ids = self.readback_ids(id)?;
         let _io = self.io.lock().map_err(|_| ParameterServiceError::CachePoisoned)?;
-        self.session.parameter_write(id, value)?;
+        if let Err(error) = self.session.parameter_write(id, value) {
+            // A transport/protocol failure can leave write acceptance uncertain.
+            // Re-read the same authoritative group so every client sees the device
+            // state that actually survived the failed request. Read failures
+            // invalidate cache entries instead of preserving stale success values.
+            let _ = self.read_many_locked(&ids);
+            return Err(error.into());
+        }
         let results = self.read_many_locked(&ids)?;
         let mut written = None;
         let mut failures = Vec::new();
@@ -502,22 +509,122 @@ mod shared_cache_tests {
     }
 
     #[test]
-    fn current_bandwidth_and_gains_always_include_source() {
-        assert!(related_parameter("PARAM_CTRL_CURRENT_BW_HZ", "PARAM_CTRL_CURRENT_SOURCE"));
-        assert!(related_parameter("PARAM_CTRL_ID_KP", "PARAM_CTRL_CURRENT_SOURCE"));
-        assert!(related_parameter("PARAM_CTRL_CURRENT_SOURCE", "PARAM_CTRL_IQ_KI"));
-        assert!(related_parameter("PARAM_MOTOR_RS", "PARAM_CTRL_IQ_KI"));
-        assert!(related_parameter("PARAM_MOTOR_J", "PARAM_CTRL_SPEED_KP"));
-        assert!(!related_parameter("PARAM_TARGET_SPEED", "PARAM_CTRL_SPEED_KP"));
-    }
-
-    #[test]
     fn groups_publish_only_the_ids_that_changed() {
         let mut cache = HashMap::new();
         update_cache(&mut cache, vec![(1, Ok(ParameterValue::U8(0)))]);
         assert_eq!(update_cache(&mut cache, vec![
             (1, Ok(ParameterValue::U8(0))), (2, Ok(ParameterValue::F32(10.0))),
         ]), vec![2]);
+    }
+}
+
+#[cfg(test)]
+mod write_reconcile_tests {
+    use super::*;
+    use std::collections::VecDeque;
+    use std::sync::{Arc, Mutex};
+    use std::time::Duration;
+
+    use nmixx_core::protocol::{
+        can_id, AxdrStatus, MSG_PARAMETER, MSG_RESPONSE, NODE_ID_DEFAULT, PARAM_READ, PARAM_WRITE,
+    };
+    use nmixx_core::transport::{FrameTransport, TransportError};
+    use nmixx_core::wire::CanFdFrame;
+
+    #[derive(Clone, Default)]
+    struct ScriptState {
+        incoming: Arc<Mutex<VecDeque<Result<CanFdFrame, TransportError>>>>,
+        on_send: Arc<Mutex<VecDeque<Vec<Result<CanFdFrame, TransportError>>>>>,
+    }
+
+    impl ScriptState {
+        fn respond_on_send(&self, frames: Vec<Result<CanFdFrame, TransportError>>) {
+            self.on_send.lock().unwrap().push_back(frames);
+        }
+    }
+
+    struct ScriptedTransport {
+        state: ScriptState,
+    }
+
+    impl FrameTransport for ScriptedTransport {
+        fn send(&mut self, _frame: &CanFdFrame) -> Result<(), TransportError> {
+            if let Some(frames) = self.state.on_send.lock().unwrap().pop_front() {
+                self.state.incoming.lock().unwrap().extend(frames);
+            }
+            Ok(())
+        }
+
+        fn receive(&mut self, _timeout: Duration) -> Result<CanFdFrame, TransportError> {
+            self.state.incoming.lock().unwrap().pop_front()
+                .unwrap_or(Err(TransportError::Timeout))
+        }
+    }
+
+    fn response(txn: u8, op: u8, status: AxdrStatus, data: &[u8]) -> CanFdFrame {
+        let mut payload = vec![txn, MSG_PARAMETER, op, status as u8];
+        payload.extend_from_slice(data);
+        CanFdFrame::new(can_id(MSG_RESPONSE, NODE_ID_DEFAULT), &payload).unwrap()
+    }
+
+    fn read_response(txn: u8, value: u8) -> CanFdFrame {
+        response(txn, PARAM_READ, AxdrStatus::Ok, &[1, 0, ParameterType::U8 as u8, value])
+    }
+
+    fn schema() -> HostSchema {
+        HostSchema::parse(r#"
+schema_version = 1
+protocol = "axdr-canfd-v1"
+
+[source]
+repository = "fixture"
+git_sha = "abc"
+parameter_schema = 1
+
+[[parameters]]
+symbol = "PARAM_TEST"
+label = "Test"
+id = 1
+type = "u8"
+access = "rw"
+description = "test"
+"#).unwrap()
+    }
+
+    #[test]
+    fn failed_write_reconciles_cache_from_authoritative_readback() {
+        let state = ScriptState::default();
+        state.respond_on_send(vec![Ok(read_response(1, 7))]);
+        // Simulate an uncertain write: firmware response is syntactically valid
+        // but identifies another Parameter, so Host cannot trust acceptance.
+        state.respond_on_send(vec![Ok(response(2, PARAM_WRITE, AxdrStatus::Ok, &[2, 0]))]);
+        // Device state observed after the failed request is authoritative.
+        state.respond_on_send(vec![Ok(read_response(3, 9))]);
+
+        let session = DeviceSession::spawn(Box::new(ScriptedTransport { state }));
+        let service = ParameterService::new(session, schema());
+        assert_eq!(service.read(1).unwrap(), ParameterValue::U8(7));
+
+        assert!(service.write_readback(1, ParameterValue::U8(9)).is_err());
+        assert_eq!(service.cached(1).unwrap(), Some(ParameterValue::U8(9)));
+    }
+
+    #[test]
+    fn failed_write_with_failed_reconciliation_invalidates_stale_cache() {
+        let state = ScriptState::default();
+        state.respond_on_send(vec![Ok(read_response(1, 7))]);
+        state.respond_on_send(vec![Ok(response(2, PARAM_WRITE, AxdrStatus::Ok, &[2, 0]))]);
+        state.respond_on_send(vec![Ok(response(3, PARAM_READ, AxdrStatus::ErrState, &[]))]);
+
+        let session = DeviceSession::spawn(Box::new(ScriptedTransport { state }));
+        let service = ParameterService::new(session, schema());
+        assert_eq!(service.read(1).unwrap(), ParameterValue::U8(7));
+
+        assert!(service.write_readback(1, ParameterValue::U8(9)).is_err());
+        assert!(matches!(
+            service.cached(1),
+            Err(ParameterServiceError::CachedReadFailed { id: 1, .. })
+        ));
     }
 }
 

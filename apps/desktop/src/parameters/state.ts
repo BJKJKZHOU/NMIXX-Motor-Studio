@@ -109,7 +109,7 @@ export async function connectParameters(): Promise<void> {
     const initial = Object.values(get(mutable).entries);
     const failed = initial.find((entry) => entry.error || entry.value === null);
     if (failed) throw new Error(`Initial Parameter snapshot failed: ${failed.error ?? "value unavailable"}`);
-    initializeParameterPersistence(initial);
+    initializeParameterPersistence(initial, registry.filter((meta) => meta.persistent).map((meta) => meta.id));
   } catch (error) {
     report(error, token);
     throw error;

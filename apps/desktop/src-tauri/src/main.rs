@@ -49,13 +49,14 @@ impl From<&RangeMetadata> for ParameterRangeDto {
 #[derive(Debug, Serialize)]
 #[serde(rename_all = "camelCase")]
 struct ParameterMetadataDto {
-    id: u16, symbol: String, label: String, type_name: String, access: String, unit: Option<String>, description: String,
-    write_state: Option<String>, range: Option<ParameterRangeDto>, allowed: Vec<SchemaNumberDto>, allowed_symbols: Vec<String>,
+    id: u16, symbol: String, label: String, type_name: String, access: String, persistent: bool,
+    unit: Option<String>, description: String, write_state: Option<String>, range: Option<ParameterRangeDto>,
+    allowed: Vec<SchemaNumberDto>, allowed_symbols: Vec<String>,
 }
 impl From<&ParameterMetadata> for ParameterMetadataDto {
     fn from(value: &ParameterMetadata) -> Self {
         Self { id: value.id, symbol: value.symbol.clone(), label: value.label.clone(), type_name: value.type_name.clone(),
-            access: value.access.clone(), unit: value.unit.clone(), description: value.description.clone(),
+            access: value.access.clone(), persistent: value.persistent, unit: value.unit.clone(), description: value.description.clone(),
             write_state: value.write_state.clone(), range: value.range.as_ref().map(Into::into),
             allowed: value.allowed.iter().copied().map(Into::into).collect(), allowed_symbols: value.allowed_symbols.clone() }
     }
