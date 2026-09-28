@@ -153,3 +153,12 @@ test("Phase Search motor-state orchestration stays inside MotorActionService", (
   assert.match(phase, /current_state == running/);
   assert.doesNotMatch(source("encoder/EncoderPage.svelte"), /disableMotor|enableMotor|PARAM_MOTOR_MODE/);
 });
+
+
+test("Motion preview may use runtime Plot position while Run keeps exact Position reads", () => {
+  const app = readFileSync(join(repo, "crates/nmixx-app/src/application.rs"), "utf8");
+  const motion = readFileSync(join(repo, "crates/nmixx-app/src/motion.rs"), "utf8");
+  assert.match(app, /motion_preview[\s\S]*runtime_telemetry[\s\S]*position_turns/);
+  assert.match(motion, /current_position_turn_override/);
+  assert.match(motion, /run_checked[\s\S]*read_position\(parameters, "PARAM_RUN_POSITION"\)/);
+});

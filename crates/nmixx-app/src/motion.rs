@@ -165,6 +165,7 @@ impl MotionService {
         &self,
         parameters: &ParameterService,
         effective_speed_limit: Option<f64>,
+        current_position_turn_override: Option<f64>,
     ) -> Result<MotionPreview, String> {
         let config = self.get();
         validate_host_config(&config)?;
@@ -201,7 +202,15 @@ impl MotionService {
                 let distance_turn = match config.position_command {
                     PositionCommand::Incremental => config.incremental_delta_turn,
                     PositionCommand::Absolute => {
-                        let current = position_to_turns(position("PARAM_RUN_POSITION")?);
+                        // The display preview may use the latest 1 kHz Plot
+                        // position from RuntimeTelemetry. Do not write that f32
+                        // projection back into the exact typed Position Parameter.
+                        // Execution-time Run still reads PARAM_RUN_POSITION from
+                        // the device before deriving an absolute/incremental target.
+                        let current = match current_position_turn_override {
+                            Some(value) if value.is_finite() => value,
+                            _ => position_to_turns(position("PARAM_RUN_POSITION")?),
+                        };
                         let target = position_to_turns(position("PARAM_TARGET_POSITION")?);
                         target - current
                     }

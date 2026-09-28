@@ -460,7 +460,16 @@ impl ApplicationSession {
         self.inner.motion.set(config).map_err(ApplicationError::Motion)
     }
     pub fn motion_preview(&self) -> Result<MotionPreview, ApplicationError> {
-        self.inner.motion.preview_with_parameters(&self.inner.parameters, None).map_err(ApplicationError::Motion)
+        let current_position_turn = {
+            let slot = self.inner.scope.lock().map_err(|_| ApplicationError::Poisoned)?;
+            slot.as_ref()
+                .and_then(|source| source.runtime_telemetry().ok())
+                .and_then(|telemetry| telemetry.position_turns)
+                .map(f64::from)
+        };
+        self.inner.motion
+            .preview_with_parameters(&self.inner.parameters, None, current_position_turn)
+            .map_err(ApplicationError::Motion)
     }
     pub fn motion_run(&self) -> Result<ActionHandle, ApplicationError> {
         self.motion_run_at(self.inner.motor_gate.ticket(), None)

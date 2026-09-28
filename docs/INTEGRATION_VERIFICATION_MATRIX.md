@@ -612,44 +612,115 @@ implemented functionality.
 **Shared consumers:** Motion page, Control Tuning, Automation, Scope/RuntimeTelemetry  
 **Normative references:** `MOTION_PAGE.md`, `UI_INTERACTION_RULES.md`
 
+### Code review pass — 2026-09-28
+
+One shared preview defect was found and corrected:
+
+- **Absolute Position preview used a stale exact Position cache.** Runtime Position
+  was intentionally moved off periodic Parameter polling and onto the connection
+  1 kHz baseline, but preview still read cached `PARAM_RUN_POSITION`. Application
+  preview now passes the latest Host-memory RuntimeTelemetry total-turn position as
+  a display-only start override. Actual Run still performs an exact typed
+  `PARAM_RUN_POSITION` device read when current position is needed.
+
+A separate unresolved product/integration gap remains:
+
+- [ ] **[DESIGN/IMPL GAP]** Motion Repeat execution semantics are not formally
+  selected. Current code models A/B endpoints and tries to advance after
+  ACTION_COMPLETE, but normal AxDr_L Motor Run does not emit a generic finite
+  ACTION_COMPLETE for Position motion. Therefore current Repeat sequencing cannot
+  be considered Wired. Do not infer “automatic out-and-back”, “continuous repeat
+  until Stop”, or “one direction per separate Run” from the current implementation.
+
+`MOTION_PAGE.md` was added in this pass as the normative Motion contract so future
+integration fixes do not derive product behavior from whichever implementation
+happens to exist.
+
 ### Mode and command state
 
-- [ ] Available Motion modes follow firmware/Application capabilities.
-- [ ] Mode changes are allowed only in the established motor state.
-- [ ] Mode write is a shared Parameter write and appears on Parameters page.
-- [ ] Torque target writes the correct Parameter.
-- [ ] Speed target writes the correct Parameter.
-- [ ] Absolute Position target uses the exact typed Position Parameter.
-- [ ] Incremental Position delta remains explicit Host-owned command state and is not disguised as an uncommitted Parameter.
-- [ ] Sensorless-only fields appear only in Sensorless Speed mode when firmware exposes them.
+- [x] **[CODE]** Available Motion modes are derived from HostSchema/Application capabilities.
+- [x] **[CODE]** Current GUI exposes Position/Speed/Sensorless-Speed/Torque only when each capability is present.
+- [x] **[CODE]** Mode enum values resolve through HostSchema symbols rather than firmware ordinal assumptions.
+- [x] **[CODE]** Mode selector is writable only while the motor is DISABLED; backend Parameter write-state validation remains authoritative.
+- [x] **[CODE]** Mode write is a shared Parameter write and therefore updates the generic Parameters projection.
+- [x] **[CODE]** Torque target uses shared `PARAM_TARGET_TORQUE`.
+- [x] **[CODE]** Speed/Sensorless-Speed target uses shared `PARAM_TARGET_SPEED`.
+- [x] **[CODE]** Absolute Position target uses exact typed `PARAM_TARGET_POSITION`.
+- [x] **[CODE]** Incremental Position delta is explicit Host-owned MotionConfig state, not an uncommitted Parameter draft.
+- [x] **[CODE]** Incremental Run reads exact current Position, converts delta to an exact typed target, and writes it through ParameterService before Motor Run.
+- [x] **[CODE]** Execution-time target writes use `ParameterService::write -> write_readback`, so shared Parameter views receive the committed target.
+- [x] **[CODE]** Sensorless-only controls appear only when their Parameters exist and Sensorless-Speed is active.
+- [ ] **[HW]** Exercise all currently exposed modes and confirm device mode/target readback matches the page.
+- [ ] **[HW]** Verify negative/multi-turn Absolute and Incremental Position targets across turn boundaries.
 
 ### Trajectory configuration / preview
 
-- [ ] Wm Max/Acc/Dec values come from shared Parameter state.
-- [ ] Preview reads committed Parameter values rather than silently committing drafts.
-- [ ] Preview uses current limits/capabilities according to the established Application semantics.
-- [ ] Position preview matches absolute/incremental command semantics.
-- [ ] Speed preview contains no stale Position-only validation.
-- [ ] Unsupported S-curve/Filtered controls are not presented as executable capabilities.
+- [x] **[CODE]** Wm Max/Acc/Dec use the same shared Parameter state as other pages.
+- [x] **[CODE]** Preview uses a cache snapshot plus Host MotionConfig; it does not commit drafts or read the device merely to redraw.
+- [x] **[CODE]** Preview watches committed Motion Parameters and current Effective speed limit.
+- [x] **[CODE]** Speed preview depends on Speed target/acceleration/effective limit and does not read Position-only inputs.
+- [x] **[CODE]** Torque preview depends only on Torque target.
+- [x] **[CODE]** Absolute Position preview now uses latest RuntimeTelemetry total-turn position when available, avoiding stale Parameter-cache start position.
+- [x] **[CODE]** Preview RuntimeTelemetry position is display-only and never replaces the exact typed Position Parameter.
+- [x] **[CODE]** Actual Position Run still reads exact typed `PARAM_RUN_POSITION` from the device at execution time.
+- [x] **[CODE]** Current AxDr trapezoidal capability is inferred only from actual Wm Acc/Dec Parameters.
+- [x] **[CODE]** S-curve/Filtered capability is not invented unless dedicated firmware Parameters exist.
+- [x] **[CODE]** Current Motion UI presents only the implemented T/Trapezoidal profile.
+- [ ] **[HW]** Compare preview direction/duration/peak speed with a real Position move.
+- [ ] **[HW]** Move the motor, then change only an Absolute target and confirm preview starts from the latest runtime position rather than stale initial position.
+- [ ] **[HW]** Verify Effective speed limiting shown by preview matches actual firmware-clamped motion.
 
-### Run / Stop / Repeat
+### Run
 
-- [ ] Run never implicitly Enables the motor.
-- [ ] Run is available only when the established prerequisites are met.
-- [ ] Run sends the semantic Motion operation once.
-- [ ] Physical motor response matches the selected mode/target.
-- [ ] Runtime Speed/Position/Current feedback reflects motion through the shared baseline.
-- [ ] Stop immediately invokes shared motor Stop semantics.
-- [ ] Controlled deceleration may leave motor state RUN temporarily without making Host Stop appear failed.
-- [ ] Repeat starts one commanded leg and then the reverse leg according to the established repeat rule.
-- [ ] Repeat direction advances only after successful completion.
-- [ ] Stop/cancel prevents a delayed repeat leg from starting.
+- [x] **[CODE]** Run never calls Enable; GUI requires observed motor state ENABLED.
+- [x] **[CODE]** Application repeats an authoritative exact motor-state read and rejects Run unless ENABLED.
+- [x] **[CODE]** Application reads authoritative firmware mode before dispatch.
+- [x] **[CODE]** Frontend waits pending Host Motion updates and Parameter writes before invoking Run.
+- [x] **[CODE]** One Run interaction invokes one semantic `motion_run` request.
+- [x] **[CODE]** Motion/Tuning resource conflicts are rejected by shared Application runtime.
+- [x] **[CODE]** MotorGate checkpoint fences execution-time target write and final Run dispatch against concurrent Stop/cancel.
+- [x] **[CODE]** Normal Run acceptance is not treated as generic motion completion.
+- [x] **[CODE]** Runtime Current/Speed/Position feedback belongs to shared 1 kHz RuntimeTelemetry rather than Motion-page polling.
+- [ ] **[HW]** Verify Run while DISABLED does not Enable or move the motor.
+- [ ] **[HW]** Verify Run while ENABLED sends exactly the intended committed command.
+- [ ] **[HW]** Verify runtime Current/Speed/Position sign and magnitude during Torque/Speed/Position motion.
+
+### Stop
+
+- [x] **[CODE]** Motion Stop first cancels pending Repeat-leg bookkeeping, then calls the shared `motor_stop`.
+- [x] **[CODE]** Shared Stop cancels MotorGate before dispatch so a delayed Run cannot pass its checkpoint afterward.
+- [x] **[CODE]** Motion page does not implement a private Stop/Abort Action.
+- [x] **[CODE]** Tauri Motion Stop emits the same `motor-stop-issued` event used by the workbench semantic.
+- [x] **[CODE]** Host does not require Motor State RUN before allowing the Motion Stop control.
+- [x] **[CODE]** Firmware-controlled Speed/Position/Sensorless Stop may acknowledge immediately and remain RUN until deceleration completes.
+- [x] **[CODE]** Headless `motor_wait_stopped` observes Motor State rather than waiting for a nonexistent generic Stop completion event.
+- [ ] **[HW]** Stop Speed and Position motion at nonzero speed and verify controlled deceleration plus eventual ENABLED state.
+- [ ] **[HW]** Press Stop during a pending/preparing Run race and verify no delayed motion starts afterward.
+
+### Repeat — unresolved
+
+- [x] **[CODE]** Host repeat state is Application-owned rather than a firmware Parameter.
+- [x] **[CODE]** Existing endpoint logic advances direction only after a successful completion signal.
+- [x] **[CODE]** Stop clears the pending Repeat-leg marker.
+- [ ] **[IMPL]** Current normal Position Motor Run has no generic ACTION_COMPLETE event, so existing completion-driven A/B advancement is not a valid end-to-end implementation.
+- [ ] **[DESIGN]** Select the intended Motion Repeat product semantic before implementing sequencing.
+- [ ] **[HW]** Repeat verification is blocked until the semantic and completion criterion are defined.
+
+### Automated guard status
+
+- [x] **[CODE]** Motion mode mapping has schema-value unit coverage.
+- [x] **[CODE]** Exact Position conversion has negative/multi-turn unit coverage.
+- [x] **[CODE]** Effective-speed preview limiting has unit coverage.
+- [x] **[CODE]** Existing Repeat endpoint state has unit coverage, but this does not prove end-to-end sequencing.
+- [x] **[CODE]** Added boundary guard: preview may use RuntimeTelemetry position while Run must retain exact Position reads.
+- [x] **[CODE]** Motion trajectory ECharts option/lifecycle has focused Node coverage.
+- [ ] **[TEST RUN]** Execute current Rust/desktop Motion tests after these changes.
 
 ### Exit criteria
 
-- [ ] Wired
-- [ ] Verified
-- [ ] Regression Guarded
+- [ ] **Wired — core mode/command/preview/Run/Stop path is wired; blocked by unresolved Repeat semantics/implementation.**
+- [ ] **Verified — requires current real-device pass.**
+- [ ] **Regression Guarded — coverage exists/improved, but current-pass tests have not been executed.**
 
 ---
 
