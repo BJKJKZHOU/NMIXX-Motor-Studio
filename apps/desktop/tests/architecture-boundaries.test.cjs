@@ -137,3 +137,19 @@ test("Commissioning preflight checks blocking Protection masks", () => {
   assert.match(preflight, /PARAM_EVENT_TRIP/);
   assert.match(preflight, /PreflightDomain::Protection/);
 });
+
+
+test("Phase Search motor-state orchestration stays inside MotorActionService", () => {
+  const motorActions = readFileSync(join(repo, "crates/nmixx-app/src/motor_actions.rs"), "utf8");
+  const start = motorActions.indexOf("pub fn phase_search_start");
+  const end = motorActions.indexOf("fn start_action", start);
+  assert.notEqual(start, -1);
+  assert.notEqual(end, -1);
+  const phase = motorActions.slice(start, end);
+  assert.match(phase, /MOTOR_STATE/);
+  assert.match(phase, /MOTOR_DISABLE/);
+  assert.match(phase, /MOTOR_ENABLE/);
+  assert.match(phase, /PHASE_SEARCH_MODE/);
+  assert.match(phase, /current_state == running/);
+  assert.doesNotMatch(source("encoder/EncoderPage.svelte"), /disableMotor|enableMotor|PARAM_MOTOR_MODE/);
+});

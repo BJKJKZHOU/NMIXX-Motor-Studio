@@ -36,7 +36,7 @@ pub enum MotorActionError {
     PreflightFailed(String),
     #[error("parameter '{0}' does not contain a u8 value")]
     InvalidParameterValue(String),
-    #[error("motor must be stopped before starting identification")]
+    #[error("motor must be stopped before starting this operation")]
     MotorRunning,
     #[error(transparent)]
     Preflight(#[from] PreflightError),
@@ -205,26 +205,65 @@ impl MotorActionService {
             .parameter_by_key(MOTOR_MODE)
             .ok_or_else(|| MotorActionError::MissingParameter(MOTOR_MODE.to_owned()))?;
         let phase_search = mode.enum_u8(PHASE_SEARCH_MODE)?;
+        let state = self
+            .schema
+            .parameter_by_key(MOTOR_STATE)
+            .ok_or_else(|| MotorActionError::MissingParameter(MOTOR_STATE.to_owned()))?;
+        let disabled = state.enum_u8(MOTOR_STATE_DISABLED)?;
+        let enabled = state.enum_u8(MOTOR_STATE_ENABLED)?;
+        let running = state.enum_u8(MOTOR_STATE_RUN)?;
 
         let enable = self
             .schema
             .action_by_key(MOTOR_ENABLE)
             .ok_or_else(|| MotorActionError::MissingAction(MOTOR_ENABLE.to_owned()))?;
+        let disable = self
+            .schema
+            .action_by_key(MOTOR_DISABLE)
+            .ok_or_else(|| MotorActionError::MissingAction(MOTOR_DISABLE.to_owned()))?;
         let run = self
             .schema
             .action_by_key(MOTOR_RUN)
             .ok_or_else(|| MotorActionError::MissingAction(MOTOR_RUN.to_owned()))?;
 
-        self.check_dispatch()?;
-        self.parameters.write(mode.id, ParameterValue::U8(phase_search))?;
+        let mut current_state = read_u8(&self.parameters, state)?;
+        if current_state == running {
+            return Err(MotorActionError::MotorRunning);
+        }
 
-        // Enable is an immediate Action: a successful action_start response means
-        // firmware has already executed Motor_Enable(). ACTION_COMPLETE is only
-        // emitted for the finite phase-search operation itself.
-        self.check_dispatch()?;
-        self.session.action_start(enable.id)?;
+        let current_mode = read_u8(&self.parameters, mode)?;
 
-        // The returned handle represents the finite phase-search operation.
+        // Motor mode is DISABLED-only in the current firmware. Keep that
+        // device-side detail inside the semantic operation: if the drive is
+        // already ENABLED in another mode, disable it before selecting
+        // PHASE_SEARCH, then restore ENABLED before the finite Run.
+        if current_state == enabled && current_mode != phase_search {
+            self.check_dispatch()?;
+            self.session.action_start(disable.id)?;
+            current_state = read_u8(&self.parameters, state)?;
+            if current_state != disabled {
+                return Err(MotorActionError::InvalidParameterValue(MOTOR_STATE.to_owned()));
+            }
+        }
+
+        if current_state == disabled {
+            self.check_dispatch()?;
+            self.parameters.write(mode.id, ParameterValue::U8(phase_search))?;
+
+            // Enable is an immediate Action: a successful action_start response
+            // means firmware has already executed Motor_Enable().
+            self.check_dispatch()?;
+            self.session.action_start(enable.id)?;
+
+            current_state = read_u8(&self.parameters, state)?;
+            if current_state != enabled {
+                return Err(MotorActionError::InvalidParameterValue(MOTOR_STATE.to_owned()));
+            }
+        }
+
+        // If the drive was already ENABLED in PHASE_SEARCH mode, no redundant
+        // Disable/Enable cycle is needed. The returned handle represents the
+        // finite Run/phase-search operation.
         self.check_dispatch()?;
         Ok(self.session.action_start(run.id)?)
     }

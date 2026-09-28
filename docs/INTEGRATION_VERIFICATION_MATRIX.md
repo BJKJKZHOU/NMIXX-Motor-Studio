@@ -480,47 +480,129 @@ without an unsafe Apply button.
 **Shared consumers:** Encoder page, Motion, status bar Position, Problems, Automation  
 **Normative references:** `ENCODER_PAGE.md`, `APPLICATION_PREFLIGHT.md`, `UI_INTERACTION_RULES.md`
 
+### Code review pass — 2026-09-28
+
+One shared Application defect was found and corrected in this pass:
+
+- **Phase Search only worked from DISABLED.** The page correctly called one
+  semantic operation, but `MotorActionService::phase_search_start()` attempted the
+  DISABLED-only mode write unconditionally and therefore failed when the drive was
+  already ENABLED. The semantic owner now handles DISABLED/ENABLED explicitly:
+  RUN is rejected; ENABLED in another mode is disabled before the mode switch and
+  re-enabled; ENABLED already in PHASE_SEARCH runs directly.
+
+Firmware completion semantics were also traced end-to-end:
+
+- successful servo phase search reaches `PHASE_DONE`;
+- `Motor_Control()` executes `Servo_Phase_Apply()` before action completion;
+- Apply writes `Motor_Cal.Enc_Dir / Theta_Off / Valid` and persists calibration;
+- only after that does `Motor_Async_Action_Poll()` emit the finite
+  ACTION_COMPLETE event;
+- Application refreshes shared Parameters before forwarding completion to GUI.
+
+One cross-domain implementation gap remains:
+
+- [ ] **[IMPL/GAP]** Surface encoder feedback failure through the Application
+  Problems domain even when the encoder is configured but not currently required
+  by a running servo mode. Today `PROT_ENCODER` is raised only when
+  `Motor_Encoder_Required()` and `Encoder.Fault != 0`. The Encoder page must
+  not work around this by restoring a permanent Ready/Valid/Fault status table.
+
+Current AxDr_L does **not** expose `ACTION_POSITION_SET_ZERO`,
+`ACTION_HOME_START`, or `PARAM_POSITION_ZERO_VALID`; the Mechanical Reference
+controls correctly remain capability-disabled placeholders and are not counted as
+implemented functionality.
+
 ### Encoder configuration
 
-- [ ] Protocol selector shows only values exposed by HostSchema.
-- [ ] Selecting protocol writes RAM immediately through shared Parameter API.
-- [ ] Parameter page reflects the committed protocol value.
-- [ ] Protocol-specific fields appear/disappear correctly.
-- [ ] SPI model selection writes/readbacks correctly.
-- [ ] Encoder direction follows the configured firmware Parameter.
-- [ ] Encoder configuration writes refresh related calibration/feedback Parameters through HostSchema metadata.
-- [ ] Changing protocol to NONE and back does not freeze the Scope or application UI.
+- [x] **[CODE]** Protocol options are derived from HostSchema enum symbols/values rather than assumed ordinals.
+- [x] **[CODE]** Protocol selection commits immediately through the shared Parameter editor.
+- [x] **[CODE]** Generic Parameters and Encoder views share the same committed protocol value.
+- [x] **[CODE]** SPI-specific encoder type appears only when protocol resolves to `ENC_PROTOCOL_SPI`.
+- [x] **[CODE]** ABZ-specific PPR appears only when the protocol is ABZ and firmware exposes the Parameter.
+- [x] **[CODE]** SPI model selection commits through the same shared Parameter path.
+- [x] **[CODE]** User Motor direction writes `PARAM_MOTOR_DIR` separately from calibration `Enc_Dir`.
+- [x] **[CODE]** Encoder protocol/SPI/direction dependent readbacks are owned by HostSchema/ParameterService rather than the page.
+- [x] **[CODE]** Encoder page contains no direct device read/write/listener path for Parameter values.
+- [x] **[CODE]** Scope acquisition is not owned or restarted by Encoder protocol selection; the earlier NONE/SPI freeze class is therefore outside the page and covered by shared acquisition reconfigure/session handling.
+- [ ] **[HW]** Switch SPI -> NONE -> SPI repeatedly and verify UI, baseline stream and Scope remain responsive.
+- [ ] **[HW]** Switch supported SPI encoder models and confirm device readback plus feedback behavior.
 
 ### Feedback
 
-- [ ] Valid encoder movement changes the global runtime Position display.
-- [ ] Valid encoder movement changes the global runtime Speed display through the intended feedback chain.
-- [ ] Invalid/faulted encoder state is not represented as a permanent duplicate Ready/Valid table when Problems owns the fault presentation.
-- [ ] Encoder fault/problem state clears only when authoritative state clears/rechecks.
+- [x] **[CODE]** Global runtime Position display comes from the connection-owned 1 kHz baseline, not an Encoder-page poll.
+- [x] **[CODE]** Global runtime Speed display comes from the same baseline/runtime path.
+- [x] **[CODE]** Encoder page intentionally does not render a permanent Ready/Valid/Fault table.
+- [x] **[CODE]** When encoder fault becomes a required-control protection condition, firmware raises `PROT_ENCODER` and the existing Protection event path reaches Problems.
+- [ ] **[IMPL/GAP]** Configured-but-currently-not-required encoder invalid/fault state is not yet independently projected into Problems.
+- [ ] **[HW]** Rotate a valid encoder and confirm Position updates continuously through the baseline stream.
+- [ ] **[HW]** Confirm the sensored speed feedback chain produces the expected runtime Speed sign/magnitude.
+- [ ] **[HW]** Create/remove a real encoder fault and verify Problems lifecycle and recovery.
 
-### Phase Search
+### Phase Search preflight / start
 
-- [ ] Preflight checks Encoder Ready/Valid/Fault, pole pairs, current limit and search current.
-- [ ] Phase Search can request the established explicit Enable flow where required.
-- [ ] Start uses the semantic Application phase-search composition.
-- [ ] Global Stop invokes the same motor Stop semantic; no separate page-local Abort lifecycle exists.
-- [ ] Completion event is observed.
-- [ ] Successful result is automatically applied according to the established page contract.
-- [ ] Offset/direction/calibration Parameters reflect the successful result in shared state.
-- [ ] Failure surfaces an actionable error/problem without silently altering unrelated settings.
+- [x] **[CODE]** Preflight reads current Protection Error/Trip and blocks active fault/trip.
+- [x] **[CODE]** Preflight requires Encoder Ready.
+- [x] **[CODE]** Preflight requires Encoder Valid.
+- [x] **[CODE]** Preflight requires Encoder Fault == 0.
+- [x] **[CODE]** Preflight requires positive pole pairs, current limit and phase-search current.
+- [x] **[CODE]** Authoritative preflight is repeated inside `MotorActionService`; GUI cannot bypass it.
+- [x] **[CODE]** Page calls one semantic `phase_search_start` API and does not assemble Motor Mode/Enable/Run itself.
+- [x] **[CODE]** Semantic Phase Search now rejects RUN rather than silently changing a running operation.
+- [x] **[CODE]** From ENABLED in another mode, Application disables, switches PHASE_SEARCH while DISABLED, then enables.
+- [x] **[CODE]** From DISABLED, Application writes PHASE_SEARCH mode, enables, verifies ENABLED, then starts finite Run.
+- [x] **[CODE]** Already-ENABLED PHASE_SEARCH avoids a redundant Disable/Enable cycle.
+- [x] **[CODE]** MotorGate/workflow checkpoint fences every state-changing dispatch.
+- [x] **[CODE]** Global Stop uses the shared motor Stop path; Encoder page owns no phase-specific Abort/Stop command.
+- [x] **[CODE]** Firmware Motor Stop in PHASE_SEARCH calls `Servo_Phase_Abort()` and returns motor state to ENABLED.
+- [ ] **[HW]** Start Phase Search from DISABLED and verify the complete automatic mode/Enable/Run sequence.
+- [ ] **[HW]** Leave the motor ENABLED in another mode, start Phase Search, and verify the new semantic transition works.
+- [ ] **[HW]** Attempt Phase Search while RUN and confirm it is rejected without altering the running operation.
+- [ ] **[HW]** Press global Stop during Phase Search and verify prompt abort/recoverable ENABLED state.
 
-### Set Zero
+### Phase Search completion / automatic calibration
 
-- [ ] Set Zero uses the semantic Application API.
-- [ ] Set Zero updates the exact typed position/reference semantics expected by firmware.
-- [ ] Global runtime Position reflects the new zero on the baseline stream.
-- [ ] Parameter/shared views update after the immediate action readback.
+- [x] **[CODE]** The returned Action handle represents the finite Motor Run/phase-search operation.
+- [x] **[CODE]** Page tracks asynchronous completion rather than treating Run acceptance as success.
+- [x] **[CODE]** Firmware applies successful phase calibration automatically; GUI exposes no Apply button.
+- [x] **[CODE]** `Servo_Phase_Apply()` writes calibration direction/offset/valid state.
+- [x] **[CODE]** Successful phase calibration is persisted to NVS before completion is emitted.
+- [x] **[CODE]** Firmware completion is emitted after `Motor_Control()` has executed automatic Apply.
+- [x] **[CODE]** Application refreshes shared Parameters before action-completion subscribers observe Success/Failure.
+- [x] **[CODE]** Result calibration values remain available in generic Parameters without duplicating them on the normal Encoder page.
+- [x] **[CODE]** Failed Apply changes servo-phase result validity so the finite completion reports failure rather than false Success.
+- [ ] **[HW]** Run a successful phase search and verify Calibration Valid / Enc_Dir / Theta_Off match firmware/tool output.
+- [ ] **[HW]** Reset/power-cycle and confirm automatically saved calibration is restored.
+- [ ] **[HW]** Force a phase-search failure and confirm page status, shared Parameters and rerun behavior remain coherent.
+
+### Motor direction
+
+- [x] **[CODE]** User Motor direction is a separate `+1/-1` Parameter and is presented as Normal/Reversed.
+- [x] **[CODE]** Changing user Motor direction does not directly edit calibration `Enc_Dir` or `Theta_Off`.
+- [ ] **[HW]** Change Motor direction and verify runtime user-coordinate Position/Speed direction changes without requiring another phase search.
+
+### Set Zero / Homing capability boundary
+
+- [x] **[CODE]** Set Zero button availability comes from `ACTION_POSITION_SET_ZERO` capability.
+- [x] **[CODE]** Homing button availability comes from `ACTION_HOME_START` capability.
+- [x] **[CODE]** Zero reference text depends on `PARAM_POSITION_ZERO_VALID` only when firmware exposes it.
+- [x] **[CODE]** Current AxDr_L exposes none of those contracts, so the page does not synthesize zero/homing behavior.
+- [x] **[CODE]** If a future firmware exposes Set Zero, Application semantic path performs immediate shared Parameter refresh after the action.
+- [x] **[CODE]** If future firmware exposes Homing, GUI already treats it as a finite semantic Action and listens for completion.
+- [ ] **[FUTURE HW]** Verify Set Zero once firmware exposes the capability.
+- [ ] **[FUTURE HW]** Verify Homing once firmware exposes the capability.
+
+### Automated guard status
+
+- [x] **[CODE]** Added a boundary guard requiring Phase Search state orchestration to remain in `MotorActionService`, not Encoder page.
+- [x] **[CODE]** Commissioning capability test covers semantic Phase Search capability composition.
+- [ ] **[TEST RUN]** Execute current Rust and desktop architecture tests after this change.
 
 ### Exit criteria
 
-- [ ] Wired
-- [ ] Verified
-- [ ] Regression Guarded
+- [ ] **Wired — core Encoder/Phase Search path is wired; blocked by the Problems-domain encoder-health GAP against the normative page contract.**
+- [ ] **Verified — requires current real-device pass.**
+- [ ] **Regression Guarded — guard added but current-pass tests have not been executed.**
 
 ---
 

@@ -252,6 +252,15 @@ MotorActionService
 
 The desktop client calls the semantic phase-search command. It does not know or reproduce the firmware sequence.
 
+Motor-state orchestration is part of that semantic operation as well:
+
+- if the motor is `RUN`, Phase Search is rejected and the shared Stop operation must be used first;
+- if the motor is `ENABLED` in another mode, Application disables it, selects `PHASE_SEARCH` while DISABLED, then enables again;
+- if the motor is already `ENABLED` in `PHASE_SEARCH`, Application does not perform a redundant Disable/Enable cycle;
+- if the motor is `DISABLED`, Application selects `PHASE_SEARCH`, enables, and starts the finite Run.
+
+The Encoder page must not add its own Enable/Disable sequence to compensate for firmware mode-write restrictions.
+
 This is intentionally an Application-level compatibility adapter. If firmware later exposes a native phase-search Action, only the Application implementation needs to change; Encoder GUI, CLI and automation semantics stay stable.
 
 The same rule applies to future Set Zero and Homing operations: clients call semantic Application operations, while any required lower-level Parameter/Action composition remains inside the Application layer.
