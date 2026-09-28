@@ -86,10 +86,10 @@ impl ApplicationSession {
     pub fn open_usb_with_motion(path: impl AsRef<Path>, baud_rate: u32, schema: HostSchema, motion: MotionService) -> Result<Self, ApplicationError> {
         Self::from_session_with_motion(DeviceSession::open_usb(path, baud_rate)?, schema, motion)
     }
-    pub fn from_session(session: DeviceSession, schema: HostSchema) -> Result<Self, ApplicationError> {
+    pub(crate) fn from_session(session: DeviceSession, schema: HostSchema) -> Result<Self, ApplicationError> {
         Self::from_session_with_motion(session, schema, MotionService::default())
     }
-    pub fn from_session_with_motion(session: DeviceSession, schema: HostSchema, motion: MotionService) -> Result<Self, ApplicationError> {
+    pub(crate) fn from_session_with_motion(session: DeviceSession, schema: HostSchema, motion: MotionService) -> Result<Self, ApplicationError> {
         motion.reset_runtime().map_err(ApplicationError::Motion)?;
         let events = session.subscribe()?;
         let parameters = ParameterService::new(session.clone(), schema.clone());
@@ -412,7 +412,7 @@ impl ApplicationSession {
         }
         Ok(handle)
     }
-    pub fn motion_run_completed(&self, status: AxdrStatus) -> Result<(), ApplicationError> {
+    fn motion_run_completed(&self, status: AxdrStatus) -> Result<(), ApplicationError> {
         self.inner.motion.repeat_completed(status).map_err(ApplicationError::Motion)
     }
     pub fn motion_stop(&self) -> Result<ActionHandle, ApplicationError> {
@@ -465,7 +465,7 @@ impl ApplicationSession {
     fn read_position_turns(&self, key: &str) -> Result<f64, ApplicationError> {
         let metadata = self.inner.schema.parameter_by_key(key).ok_or_else(|| ApplicationError::Motion(format!("{key} is not exposed")))?;
         match self.inner.parameters.read(metadata.id)? {
-            ParameterValue::Position(value) => Ok(f64::from(value.turns) + f64::from(value.theta) / std::f64::consts::TAU),
+            ParameterValue::Position(value) => Ok(crate::motion::position_to_turns(value)),
             _ => Err(ApplicationError::Motion(format!("{key} has an unexpected type"))),
         }
     }
