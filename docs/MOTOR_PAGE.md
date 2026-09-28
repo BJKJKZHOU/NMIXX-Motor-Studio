@@ -164,7 +164,7 @@ The page does not duplicate the persistent global:
 
 interaction. Shared shell behavior is defined in `UI_INTERACTION_RULES.md`.
 
-An identification Action may internally require firmware/Application sequencing appropriate to that semantic operation, but the GUI must not reproduce low-level mode/action sequences itself.
+An identification Action may internally require firmware/Application sequencing appropriate to that semantic operation, but the GUI must not reproduce low-level mode/action sequences itself. Stopping Identification uses the same Application motor-stop semantic as the global Stop control; the page does not expose a separate Identification Abort workflow.
 
 ## Parameter/API boundary
 

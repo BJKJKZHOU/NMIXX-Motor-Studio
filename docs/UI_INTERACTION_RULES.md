@@ -144,12 +144,12 @@ Examples include:
 
 ```text
 Enable <-> Disable
-Start <-> Stop
 Record <-> Stop recording
-Start search <-> Abort search
 ```
 
-Use this pattern when the actions operate on the same task/resource and only one side is meaningful at a time. The button always describes the action that pressing it will perform.
+Use this pattern only when the domain itself owns both transitions of that resource and only one side is meaningful at a time. The button always describes the action that pressing it will perform.
+
+Motor operations are the important exception. Identification, Phase Search, Motion and Control Tuning share the workbench-level motor `Stop` semantic. Their page-level Start/Run controls must not invent an independent Abort/Stop path merely to form a visual pair. A domain page may expose a local Stop convenience control, but it must call the exact same Application motor-stop operation as the global Stop control.
 
 Do not merge unrelated actions merely because their names form a verbal pair. In particular, the global `Enable / Disable` button does not absorb the separate global `Stop` action, and domain-specific `Run` does not become a global toggle.
 

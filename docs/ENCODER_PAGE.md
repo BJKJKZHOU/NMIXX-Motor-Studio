@@ -139,7 +139,7 @@ The phase-search result is automatically applied by the firmware when the operat
 
 The resulting encoder direction and electrical offset are implementation/calibration results. They remain readable through the generic Parameters page but are not permanently displayed on the normal Encoder page. For the normal workflow, `Success` is sufficient.
 
-Phase Search follows the shared stateful-action interaction rule in `UI_INTERACTION_RULES.md`: while the same search task is active, the action control may change from Start to Abort/Stop in the same location rather than presenting two permanently adjacent controls.
+Phase Search uses the shared motor Stop semantic. Its page control remains the Phase Search Start/status control; stopping an active search goes through the same Application motor-stop operation used by the global Stop control. The page must not introduce a separate phase-search Abort/Stop implementation.
 
 ### Encoder direction versus motor direction
 
