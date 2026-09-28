@@ -1,15 +1,14 @@
 use std::error::Error;
 use std::path::PathBuf;
 use std::str::FromStr;
-use std::sync::mpsc::RecvTimeoutError;
 use std::time::Duration;
 
 use clap::{Parser, Subcommand, ValueEnum};
 use nmixx_app::{
-    ActionHandle, ActionMetadata, ApplicationSession, AxdrStatus, DEFAULT_USB_BAUD,
-    HostSchema, IdentificationKind, MotionMode, MotionRuntimeStatus, ParameterMetadata,
-    ParameterType, ParameterValue, PositionCommand, PositionMotionRequest, PositionValue,
-    SchemaNumber, SchemaStore, SessionEvent, SpeedMotionRequest,
+    ActionCompletionWaiter, ActionHandle, ActionMetadata, ApplicationSession, AxdrStatus,
+    DEFAULT_USB_BAUD, HostSchema, IdentificationKind, MotionMode, MotionRuntimeStatus,
+    ParameterMetadata, ParameterType, ParameterValue, PositionCommand, PositionMotionRequest,
+    PositionValue, SchemaNumber, SchemaStore, SpeedMotionRequest,
 };
 
 #[derive(Debug, Parser)]
@@ -97,6 +96,7 @@ enum ParamCommand {
 enum MotorCommand {
     Enable,
     Disable,
+    ClearFault,
     Stop {
         #[arg(long, default_value_t = 60)]
         timeout: u64,
@@ -203,13 +203,6 @@ enum PreflightCommand {
 enum ActionCommand {
     List,
     Info { key: String },
-    Start {
-        key: String,
-        #[arg(long)]
-        no_wait: bool,
-        #[arg(long, default_value_t = 30)]
-        timeout: u64,
-    },
 }
 
 #[derive(Debug, Subcommand)]
@@ -369,6 +362,10 @@ fn run() -> Result<(), Box<dyn Error>> {
                     let handle = app.motor_disable()?;
                     println!("completed txn={} motor disable", handle.txn.get());
                 }
+                MotorCommand::ClearFault => {
+                    let handle = app.protection_clear()?;
+                    println!("completed txn={} clear fault", handle.txn.get());
+                }
                 MotorCommand::Stop { timeout } => {
                     let handle = app.motor_stop()?;
                     println!("accepted txn={} motor stop", handle.txn.get());
@@ -376,10 +373,10 @@ fn run() -> Result<(), Box<dyn Error>> {
                     println!("stopped state={}", status.motor_state);
                 }
                 MotorCommand::PhaseSearch { timeout } => {
-                    let events = app.subscribe()?;
+                    let completion = app.action_completion_waiter()?;
                     let handle = app.phase_search_start()?;
                     println!("accepted txn={} phase search", handle.txn.get());
-                    wait_for_action(Some(events), handle, "phase search", None, timeout)?;
+                    wait_for_action(&completion, handle, "phase search", timeout)?;
                 }
             }
         }
@@ -462,27 +459,6 @@ fn run() -> Result<(), Box<dyn Error>> {
                 let metadata = resolve_action_metadata(require_schema(schema.as_ref())?, &key)?;
                 print_action_info(metadata);
             }
-            ActionCommand::Start {
-                key,
-                no_wait,
-                timeout,
-            } => {
-                let schema = require_schema(schema.as_ref())?;
-                let (action_id, action_label) = resolve_action(schema, &key)?;
-                let app = open_application(port.as_deref(), baud, schema.clone())?;
-                let events = if no_wait { None } else { Some(app.subscribe()?) };
-                let action_key = schema
-                    .action_by_id(action_id)
-                    .map(|action| action.symbol.as_str())
-                    .ok_or_else(|| format!("action ID 0x{action_id:04X} is not present in the loaded schema"))?;
-                let handle = app.action_start(action_key)?;
-                println!(
-                    "accepted txn={} action={} (0x{action_id:04X})",
-                    handle.txn.get(),
-                    action_label
-                );
-                wait_for_action(events, handle, &action_label, Some(action_id), timeout)?;
-            }
         },
     }
     Ok(())
@@ -555,37 +531,17 @@ fn print_preflight_issues(issues: &[nmixx_app::PreflightIssue]) {
 }
 
 fn wait_for_action(
-    events: Option<std::sync::mpsc::Receiver<SessionEvent>>,
+    completion: &ActionCompletionWaiter,
     handle: ActionHandle,
     label: &str,
-    action_id: Option<u16>,
     timeout: u64,
 ) -> Result<(), Box<dyn Error>> {
-    let Some(events) = events else { return Ok(()); };
-
-    loop {
-        match events.recv_timeout(Duration::from_secs(timeout)) {
-            Ok(SessionEvent::ActionCompleted { handle: completed, status }) if completed == handle => {
-                match status {
-                    AxdrStatus::Ok => println!("completed OK"),
-                    other => return Err(match action_id {
-                        Some(id) => format!("{label} (0x{id:04X}) completed {other:?}").into(),
-                        None => format!("{label} completed {other:?}").into(),
-                    }),
-                }
-                return Ok(());
-            }
-            Ok(_) => continue,
-            Err(RecvTimeoutError::Timeout) => {
-                return Err(match action_id {
-                    Some(id) => format!("{label} (0x{id:04X}) completion timed out after {timeout}s").into(),
-                    None => format!("{label} completion timed out after {timeout}s").into(),
-                });
-            }
-            Err(RecvTimeoutError::Disconnected) => {
-                return Err("device session closed while waiting for action".into());
-            }
+    match completion.wait(handle, Some(Duration::from_secs(timeout)))? {
+        AxdrStatus::Ok => {
+            println!("completed OK");
+            Ok(())
         }
+        status => Err(format!("{label} completed {status:?}").into()),
     }
 }
 
@@ -649,18 +605,6 @@ fn resolve_parameter<'a>(
         }
     }
     Ok(ResolvedParameter { id: metadata.id, ty: schema_type, metadata: Some(metadata) })
-}
-
-fn resolve_action(schema: &HostSchema, key: &str) -> Result<(u16, String), Box<dyn Error>> {
-    let action = if let Some(action) = schema.action_by_key(key) {
-        action
-    } else if let Ok(id) = parse_u16(key) {
-        schema.action_by_id(id)
-            .ok_or_else(|| format!("action ID 0x{id:04X} is not present in the loaded schema"))?
-    } else {
-        return Err(format!("unknown action key '{key}' in loaded schema").into());
-    };
-    Ok((action.id, action.label.clone()))
 }
 
 fn parse_u16(text: &str) -> Result<u16, String> {

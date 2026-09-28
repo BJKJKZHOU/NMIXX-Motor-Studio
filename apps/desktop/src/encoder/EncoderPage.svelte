@@ -4,9 +4,9 @@
   import { selectParameters } from "../parameters/state";
   import { createParameterEditor } from "../parameters/editor";
   import { modifiedParameterIds } from "../parameters/persistence";
-  import { listActions, onActionCompleted, onMotorStopIssued, startAction, startImmediateAction } from "../actions/api";
+  import { listActions, onActionCompleted, onMotorStopIssued } from "../actions/api";
   import type { ActionCompletion, ActionHandle, ActionMetadata } from "../actions/types";
-  import { startPhaseSearch as startPhaseSearchAction } from "./api";
+  import { setPositionZero, startHoming as startHomingAction, startPhaseSearch as startPhaseSearchAction } from "./api";
 
   type Props = { connection: ConnectionInfo | undefined; onError?: (error: unknown) => void };
   type PhaseState = "idle" | "running" | "success" | "stopped" | "failed";
@@ -132,13 +132,13 @@
   async function setCurrentAsZero() {
     if (!actionAvailable(SET_ZERO_ACTION) || zeroActionBusy) return;
     zeroActionBusy = true;
-    try { await startImmediateAction(SET_ZERO_ACTION); }
+    try { await setPositionZero(); }
     catch (error) { onError(error); } finally { zeroActionBusy = false; }
   }
   async function startHoming() {
     if (!actionAvailable(HOMING_ACTION) || homingState === "running") return;
     homingState = "running"; homingMessage = "";
-    try { pendingHomingHandle = handleKey(await startAction(HOMING_ACTION)); }
+    try { pendingHomingHandle = handleKey(await startHomingAction()); }
     catch (error) { homingState = "failed"; homingMessage = String(error); onError(error); }
   }
 </script>

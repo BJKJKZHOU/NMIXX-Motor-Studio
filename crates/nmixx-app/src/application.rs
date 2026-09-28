@@ -6,6 +6,7 @@ use std::time::{Duration, Instant};
 #[path = "motor_gate.rs"]
 mod motor_gate;
 use motor_gate::MotorGate;
+use crate::action_completion::ActionCompletionWaiter;
 use crate::automation::access::{WorkflowAccess, Permit};
 use crate::config_service::ConfigService;
 use crate::motor_actions::MotorActionService;
@@ -212,44 +213,32 @@ impl ApplicationSession {
             .map(|meta| meta.id).collect::<Vec<_>>();
         self.require_refresh(self.parameter_read_many(&ids)?)
     }
-    pub fn action_start(&self, key: &str) -> Result<ActionHandle, ApplicationError> {
+    fn guarded_action_start(&self, key: &str) -> Result<ActionHandle, ApplicationError> {
         let action = self.inner.schema.action_by_key(key).ok_or_else(|| ApplicationError::UnknownAction(key.to_owned()))?;
-        match action.symbol.as_str() {
-            "ACTION_MOTOR_STOP" => return self.motor_stop(),
-            "ACTION_MOTOR_DISABLE" => return self.motor_disable(),
-            _ => {}
-        }
         let _workflow = self.workflow_permit()?;
         let ticket = self.inner.motor_gate.ticket();
         let _command = self.inner.motor_gate.start(ticket)
             .map_err(|message| ApplicationError::Motion(message.to_owned()))?;
         self.ensure_no_tuning()?;
-        let handle = self.inner.session.action_start(action.id)?;
-        match action.symbol.as_str() {
-            "ACTION_IDENT_APPLY" | "ACTION_POSITION_SET_ZERO" | "ACTION_PROTECTION_CLEAR" => self.refresh_after_immediate_action()?,
-            "ACTION_MOTOR_ENABLE" | "ACTION_MOTOR_DISABLE" | "ACTION_MOTOR_STOP" => self.refresh_motor_context()?,
-            _ => {}
-        }
-        Ok(handle)
+        Ok(self.inner.session.action_start(action.id)?)
     }
-    /// Only use for Actions whose firmware response represents completed execution.
-    pub fn action_start_immediate(&self, key: &str) -> Result<ActionHandle, ApplicationError> {
-        let action = self.inner.schema.action_by_key(key).ok_or_else(|| ApplicationError::UnknownAction(key.to_owned()))?;
-        if action.symbol == "ACTION_MOTOR_STOP" { return self.motor_stop(); }
-        if action.symbol == "ACTION_MOTOR_DISABLE" { return self.motor_disable(); }
-        let _workflow = self.workflow_permit()?;
-        let ticket = self.inner.motor_gate.ticket();
-        let _command = self.inner.motor_gate.start(ticket)
-            .map_err(|message| ApplicationError::Motion(message.to_owned()))?;
-        self.ensure_no_tuning()?;
-        let handle = self.inner.session.action_start(action.id)?;
+    pub fn action_completion_waiter(&self) -> Result<ActionCompletionWaiter, ApplicationError> {
+        let (sender, receiver) = mpsc::channel();
+        self.inner.events.lock().map_err(|_| ApplicationError::Poisoned)?.push(sender);
+        Ok(ActionCompletionWaiter::new(receiver))
+    }
+    pub fn encoder_set_zero(&self) -> Result<ActionHandle, ApplicationError> {
+        let handle = self.guarded_action_start("ACTION_POSITION_SET_ZERO")?;
         self.refresh_after_immediate_action()?;
         Ok(handle)
     }
-    pub fn subscribe(&self) -> Result<mpsc::Receiver<SessionEvent>, ApplicationError> {
-        let (sender, receiver) = mpsc::channel();
-        self.inner.events.lock().map_err(|_| ApplicationError::Poisoned)?.push(sender);
-        Ok(receiver)
+    pub fn homing_start(&self) -> Result<ActionHandle, ApplicationError> {
+        self.guarded_action_start("ACTION_HOME_START")
+    }
+    pub fn protection_clear(&self) -> Result<ActionHandle, ApplicationError> {
+        let handle = self.guarded_action_start("ACTION_PROTECTION_CLEAR")?;
+        self.refresh_after_immediate_action()?;
+        Ok(handle)
     }
     pub fn phase_search_available(&self) -> bool { self.motor_actions().phase_search_available() }
     pub fn preflight_phase_search(&self) -> Result<Vec<PreflightIssue>, ApplicationError> {
@@ -410,7 +399,7 @@ impl ApplicationSession {
                 return Err(ApplicationError::TuningExperimentBusy);
             }
         }
-        let events = self.subscribe()?;
+        let completion = self.action_completion_waiter()?;
         let config = self.inner.motion.get();
         let mode = self.read_motion_mode()?;
         let mut repeat_target: Option<(f64, bool)> = None;
@@ -443,11 +432,9 @@ impl ApplicationSession {
             // Do not keep the whole connection alive while waiting for an Action.
             let weak = Arc::downgrade(&self.inner);
             thread::spawn(move || {
-                while let Ok(event) = events.recv() {
-                    let SessionEvent::ActionCompleted { handle: completed, status } = event else { continue; };
-                    if completed != handle { continue; }
-                    if let Some(inner) = weak.upgrade() { let _ = (ApplicationSession { inner, workflow_owner: None, workflow_cleanup: false }).motion_run_completed(status); }
-                    break;
+                let Ok(status) = completion.wait(handle, None) else { return; };
+                if let Some(inner) = weak.upgrade() {
+                    let _ = (ApplicationSession { inner, workflow_owner: None, workflow_cleanup: false }).motion_run_completed(status);
                 }
             });
         }

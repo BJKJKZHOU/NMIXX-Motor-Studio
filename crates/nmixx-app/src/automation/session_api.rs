@@ -1,13 +1,12 @@
 //! Language-neutral composition of the existing Application API. There is no CLI,
 //! transport constructor, framing code, or independent parameter state here.
-use std::sync::{Arc, Mutex, atomic::{AtomicBool, Ordering}, mpsc};
+use std::sync::{Arc, Mutex, atomic::{AtomicBool, Ordering}};
 use std::time::{Duration, Instant};
 use serde::Deserialize;
 use serde_json::{Value, json};
-use crate::{ActionHandle, ApplicationSession, AxdrStatus, IdentificationKind,
+use crate::{ActionCompletionWaiter, ActionHandle, ApplicationSession, AxdrStatus, IdentificationKind,
     IdentificationStart, MixedScopeConfig, MixedScopeSnapshot, ParameterValue,
-    PositionValue, ScopeRate, ScopeSelection, SessionEvent, StreamState,
-    TuningExperimentState};
+    PositionValue, ScopeRate, ScopeSelection, StreamState, TuningExperimentState};
 use super::{AutomationApi, RunControl};
 
 #[derive(Default)]
@@ -74,21 +73,11 @@ impl SessionWorkflowApi {
         Ok(json!({"config":scope_config(&config), "state":stream_name(status.state),
             "samples":status.samples, "capacitySamples":status.capacity_samples, "lostFrames":status.lost_frames}))
     }
-    fn wait_action(&self, events: &mpsc::Receiver<SessionEvent>, handle: ActionHandle,
+    fn wait_action(&self, waiter: &ActionCompletionWaiter, handle: ActionHandle,
         seconds: f64, control: &RunControl) -> Result<(), String> {
         let deadline = (Instant::now() + Duration::from_secs_f64(seconds)).min(control.deadline);
-        loop {
-            control.check()?;
-            let remaining = deadline.saturating_duration_since(Instant::now());
-            if remaining.is_zero() { return Err("Action completion deadline exceeded".into()); }
-            match events.recv_timeout(remaining.min(Duration::from_millis(20))) {
-                Ok(SessionEvent::ActionCompleted { handle: done, status }) if done == handle => {
-                    return if status == AxdrStatus::Ok { Ok(()) } else { Err(format!("Action failed: {status:?}")) };
-                }
-                Ok(_) | Err(mpsc::RecvTimeoutError::Timeout) => {},
-                Err(mpsc::RecvTimeoutError::Disconnected) => return Err("Original session closed while waiting for action".into()),
-            }
-        }
+        let status = waiter.wait_checked(handle, deadline, || control.check()).map_err(|error| error.to_string())?;
+        if status == AxdrStatus::Ok { Ok(()) } else { Err(format!("Action failed: {status:?}")) }
     }
     fn wait_stopped(&self, seconds: f64, control: &RunControl) -> Result<Value, String> {
         let deadline = (Instant::now() + Duration::from_secs_f64(seconds)).min(control.deadline);
@@ -161,12 +150,12 @@ impl AutomationApi for SessionWorkflowApi {
                 };
                 let timeout = seconds(&params,"timeoutSeconds",60.,0.05,300.)?;
                 let allow_enable = params.get("allowEnable").and_then(Value::as_bool).unwrap_or(false);
-                let events = self.app.subscribe().map_err(|e|e.to_string())?;
+                let completion = self.app.action_completion_waiter().map_err(|e|e.to_string())?;
                 self.claim_motion(control)?;
                 self.owned.lock().map_err(|_|"workflow lock poisoned")?.identified = None;
                 match self.app.identification_start(kind, allow_enable).map_err(|e|e.to_string())? {
                     IdentificationStart::Started(handle) => {
-                        self.wait_action(&events,handle,timeout,control)?;
+                        self.wait_action(&completion,handle,timeout,control)?;
                         let mut owned = self.owned.lock().map_err(|_|"workflow lock poisoned")?;
                         owned.motor = false; owned.identified = Some(label);
                         Ok(json!({"kind":label,"completed":true,"txn":handle.txn.get(),"actionId":handle.action_id}))
@@ -192,10 +181,10 @@ impl AutomationApi for SessionWorkflowApi {
             }
             "encoder.phase_search" => {
                 let timeout = seconds(&params,"timeoutSeconds",60.,0.05,300.)?;
-                let events = self.app.subscribe().map_err(|e|e.to_string())?;
+                let completion = self.app.action_completion_waiter().map_err(|e|e.to_string())?;
                 self.claim_motion(control)?;
                 let handle = self.app.phase_search_start().map_err(|e|e.to_string())?;
-                self.wait_action(&events,handle,timeout,control)?;
+                self.wait_action(&completion,handle,timeout,control)?;
                 self.owned.lock().map_err(|_|"workflow lock poisoned")?.motor = false;
                 Ok(accepted(handle,true))
             }

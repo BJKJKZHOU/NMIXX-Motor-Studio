@@ -4,6 +4,7 @@
 //! this layer. A `DeviceSession` owns one transport and exposes shared
 //! application-facing access to that device.
 
+mod action_completion;
 mod application;
 mod automation;
 mod config_service;
@@ -24,6 +25,7 @@ mod stream;
 mod stream_pipeline;
 
 pub use automation::{AutomationApi, AutomationRuntime, AutomationSnapshot, AutomationState, LogLine, OperationEffect, RunControl, ScriptSpec, SessionWorkflowApi, DIAGNOSIS_SCRIPT, ENCODER_TURN_SCRIPT, MOTION_SCRIPT};
+pub use action_completion::{ActionCompletionError, ActionCompletionWaiter};
 pub use application::{
     ApplicationError, ApplicationSession, TuningExperimentSnapshot, TuningExperimentState,
     TuningExperimentStatus,

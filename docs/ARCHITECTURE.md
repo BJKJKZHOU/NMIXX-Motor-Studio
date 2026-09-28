@@ -23,7 +23,7 @@ The architecture follows these rules:
 3. **Wire details stay in the core.** CAN IDs, DLC rules, USB framing, transaction matching and payload layouts must not leak into Application API or clients.
 4. **Transport and protocol remain independent.** USB CDC, native CAN FD and future transports carry the same protocol frame model through adapters.
 5. **Application behavior is shared.** State checks, resource arbitration, protection-aware behavior, task lifecycle and error semantics belong in `nmixx-app`, not separately in each client.
-6. **Long operations use one Task model.** Identification, recording, replay and future commissioning workflows expose common lifecycle/progress/cancellation semantics.
+6. **Finite firmware Actions share one completion mechanism.** Host-owned workflows keep domain-specific lifecycle until multiple domains genuinely require the same abstraction; do not introduce a generic Task framework preemptively.
 7. **Automation is composition, not core policy.** Repeat-N tests, quality thresholds and commissioning sequences are normally built by calling the Application API instead of being hard-coded into the device core.
 8. **Stable data contracts are generated where practical.** Firmware Parameter/Action schema should generate host IDs and metadata rather than requiring duplicated hand-maintained tables.
 9. **No hidden global state.** Session, transport, task ownership and subscriptions are explicit objects with clear lifetimes.
@@ -79,7 +79,7 @@ Normal product clients must not assemble `DeviceSession + ParameterService + Sco
 
 Host-only models that are meaningful while disconnected, such as the editable Motion command model and theoretical preview, may outlive a device connection. When connected, the same shared model instance is injected into `ApplicationSession`; a second copy must not be created.
 
-The Application API should expose domain concepts such as `parameter.get`, `motor.enable`, `motor.disable`, `motor.stop`, `action.start`, `stream.subscribe` and `task.cancel`, not raw CAN IDs or payload bytes.
+The Application API exposes domain concepts such as `parameter.get`, `motor.enable`, `motor.disable`, `motor.stop`, `motion.run`, `encoder.phase_search`, `config.save` and `protection.clear`, not raw CAN IDs or payload bytes. HostSchema Action metadata may be listed or inspected, but normal product clients do not execute arbitrary schema Actions through a generic dispatch endpoint.
 
 ### clients
 
@@ -387,7 +387,7 @@ stop capture and keep waveform
 
 There is deliberately no implicit Enable/Disable in the experiment. The global Stop control remains available while an experiment is running and stops the active motion/task through the same Application state used by the page.
 
-The waveform panel is not an indefinitely scrolling Scope. It reuses shared acquisition/uPlot infrastructure but is finite and synchronized to the tuning experiment.
+The waveform panel is not an indefinitely scrolling Scope. It reuses shared acquisition/ECharts infrastructure but is finite and synchronized to the tuning experiment.
 
 ## Motion ownership and execution semantics
 
@@ -474,7 +474,7 @@ Detailed Scope interaction rules, including mouse-centered time zoom, history pa
 
 The GUI must not open its own transport or decode telemetry wire frames for any of these functions. Acquisition remains an Application Runtime capability.
 
-Chart interaction should use uPlot capabilities and plugins instead of recreating generic plotting behavior in Svelte. Unit metadata should drive reusable scale/axis policy rather than page-specific conditionals.
+Chart interaction should use ECharts capabilities and extension points instead of recreating generic plotting behavior in Svelte. Unit metadata should drive reusable scale/axis policy rather than page-specific conditionals.
 
 ## Connection is transport-oriented
 

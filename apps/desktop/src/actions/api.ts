@@ -16,8 +16,6 @@ async function reflected<T>(operation: Promise<T>): Promise<T> {
   return result;
 }
 export function listActions(): Promise<ActionMetadata[]> { return invoke<ActionMetadata[]>("action_list"); }
-export function startAction(key: string): Promise<ActionHandle> { return reflected(invoke<ActionHandle>("action_start", { key })); }
-export function startImmediateAction(key: string): Promise<ActionHandle> { return reflected(invoke<ActionHandle>("action_start_immediate", { key })); }
 export function enableMotor(): Promise<ActionHandle> { return reflected(invoke<ActionHandle>("motor_enable")); }
 export function disableMotor(): Promise<ActionHandle> { return reflected(invoke<ActionHandle>("motor_disable")); }
 export function stopMotor(): Promise<ActionHandle> { return reflected(invoke<ActionHandle>("motor_stop")); }
