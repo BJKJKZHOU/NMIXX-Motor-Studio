@@ -181,12 +181,11 @@ Approved now:
 
 - **VSCode Elements + Codicons** for basic controls and icons.
 - **ECharts** for Scope/FFT/Bode and Motion plotting mechanics, including scales, axes, zoom/pan and extension points.
-- **Split.js** for simple fixed split panes.
 - **TanStack Table** for Parameters and Events table state, sorting and filtering.
 
 Introduce only when the corresponding product need exists:
 
-- **Dockview** for draggable/persisted IDE-style panel layouts; do not replace simple Split.js layouts preemptively.
+- **Dockview** for draggable/persisted IDE-style panel layouts; do not replace simple fixed layouts preemptively.
 - **xterm.js** for an Automation terminal frontend.
 - **Monaco Editor** for script editing.
 
