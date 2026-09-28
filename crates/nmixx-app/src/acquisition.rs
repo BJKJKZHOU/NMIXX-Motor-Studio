@@ -227,8 +227,9 @@ impl SharedAcquisition {
         let config = build_config(&capabilities, &schema, &base, RECENT_HISTORY, 1)?;
         let mut baseline = Record::new(config.clone(), &config.channels)?;
         baseline.live();
-        let mut scope = Record::new(config.clone(), &config.channels)?;
-        scope.live();
+        // Connection-scoped baseline telemetry starts immediately, but the
+        // user-owned Scope record stays STOPPED until Scope Run is pressed.
+        let scope = Record::new(config.clone(), &config.channels)?;
         let data = Arc::new(Mutex::new(CaptureData {
             baseline, scope, tuning: None, actual: base.clone(), error: None,
         }));

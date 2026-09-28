@@ -32,7 +32,9 @@ Trigger and Single-shot behavior must not be invented in the GUI before their ac
 
 The Application connection owns one physical acquisition stream, not this page.
 It continuously acquires the available baseline Iq, mechanical speed, position and
-Vbus NORMAL channels and retains ten seconds of recent history. A baseline trace
+Vbus NORMAL channels and retains ten seconds of recent history. The user-owned Scope
+record itself starts STOPPED on connection; baseline acquisition must not silently
+put Scope into LIVE before the user presses Run. A baseline trace
 is already a device channel before it is visible. Selecting/hiding it at its
 baseline rate changes only the view; all traces may be hidden without stopping
 runtime feedback. Existing history is available when a trace is revealed.

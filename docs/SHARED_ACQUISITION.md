@@ -19,6 +19,9 @@ Baseline signals are the available NORMAL-capable `PARAM_RUN_IQ`, `PARAM_RUN_WM`
 `PARAM_RUN_POSITION` and `PARAM_ADC_VBUS`. The current AxDr NORMAL rate is 1 kHz;
 rates and channel limits are read from the device capabilities, not a UI timer.
 Only this small baseline is always acquired, not the entire parameter dictionary.
+Creating the connection starts this baseline only. The Scope recording remains
+STOPPED until an explicit Scope Run; that Run creates the new record and may seed
+it from available recent baseline history.
 
 `ParameterService` consumes decoded read-only f32 baseline samples without sending
 Read requests. Its cache follows incoming batches; change notifications coalesce

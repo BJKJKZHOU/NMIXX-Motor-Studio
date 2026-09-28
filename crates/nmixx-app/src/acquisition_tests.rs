@@ -75,13 +75,23 @@ fn baseline_visibility_and_independent_records_share_one_wire_stream() {
     };
     let source = SharedAcquisition::new(session, caps, schema, parameters.clone()).unwrap();
     let history = Duration::from_secs(10);
-    assert_eq!(wire.sent.lock().unwrap().len(), 2); // One config, one start.
+    assert_eq!(wire.sent.lock().unwrap().len(), 2); // Baseline: one config, one start.
+    assert_eq!(source.status(View::Scope).unwrap().state, StreamState::Stopped);
+
+    // Baseline keeps running while Scope is stopped.
     wire.sample(0, 1.0); wait_value(&parameters, 1.0);
-    source.configure(View::Scope, &[], history).unwrap();
-    wire.sample(1, 2.0); wait_value(&parameters, 2.0);
     source.configure(View::Scope, &[ScopeSelection { id: 17, rate: ScopeRate::Normal }], history).unwrap();
+    assert_eq!(source.status(View::Scope).unwrap().state, StreamState::Stopped);
+
+    // Scope Run is the transition that creates the live record. Existing
+    // baseline history may seed that new record, as specified by the Scope UX.
+    source.live(View::Scope).unwrap();
+    assert_eq!(source.status(View::Scope).unwrap().state, StreamState::Live);
+    wire.sample(1, 2.0); wait_value(&parameters, 2.0);
     assert_eq!(source.snapshot(View::Scope, history, Duration::ZERO).unwrap().series[0].values, vec![1., 2.]);
+
     source.stop(View::Scope, StreamState::Stopped).unwrap();
+    assert_eq!(source.status(View::Scope).unwrap().state, StreamState::Stopped);
     wire.sample(2, 3.0); wait_value(&parameters, 3.0);
     let frozen = source.snapshot(View::Scope, history, Duration::ZERO).unwrap();
     assert_eq!(frozen.series[0].values, vec![1., 2.]);
