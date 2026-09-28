@@ -56,36 +56,71 @@ Shared foundations come first so later page failures can be attributed correctly
 **Shared consumers:** every page, Automation, Scope/Tuning, global toolbar  
 **Normative references:** `ARCHITECTURE.md`, `UI_INTERACTION_RULES.md`
 
+### Code review pass — 2026-09-28
+
+Reviewed against `feat/motion-cli-headless @ dbb159c`. A checked `[CODE]`
+item means the current source path was traced end-to-end in this pass. It is not a
+claim that the real controller/WebView behavior has been exercised.
+
+Important findings:
+
+- desktop Connect owns one `ApplicationSession` / one `DeviceSession`; expert/raw
+  CLI utilities are separate tools and are not used by the desktop;
+- backend Connect performs the authoritative device `parameter_refresh_all()`
+  before returning the connection;
+- frontend `connectParameters()` then mirrors `parameter_cached_many` from the
+  Application cache, so it does **not** perform a second full device read;
+- connection starts only the connection-owned Plot baseline; it does not create a
+  user Scope recording or issue Motor Enable/Run/Identification/Motion Actions;
+- reconnect stale-result fencing exists independently in Parameter epoch,
+  RuntimeTelemetry revision, Problems revision, Automation epoch/revision and
+  Scope view revision/connection identity;
+- Automation cancellation cleanup and connection teardown may both request the
+  same safety Stop, but both use the same `ApplicationSession` / `MotorGate`;
+  there is no second transport or competing motor-command path.
+
 ### Connect
 
-- [ ] Device list/port refresh shows the expected USB CDC endpoint.
-- [ ] Selecting/typing a port is preserved while staying on the Connection page.
-- [ ] HostSchema path preserves the last user-selected path across page navigation.
-- [ ] HostSchema path is restored after restarting the desktop application.
-- [ ] Connect opens exactly one device transport/session.
-- [ ] Initial Parameter Read completes before normal business workflows depend on the values.
-- [ ] Plot capabilities are discovered from the device rather than hard-coded in the page.
-- [ ] Runtime baseline acquisition starts after connection without enabling or running the motor.
-- [ ] Runtime baseline channel IDs returned to the GUI match the available baseline signals.
-- [ ] Connection page displays actual connected endpoint and Plot capabilities.
-- [ ] Connecting does not implicitly Enable, Run, start Identification, start Motion, or start a Scope recording.
+- [x] **[CODE]** Port refresh is wired `ConnectionPage.refreshPorts -> device_list -> ApplicationSession::available_usb_ports -> UsbCdcTransport::available_ports`.
+- [ ] **[HW]** The connected controller appears as the expected USB CDC endpoint on the real host.
+- [x] **[CODE]** Selecting/typing a port is preserved by the parent-owned `connectionPort` binding across Connection-page remounts.
+- [x] **[CODE]** HostSchema path is parent-owned and preserved across page navigation.
+- [x] **[CODE]** HostSchema path is persisted/restored through `localStorage`.
+- [ ] **[WEBVIEW]** Restart the packaged/dev desktop and confirm the last HostSchema path is actually restored.
+- [x] **[CODE]** Desktop Connect opens one Application/Device session after first tearing down any existing session.
+- [x] **[CODE]** Initial device Parameter Read completes and every returned read result is checked before Connect proceeds.
+- [x] **[CODE]** Frontend Parameter initialization mirrors the Application cache rather than issuing a second full device read.
+- [x] **[CODE]** Plot capabilities are discovered through the device `PLOT_CAPS` path rather than hard-coded in the page.
+- [x] **[CODE]** Runtime baseline acquisition starts only after initial Parameter Read and capability discovery.
+- [x] **[CODE]** Runtime baseline startup uses Plot operations only; it does not issue a Motor Action.
+- [x] **[CODE]** Runtime baseline IDs are built from available NORMAL-capable baseline symbols and returned in `ConnectionDto.runtimeChannelIds`.
+- [x] **[CODE]** Connection page renders the returned endpoint, FAST/NORMAL rates, channel limits and FAST block size.
+- [x] **[CODE]** Connecting does not implicitly Enable, Run, start Identification, start Motion, or create a user Scope recording.
+- [ ] **[HW]** Real Connect completes with the intended controller and the displayed endpoint/capabilities match the controller.
 
 ### Disconnect / reconnect
 
-- [ ] Disconnect requests the established motor/task teardown sequence.
-- [ ] Disconnect during an active Automation task cancels/cleans that task without creating a second teardown path.
-- [ ] Disconnect during Scope leaves no background transport worker behind.
-- [ ] Disconnect during Tuning performs the established Tuning/motor cleanup.
-- [ ] A failed disconnect keeps the connected UI/session instead of pretending teardown succeeded.
-- [ ] Reconnect creates a new session generation; stale async results from the previous session are ignored.
-- [ ] Motion host configuration that is intentionally persistent across connections remains preserved.
-- [ ] Parameter cache, RuntimeTelemetry, Problems projection, and Scope page state do not leak old-session values into the new session.
+- [x] **[CODE]** Disconnect closes workflow access, closes/cancels the MotorGate, requests Tuning stop, issues the established motor Stop, joins Tuning and waits for controlled stop.
+- [x] **[CODE]** Disconnect cancels Automation and waits for task-owned cleanup; Automation uses the same ApplicationSession rather than a second transport/session.
+- [x] **[CODE]** Task-owned cleanup is allowed after workflow cancellation/close while new Automation operations are rejected.
+- [x] **[CODE]** Scope shutdown stops the shared Plot source; final Application/DeviceSession drop shuts down and joins the device-session/Scope workers.
+- [x] **[CODE]** Disconnect during Tuning uses the established Tuning stop/join path before shared acquisition shutdown.
+- [x] **[CODE]** Backend removes the active Application only when teardown succeeds.
+- [x] **[CODE]** Frontend calls `onDisconnected` only after successful backend disconnect; existing regression test covers failed/success/double-submit UI behavior.
+- [x] **[CODE]** Reconnect creates a new frontend Parameter epoch and independent revision fences for RuntimeTelemetry, Problems and Automation.
+- [x] **[CODE]** Scope resets on ConnectionInfo identity change and invalidates pending snapshots through `viewRevision`.
+- [x] **[CODE]** Motion host configuration persists in `DesktopState.motion`; reconnect resets only Motion runtime/repeat state.
+- [x] **[CODE]** Parameter cache/persistence, RuntimeTelemetry, Problems projection, Automation projection and Scope page state are cleared/reset for the new connection.
+- [ ] **[HW]** Disconnect while Scope is active leaves no observable stale stream/worker behavior on reconnect.
+- [ ] **[HW]** Disconnect while Tuning is active performs controlled motor cleanup and reconnects cleanly.
+- [ ] **[HW]** Disconnect while Automation owns motion/scope cleans the task and reconnects without delayed commands from the old session.
+- [ ] **[HW]** Force a teardown failure/timeout and confirm the connected UI/session is retained and remains recoverable.
 
 ### Exit criteria
 
-- [ ] Wired
-- [ ] Verified
-- [ ] Regression Guarded
+- [x] **Wired — code-reviewed.**
+- [ ] **Verified — requires current real-device/WebView pass.**
+- [ ] **Regression Guarded — relevant tests exist, but they have not been executed in this current pass.**
 
 ---
 
