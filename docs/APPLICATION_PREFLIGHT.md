@@ -95,10 +95,10 @@ Examples:
 
 ```text
 motor.enable
-motor.run
-action.start(RsLs)
-action.start(Flux)
-action.start(JB)
+motion.run
+identification.start(rs_ls)
+identification.start(flux)
+identification.start(jb)
 ```
 
 Before an operation that may energize or move the motor starts, the Application layer checks the prerequisites required by that operation.

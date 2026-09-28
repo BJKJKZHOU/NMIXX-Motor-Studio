@@ -231,7 +231,7 @@ Without a valid mechanical zero, position limits cannot be enabled because their
 
 The GUI must not reproduce motor-state orchestration required to perform phase search or homing.
 
-The current AxDr_L firmware starts phase search by selecting `PHASE_SEARCH` motor mode, completing the generic motor-enable action, and then using the generic motor-run action. That device-side composition is hidden by the Rust Application API:
+The current AxDr_L firmware starts phase search by selecting `PHASE_SEARCH` motor mode, executing the synchronous motor-enable action, and then using the finite motor-run action. That device-side composition is hidden by the Rust Application API:
 
 ```text
 GUI / CLI / Automation
@@ -244,9 +244,10 @@ MotorActionService
         |
         +-- PARAM_MOTOR_MODE = PHASE_SEARCH
         +-- ACTION_MOTOR_ENABLE
-        +-- wait for Enable completion
+        +-- successful Enable response means Enable is complete
         +-- ACTION_MOTOR_RUN
-        +-- expose final completion as semantic phase-search completion
+        +-- wait for the finite Run/phase-search completion
+        +-- expose that completion as semantic phase-search completion
 ```
 
 The desktop client calls the semantic phase-search command. It does not know or reproduce the firmware sequence.
