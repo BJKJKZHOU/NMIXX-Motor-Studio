@@ -321,8 +321,8 @@ impl ParameterService {
             });
         };
 
-        let disabled = enum_u8(state_metadata, "DISABLED")?;
-        let run = enum_u8(state_metadata, "RUN")?;
+        let disabled = state_metadata.enum_u8("DISABLED")?;
+        let run = state_metadata.enum_u8("RUN")?;
         let allowed = match write_state {
             "disabled" => state == disabled,
             "not_running" => state != run,
@@ -494,50 +494,8 @@ fn schema_number(value: SchemaNumber) -> f64 {
 }
 
 
-fn enum_u8(
-    metadata: &ParameterMetadata,
-    wanted_symbol: &str,
-) -> Result<u8, ParameterServiceError> {
-    let Some(index) = metadata
-        .allowed_symbols
-        .iter()
-        .position(|symbol| symbol == wanted_symbol)
-    else {
-        return Err(ParameterServiceError::Schema(SchemaError::Parse(format!(
-            "parameter '{}' does not expose enum symbol '{}'",
-            metadata.symbol, wanted_symbol
-        ))));
-    };
-
-    if let Some(value) = metadata.allowed.get(index).copied() {
-        let number = schema_number(value);
-        if number.is_finite()
-            && number.fract() == 0.0
-            && number >= 0.0
-            && number <= f64::from(u8::MAX)
-        {
-            return Ok(number as u8);
-        }
-        return Err(ParameterServiceError::Schema(SchemaError::Parse(format!(
-            "parameter '{}' enum symbol '{}' is not a u8 value",
-            metadata.symbol, wanted_symbol
-        ))));
-    }
-
-    u8::try_from(index).map_err(|_| {
-        ParameterServiceError::Schema(SchemaError::Parse(format!(
-            "parameter '{}' enum symbol '{}' ordinal does not fit u8",
-            metadata.symbol, wanted_symbol
-        )))
-    })
-}
-
 fn state_symbol(metadata: &ParameterMetadata, state: u8) -> String {
-    metadata
-        .allowed_symbols
-        .get(usize::from(state))
-        .cloned()
-        .unwrap_or_else(|| state.to_string())
+    metadata.enum_symbol_u8(state).map(str::to_owned).unwrap_or_else(|| state.to_string())
 }
 
 #[cfg(test)]

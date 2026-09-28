@@ -4,11 +4,32 @@ use std::sync::{Arc, RwLock};
 use serde::{Deserialize, Serialize};
 
 use crate::parameter_service::ParameterService;
-use crate::{ActionHandle, DeviceSession, ParameterValue, PositionValue};
+use crate::{ActionHandle, DeviceSession, HostSchema, MotorState, ParameterValue, PositionValue};
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "kebab-case")]
 pub enum MotionMode { Position, Speed, SensorlessSpeed, Torque }
+
+impl MotionMode {
+    pub fn symbol(self) -> &'static str {
+        match self {
+            Self::Position => "POSITION",
+            Self::Speed => "SPEED",
+            Self::SensorlessSpeed => "SENSORLESS_SPEED",
+            Self::Torque => "TORQUE",
+        }
+    }
+
+    fn from_symbol(symbol: &str) -> Option<Self> {
+        match symbol {
+            "POSITION" => Some(Self::Position),
+            "SPEED" => Some(Self::Speed),
+            "SENSORLESS_SPEED" => Some(Self::SensorlessSpeed),
+            "TORQUE" => Some(Self::Torque),
+            _ => None,
+        }
+    }
+}
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "kebab-case")]
@@ -76,7 +97,7 @@ impl MotionService {
             }
         };
         let mode = match value("PARAM_MOTOR_MODE")? {
-            ParameterValue::U8(value) => mode_from_wire_value(value)?,
+            ParameterValue::U8(value) => mode_from_wire_value(parameters.schema(), value)?,
             _ => return Err("Motor mode is not a synchronized u8 parameter".to_owned()),
         };
         let limit = if let Some(limit) = effective_speed_limit {
@@ -117,9 +138,11 @@ impl MotionService {
     ) -> Result<ActionHandle, String> {
         let config = self.get();
         validate_host_config(&config)?;
-        let state = read_u8(parameters, "PARAM_MOTOR_STATE")?;
-        if state != 1 { return Err("motor must be ENABLED before Run".to_owned()); }
-        let mode = mode_from_wire_value(read_u8(parameters, "PARAM_MOTOR_MODE")?)?;
+        let state_parameter = parameters.schema().parameter_by_key("PARAM_MOTOR_STATE")
+            .ok_or_else(|| "connected device does not expose PARAM_MOTOR_STATE".to_owned())?;
+        let state = MotorState::from_parameter(state_parameter, read_u8(parameters, "PARAM_MOTOR_STATE")?)?;
+        if state != MotorState::Enabled { return Err(format!("motor must be ENABLED before Run; current state is {state}")); }
+        let mode = mode_from_wire_value(parameters.schema(), read_u8(parameters, "PARAM_MOTOR_MODE")?)?;
         if mode == MotionMode::Position {
             let target_turns = if let Some(target) = position_target_override {
                 Some(target)
@@ -183,14 +206,17 @@ pub(crate) fn turns_to_position(turns: f64) -> Result<PositionValue, String> {
     if whole < f64::from(i32::MIN) || whole > f64::from(i32::MAX) { return Err("position target is outside the supported turn range".to_owned()); }
     Ok(PositionValue { turns: whole as i32, theta: ((turns - whole) * std::f64::consts::TAU) as f32 })
 }
-pub(crate) fn mode_wire_value(mode: MotionMode) -> u8 {
-    match mode { MotionMode::Torque => 0, MotionMode::Speed => 1, MotionMode::Position => 2, MotionMode::SensorlessSpeed => 5 }
+pub(crate) fn mode_wire_value(schema: &HostSchema, mode: MotionMode) -> Result<u8, String> {
+    let parameter = schema.parameter_by_key("PARAM_MOTOR_MODE")
+        .ok_or_else(|| "Motor mode is not exposed".to_owned())?;
+    parameter.enum_u8(mode.symbol()).map_err(|error| error.to_string())
 }
-pub(crate) fn mode_from_wire_value(value: u8) -> Result<MotionMode, String> {
-    match value {
-        0 => Ok(MotionMode::Torque), 1 => Ok(MotionMode::Speed), 2 => Ok(MotionMode::Position), 5 => Ok(MotionMode::SensorlessSpeed),
-        other => Err(format!("unsupported motor mode value {other}")),
-    }
+pub(crate) fn mode_from_wire_value(schema: &HostSchema, value: u8) -> Result<MotionMode, String> {
+    let parameter = schema.parameter_by_key("PARAM_MOTOR_MODE")
+        .ok_or_else(|| "Motor mode is not exposed".to_owned())?;
+    let symbol = parameter.enum_symbol_u8(value)
+        .ok_or_else(|| format!("unsupported motor mode value {value}"))?;
+    MotionMode::from_symbol(symbol).ok_or_else(|| format!("unsupported motor mode symbol {symbol}"))
 }
 fn validate_host_config(config: &MotionConfig) -> Result<(), String> {
     if !config.incremental_delta_turn.is_finite() { return Err("Incremental position must be finite".to_owned()); }
@@ -271,5 +297,31 @@ mod tests {
         let preview = speed_preview(-100.0, 20.0, Some(30.0));
         assert!(preview.primary.iter().all(|value| *value >= -30.0 && *value <= 0.0));
         assert_eq!(preview.primary.last(), Some(&-30.0));
+    }
+
+    #[test]
+    fn motion_mode_uses_schema_values_not_fixed_ordinals() {
+        let schema = HostSchema::parse(r#"
+schema_version = 1
+protocol = "axdr-canfd-v1"
+
+[source]
+repository = "fixture"
+git_sha = "abc"
+parameter_schema = 1
+
+[[parameters]]
+symbol = "PARAM_MOTOR_MODE"
+label = "Motor Mode"
+id = 1793
+type = "u8"
+access = "rw"
+description = "mode"
+allowed = [7, 8, 9, 12]
+allowed_symbols = ["TORQUE", "SPEED", "POSITION", "SENSORLESS_SPEED"]
+"#).unwrap();
+
+        assert_eq!(mode_wire_value(&schema, MotionMode::Position).unwrap(), 9);
+        assert_eq!(mode_from_wire_value(&schema, 12).unwrap(), MotionMode::SensorlessSpeed);
     }
 }

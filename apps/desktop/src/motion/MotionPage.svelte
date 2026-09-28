@@ -15,12 +15,11 @@
   } from "./store";
   import MotionTrajectoryPlot from "./MotionTrajectoryPlot.svelte";
   import type { MotionMode } from "./types";
+  import type { MotorState } from "../motor/state";
 
   export let capabilities: MotionCapabilities | undefined;
-  export let motorState: number | null = null;
+  export let motorState: MotorState | null = null;
   export let onError: (error: unknown) => void = () => undefined;
-  const MOTOR_DISABLED = 0;
-  const MOTOR_ENABLED = 1;
   const modeLabels: Record<MotionMode, string> = {
     position: "Position", speed: "Speed", "sensorless-speed": "Sensorless Speed", torque: "Torque",
   };
@@ -50,7 +49,7 @@
   function parameterKeydown(event: KeyboardEvent, symbol: string) { if (!locked(symbol)) edits.keydown(event, symbol, onError); }
   async function setMode(mode: MotionMode) {
     const value = modeParameterValue(metadata[MOTION_MODE], mode);
-    if (value === undefined || motorState !== MOTOR_DISABLED || locked(MOTION_MODE)) return;
+    if (value === undefined || motorState !== "DISABLED" || locked(MOTION_MODE)) return;
     try { await edits.select(MOTION_MODE, { type: "u8", value }); } catch (error) { onError(error); }
   }
   function modeSupported(mode: MotionMode): boolean {
@@ -83,7 +82,7 @@
     else if (event.key === "Escape") { event.preventDefault(); incrementalDraft = formatHostNumber($motionState.incrementalDeltaTurn); (event.currentTarget as HTMLInputElement).blur(); }
   }
   function canRun(): boolean {
-    return !!capabilities?.run && !$parameters.saving && writing.size === 0 && motorState === MOTOR_ENABLED && !!activeMode && modeSupported(activeMode);
+    return !!capabilities?.run && !$parameters.saving && writing.size === 0 && motorState === "ENABLED" && !!activeMode && modeSupported(activeMode);
   }
   function canStop(): boolean { return !!capabilities?.stop && !stopBusy; }
   async function run() {
@@ -109,9 +108,9 @@
 
 <div class="motion-simple-page">
   <div class="motion-mode-row"><label><span>Mode</span>
-    <select value={activeMode ?? ""} disabled={motorState !== MOTOR_DISABLED || locked(MOTION_MODE)}
+    <select value={activeMode ?? ""} disabled={motorState !== "DISABLED" || locked(MOTION_MODE)}
       class:ramModified={!!metadata[MOTION_MODE] && $modifiedParameterIds.has(metadata[MOTION_MODE].id)}
-      title={motorState === MOTOR_DISABLED ? "Select motor mode" : "Disable the motor before changing mode"}
+      title={motorState === "DISABLED" ? "Select motor mode" : "Disable the motor before changing mode"}
       onchange={(event) => void setMode(event.currentTarget.value as MotionMode)}>
       {#each Object.entries(modeLabels) as [value, label]}{#if modeSupported(value as MotionMode)}<option value={value}>{label}</option>{/if}{/each}
     </select>

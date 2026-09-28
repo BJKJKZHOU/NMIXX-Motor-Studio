@@ -5,22 +5,21 @@
   import { selectParameters } from "../parameters/state";
   import { createParameterEditor } from "../parameters/editor";
   import { modifiedParameterIds } from "../parameters/persistence";
+  import { parameterEnumValue } from "../parameters/codec";
   import { initializeMotion, motionState, updateMotion, waitMotionUpdates } from "../motion/store";
   import {
     MOTION_ACCEL, MOTION_DECEL, MOTION_MAX_SPEED, MOTION_MODE, TARGET_POSITION, TARGET_SPEED,
     TARGET_TORQUE, TORQUE_RAMP, modeFromParameter, modeParameterValue, motionParameterCodec,
   } from "../motion/parameters";
   import type { MotionMode, MotionState } from "../motion/types";
+  import type { MotorState } from "../motor/state";
   import ExperimentWaveform from "./ExperimentWaveform.svelte";
   import { readTuningExperimentSnapshot, startTuningExperiment, stopTuningExperiment,
     tuningExperimentDefaults, tuningExperimentStatus } from "./tuningExperiment";
   import type { TuningExperimentSnapshot, TuningExperimentState, TuningExperimentSelection } from "./tuningExperiment";
 
-  type Props = { connection: ConnectionInfo | undefined; motorState: number | null; onError?: (error: unknown) => void };
+  type Props = { connection: ConnectionInfo | undefined; motorState: MotorState | null; onError?: (error: unknown) => void };
   type LoopSpec = { title: string; bandwidth: string; source: string; gains: string[] };
-  const MOTOR_DISABLED = 0;
-  const MOTOR_ENABLED = 1;
-  const MOTOR_RUN = 2;
   const CURRENT_BW = "PARAM_CTRL_CURRENT_BW_HZ";
   const CURRENT_SOURCE = "PARAM_CTRL_CURRENT_SOURCE";
   const ID_KP = "PARAM_CTRL_ID_KP";
@@ -96,14 +95,12 @@
   function label(symbol: string): string { return metadata[symbol]?.label ?? "Unavailable"; }
   function unit(symbol: string): string { return metadata[symbol]?.unit ?? ""; }
   function locked(symbol: string): boolean {
-    return $parameters.loading || $parameters.saving || experimentActive() || motorState === MOTOR_RUN || writing.has(symbol) || !metadata[symbol]?.access.includes("w");
+    return $parameters.loading || $parameters.saving || experimentActive() || motorState === "RUN" || writing.has(symbol) || !metadata[symbol]?.access.includes("w");
   }
   function dirty(symbol: string): boolean { return $edits.dirty.has(symbol); }
   function hasDirtyDraft(): boolean { return $edits.dirty.size > 0 || incrementalDraft !== formatHostNumber($motionState.incrementalDeltaTurn); }
   function enumValue(symbol: string, enumSymbol: string): number | null {
-    const meta = metadata[symbol];
-    const index = meta?.allowedSymbols.indexOf(enumSymbol) ?? -1;
-    return index < 0 ? null : meta.allowed[index] ?? index;
+    return parameterEnumValue(metadata[symbol], enumSymbol) ?? null;
   }
   function sourceText(symbol: string): string {
     const parameter = values[symbol];
@@ -130,7 +127,7 @@
   }
   async function setMotionMode(mode: MotionMode) {
     const value = modeParameterValue(metadata[MOTION_MODE], mode);
-    if (value === undefined || motorState !== MOTOR_DISABLED || locked(MOTION_MODE)) return;
+    if (value === undefined || motorState !== "DISABLED" || locked(MOTION_MODE)) return;
     try { await edits.select(MOTION_MODE, { type: "u8", value }); } catch (error) { onError(error); }
   }
   function updateMotionField<K extends keyof MotionState>(key: K, value: MotionState[K]) {
@@ -213,7 +210,7 @@
     displayMultipliers = next;
   }
   function experimentActive(): boolean { return experimentState === "PREPARING" || experimentState === "RUNNING" || experimentState === "STOPPING"; }
-  function motionLocked(): boolean { return $parameters.loading || $parameters.saving || motorState === MOTOR_RUN || motionActionBusy || stopActionBusy || experimentActive(); }
+  function motionLocked(): boolean { return $parameters.loading || $parameters.saving || motorState === "RUN" || motionActionBusy || stopActionBusy || experimentActive(); }
   async function refreshExperiment() {
     if (!connection || experimentRefreshBusy) return;
     const token = generation;
@@ -233,7 +230,7 @@
     finally { experimentRefreshBusy = false; }
   }
   function canRunMotion(): boolean {
-    return !!connection && motorState === MOTOR_ENABLED && !motionActionBusy && !experimentActive()
+    return !!connection && motorState === "ENABLED" && !motionActionBusy && !experimentActive()
       && !$parameters.saving && writing.size === 0 && !hasDirtyDraft() && connection.motion.run
       && selectedTuningEntries().length > 0 && selectionWithinLimits() && !!activeMotionMode() && motionModeSupported(activeMotionMode()!);
   }
@@ -318,8 +315,8 @@
           <div class="motion-toolbar"><label class="motion-mode"><span>Mode</span>
             <select class="compact-select motion-mode-select" value={activeMotionMode() ?? ""}
               class:ramModified={!!metadata[MOTION_MODE] && $modifiedParameterIds.has(metadata[MOTION_MODE].id)}
-              disabled={motionLocked() || motorState !== MOTOR_DISABLED || locked(MOTION_MODE)}
-              title={motorState === MOTOR_DISABLED ? "Select motor mode" : "Disable the motor before changing mode"}
+              disabled={motionLocked() || motorState !== "DISABLED" || locked(MOTION_MODE)}
+              title={motorState === "DISABLED" ? "Select motor mode" : "Disable the motor before changing mode"}
               onchange={(event) => void setMotionMode(event.currentTarget.value as MotionMode)}>
               {#each Object.entries(motionModeLabels) as [value, labelText]}{#if motionModeSupported(value as MotionMode)}<option value={value}>{labelText}</option>{/if}{/each}
             </select>
@@ -367,7 +364,7 @@
               <label class="copy-decel"><input type="checkbox" checked={copyAccelToDecel} disabled={motionLocked()} onchange={(event) => toggleCopyAccelToDecel(event.currentTarget.checked)} />Copy Accel to Decel</label>
             {:else}<span></span>{/if}
             <div class="motion-actions"><vscode-button disabled={!canRunMotion()}
-              title={hasDirtyDraft() ? "Commit or discard tuning edits first" : experimentActive() ? "Tuning experiment is already running" : motorState !== MOTOR_ENABLED ? "Enable motor first" : "Run tuning experiment"}
+              title={hasDirtyDraft() ? "Commit or discard tuning edits first" : experimentActive() ? "Tuning experiment is already running" : motorState !== "ENABLED" ? "Enable motor first" : "Run tuning experiment"}
               onclick={() => void runTuningMotion()}>Run</vscode-button>
               <vscode-button secondary disabled={!canStopMotion()} title="Stop the active tuning experiment and retain its waveform" onclick={() => void stopTuningMotion()}>Stop</vscode-button>
             </div>
@@ -394,7 +391,7 @@
         <section class="tuning-section"><div class="section-title">Position Loop</div><div class="field-grid"><div class="field-label">{label(POSITION_KP)}</div><div class="editor"><input class:ramModified={!!metadata[POSITION_KP] && $modifiedParameterIds.has(metadata[POSITION_KP].id)} class:dirty={dirty(POSITION_KP)} class="compact-input mono" value={drafts[POSITION_KP] ?? ""} disabled={locked(POSITION_KP)} oninput={(event) => edits.edit(POSITION_KP, event.currentTarget.value)} onkeydown={(event) => keydown(event, POSITION_KP)} onblur={() => edits.discard(POSITION_KP)} /><span class="unit">{unit(POSITION_KP)}</span></div></div></section>
         <section class="tuning-section"><div class="section-title">Mechanical Observer</div><div class="field-grid"><div class="field-label">{label(ESO_BW)}</div><div class="editor"><input class:ramModified={!!metadata[ESO_BW] && $modifiedParameterIds.has(metadata[ESO_BW].id)} class:dirty={dirty(ESO_BW)} class="compact-input mono" value={drafts[ESO_BW] ?? ""} disabled={locked(ESO_BW)} oninput={(event) => edits.edit(ESO_BW, event.currentTarget.value)} onkeydown={(event) => keydown(event, ESO_BW)} onblur={() => edits.discard(ESO_BW)} /><span class="unit">{unit(ESO_BW)}</span></div></div></section>
         {#if loading}<div class="loading-note"><i class="codicon codicon-loading codicon-modifier-spin"></i> Reading tuning parameters…</div>{/if}
-        {#if motorState === MOTOR_RUN}<div class="state-note">Tuning writes are locked while the motor is RUN.</div>{/if}
+        {#if motorState === "RUN"}<div class="state-note">Tuning writes are locked while the motor is RUN.</div>{/if}
       </aside></div>
     {/if}
   </section>

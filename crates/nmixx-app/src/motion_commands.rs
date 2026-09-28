@@ -59,7 +59,7 @@ impl ApplicationSession {
             .ok_or_else(|| ApplicationError::Motion("Motor mode is not exposed".to_owned()))?;
         self.parameter_write(
             parameter.id,
-            ParameterValue::U8(crate::motion::mode_wire_value(mode)),
+            ParameterValue::U8(crate::motion::mode_wire_value(self.schema(), mode).map_err(ApplicationError::Motion)?),
         )?;
         Ok(mode)
     }
@@ -132,7 +132,7 @@ impl ApplicationSession {
         let motor_state = self.enum_symbol("PARAM_MOTOR_STATE", motor_state_raw)?;
         let mode_raw = self.read_required_u8("PARAM_MOTOR_MODE")?;
         let mode =
-            crate::motion::mode_from_wire_value(mode_raw).map_err(ApplicationError::Motion)?;
+            crate::motion::mode_from_wire_value(self.schema(), mode_raw).map_err(ApplicationError::Motion)?;
 
         Ok(MotionRuntimeStatus {
             motor_state_raw,
@@ -194,7 +194,7 @@ impl ApplicationSession {
     fn require_motion_mode(&self, expected: MotionMode) -> Result<(), ApplicationError> {
         let raw = self.read_required_u8("PARAM_MOTOR_MODE")?;
         let current =
-            crate::motion::mode_from_wire_value(raw).map_err(ApplicationError::Motion)?;
+            crate::motion::mode_from_wire_value(self.schema(), raw).map_err(ApplicationError::Motion)?;
         if current != expected {
             return Err(ApplicationError::Motion(format!(
                 "motion command requires {expected:?} mode, current mode is {current:?}; change mode while DISABLED first"
@@ -289,11 +289,7 @@ impl ApplicationSession {
             .schema()
             .parameter_by_key(key)
             .ok_or_else(|| ApplicationError::Motion(format!("{key} is not exposed")))?;
-        Ok(parameter
-            .allowed_symbols
-            .get(raw as usize)
-            .cloned()
-            .unwrap_or_else(|| raw.to_string()))
+        Ok(parameter.enum_symbol_u8(raw).map(str::to_owned).unwrap_or_else(|| raw.to_string()))
     }
 }
 

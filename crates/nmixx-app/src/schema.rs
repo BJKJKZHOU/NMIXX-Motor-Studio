@@ -16,6 +16,10 @@ pub enum SchemaError {
     UnsupportedVersion(u32),
     #[error("unknown parameter type '{0}'")]
     UnknownParameterType(String),
+    #[error("parameter '{parameter}' does not expose enum value '{symbol}'")]
+    MissingEnumValue { parameter: String, symbol: String },
+    #[error("parameter '{parameter}' enum value '{symbol}' is not a u8 value")]
+    InvalidEnumValue { parameter: String, symbol: String },
 }
 
 #[derive(Debug, Clone, Deserialize)]
@@ -69,6 +73,52 @@ impl ParameterMetadata {
             "u32" => ParameterType::U32,
             "position" => ParameterType::Position,
             other => return Err(SchemaError::UnknownParameterType(other.to_owned())),
+        })
+    }
+
+    /// Resolve one HostSchema enum symbol to its u8 wire value. Prefer explicit
+    /// `allowed` values; when the exporter provides only `allowed_symbols`,
+    /// their order is the zero-based enum ordinal contract.
+    pub fn enum_u8(&self, wanted_symbol: &str) -> Result<u8, SchemaError> {
+        let index = self
+            .allowed_symbols
+            .iter()
+            .position(|symbol| symbol == wanted_symbol)
+            .ok_or_else(|| SchemaError::MissingEnumValue {
+                parameter: self.symbol.clone(),
+                symbol: wanted_symbol.to_owned(),
+            })?;
+
+        if let Some(value) = self.allowed.get(index) {
+            return match value {
+                SchemaNumber::Integer(value) => u8::try_from(*value).map_err(|_| SchemaError::InvalidEnumValue {
+                    parameter: self.symbol.clone(),
+                    symbol: wanted_symbol.to_owned(),
+                }),
+                SchemaNumber::Float(value)
+                    if value.is_finite()
+                        && value.fract() == 0.0
+                        && *value >= 0.0
+                        && *value <= u8::MAX as f64 =>
+                {
+                    Ok(*value as u8)
+                }
+                _ => Err(SchemaError::InvalidEnumValue {
+                    parameter: self.symbol.clone(),
+                    symbol: wanted_symbol.to_owned(),
+                }),
+            };
+        }
+
+        u8::try_from(index).map_err(|_| SchemaError::InvalidEnumValue {
+            parameter: self.symbol.clone(),
+            symbol: wanted_symbol.to_owned(),
+        })
+    }
+
+    pub fn enum_symbol_u8(&self, raw: u8) -> Option<&str> {
+        self.allowed_symbols.iter().enumerate().find_map(|(index, symbol)| {
+            self.enum_u8(symbol).ok().filter(|value| *value == raw).map(|_| symbol.as_str())
         })
     }
 }
@@ -188,4 +238,20 @@ description = "Enable motor"
         assert!(parameter.range.as_ref().unwrap().exclusive_min);
         assert_eq!(schema.action_by_key("Enable").unwrap().symbol, "ACTION_MOTOR_ENABLE");
     }
+    #[test]
+    fn enum_u8_prefers_explicit_allowed_values_and_falls_back_to_ordinal() {
+        let explicit = ParameterMetadata {
+            symbol: "STATE".into(), label: "State".into(), id: 1, type_name: "u8".into(),
+            access: "ro".into(), unit: None, description: String::new(), write_state: None,
+            range: None, allowed: vec![SchemaNumber::Integer(4), SchemaNumber::Integer(9)],
+            allowed_symbols: vec!["IDLE".into(), "RUN".into()], plot_scale: None,
+        };
+        assert_eq!(explicit.enum_u8("RUN").unwrap(), 9);
+        assert_eq!(explicit.enum_symbol_u8(4), Some("IDLE"));
+
+        let ordinal = ParameterMetadata { allowed: Vec::new(), ..explicit };
+        assert_eq!(ordinal.enum_u8("RUN").unwrap(), 1);
+        assert_eq!(ordinal.enum_symbol_u8(0), Some("IDLE"));
+    }
+
 }

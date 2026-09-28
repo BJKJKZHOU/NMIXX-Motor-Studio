@@ -4,6 +4,7 @@
   import { selectParameters } from "../parameters/state";
   import { createParameterEditor } from "../parameters/editor";
   import { modifiedParameterIds } from "../parameters/persistence";
+  import { parameterEnumSymbol, parameterEnumValue } from "../parameters/codec";
   import { listActions, onActionCompleted, onMotorStopIssued } from "../actions/api";
   import type { ActionCompletion, ActionHandle, ActionMetadata } from "../actions/types";
   import { setPositionZero, startHoming as startHomingAction, startPhaseSearch as startPhaseSearchAction } from "./api";
@@ -90,10 +91,14 @@
   function enumLabel(symbol: string): string { return symbol.replace(/^ENC_PROTOCOL_/, "").replace(/^ENC_SPI_/, "").replaceAll("_", " "); }
   function enumOptions(symbol: string): EnumOption[] {
     const meta = metadata[symbol];
-    return meta?.allowedSymbols.map((enumSymbol, index) => ({ symbol: enumSymbol, value: meta.allowed[index] ?? index, label: enumLabel(enumSymbol) })) ?? [];
+    if (!meta) return [];
+    return meta.allowedSymbols.flatMap((enumSymbol) => {
+      const value = parameterEnumValue(meta, enumSymbol);
+      return value === undefined ? [] : [{ symbol: enumSymbol, value, label: enumLabel(enumSymbol) }];
+    });
   }
   function enumSymbolForValue(symbol: string, value: number | null): string | null {
-    return value === null ? null : enumOptions(symbol).find((option) => option.value === value)?.symbol ?? null;
+    return value === null ? null : parameterEnumSymbol(metadata[symbol], value) ?? null;
   }
   function isSpiProtocol(): boolean { return enumSymbolForValue(ENCODER_PROTOCOL_SYMBOL, encoderProtocolValue) === "ENC_PROTOCOL_SPI"; }
   function isAbzProtocol(): boolean { return enumSymbolForValue(ENCODER_PROTOCOL_SYMBOL, encoderProtocolValue) === "ENC_PROTOCOL_ABZ"; }

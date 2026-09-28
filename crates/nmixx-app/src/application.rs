@@ -21,7 +21,7 @@ use crate::{
     ActionHandle, AxdrStatus, ConfigServiceError, DevicePlotCapabilities, DeviceSession,
     HostSchema, IdentificationKind, IdentificationStart, MixedScopeConfig, MixedScopeError,
     MixedScopeSnapshot, MixedScopeStatus, MotionCapabilities, MotionConfig, MotionMode, MotionPreview,
-    PositionCommand, MotionService, MotorActionError, ParameterMetadata,
+    MotorState, PositionCommand, MotionService, MotorActionError, ParameterMetadata,
     ParameterServiceError, ParameterValue, PlotCapabilitiesError, PreflightError, PreflightIssue,
     ScopeRate, ScopeSelection, SessionError, SessionEvent, StreamState,
 };
@@ -349,9 +349,8 @@ impl ApplicationSession {
     fn wait_motor_stopped_until(&self, deadline: Instant) -> Result<(), ApplicationError> {
         loop {
             match self.read_motor_state()? {
-                0 | 1 => return Ok(()),
-                2 => {}
-                state => return Err(ApplicationError::Motion(format!("Unknown motor state {state} while stopping"))),
+                MotorState::Disabled | MotorState::Enabled => return Ok(()),
+                MotorState::Run => {}
             }
             if Instant::now() >= deadline {
                 return Err(ApplicationError::Motion("Motor is still RUN after the 60 s controlled-stop timeout; use Disable to turn off the drive".to_owned()));
@@ -533,7 +532,7 @@ impl ApplicationSession {
         };
         let mut capture_owned = false;
         let prepared = (|| -> Result<(), ApplicationError> {
-            if self.read_motor_state()? != 1 { return Err(ApplicationError::TuningExperimentMotorNotEnabled); }
+            if self.read_motor_state()? != MotorState::Enabled { return Err(ApplicationError::TuningExperimentMotorNotEnabled); }
             let ids = self.parameter_metadata().iter().filter(|meta| meta.access.contains('r') && (
                 meta.symbol.starts_with("PARAM_CTRL_") || meta.symbol.starts_with("PARAM_MOTION_")
                 || meta.symbol.starts_with("PARAM_TARGET_") || meta.symbol == "PARAM_RUN_POSITION"
@@ -637,7 +636,7 @@ impl ApplicationSession {
     fn read_motion_mode(&self) -> Result<MotionMode, ApplicationError> {
         let metadata = self.inner.schema.parameter_by_key("PARAM_MOTOR_MODE").ok_or_else(|| ApplicationError::Motion("Motor mode is not exposed".to_owned()))?;
         match self.inner.parameters.read(metadata.id)? {
-            ParameterValue::U8(value) => crate::motion::mode_from_wire_value(value).map_err(ApplicationError::Motion),
+            ParameterValue::U8(value) => crate::motion::mode_from_wire_value(&self.inner.schema, value).map_err(ApplicationError::Motion),
             _ => Err(ApplicationError::Motion("Motor mode has an unexpected type".to_owned())),
         }
     }
@@ -654,10 +653,13 @@ impl ApplicationSession {
     fn cancel_motion_repeat_leg(&self) -> Result<(), ApplicationError> {
         self.inner.motion_repeat.lock().map_err(|_| ApplicationError::Poisoned)?.pending_target_is_b = None; Ok(())
     }
-    fn read_motor_state(&self) -> Result<u8, ApplicationError> {
+    pub fn motor_state(&self) -> Result<MotorState, ApplicationError> {
+        self.read_motor_state()
+    }
+    fn read_motor_state(&self) -> Result<MotorState, ApplicationError> {
         let metadata = self.inner.schema.parameter_by_key("PARAM_MOTOR_STATE").ok_or_else(|| ApplicationError::Motion("Motor state is not exposed".to_owned()))?;
         match self.inner.parameters.read(metadata.id)? {
-            ParameterValue::U8(value) => Ok(value),
+            ParameterValue::U8(value) => MotorState::from_parameter(metadata, value).map_err(ApplicationError::Motion),
             _ => Err(ApplicationError::Motion("Motor state has an unexpected type".to_owned())),
         }
     }
@@ -738,7 +740,7 @@ impl ApplicationSession {
                         let used = status.samples as f64 / status.capacity_samples as f64;
                         if used >= 1.0 - reserve_ratio {
                             completed_window = false;
-                            if self.read_motor_state().ok() == Some(2) {
+                            if self.read_motor_state().ok() == Some(MotorState::Run) {
                                 if let Err(error) = self.motion_stop() { self.fail_tuning_experiment(generation, error); return; }
                                 stop_sent = true;
                                 let _ = self.set_tuning_state(generation, TuningExperimentState::Stopping);
@@ -750,7 +752,7 @@ impl ApplicationSession {
                     Err(error) => { self.fail_tuning_experiment(generation, error); return; }
                 }
                 match self.read_motor_state() {
-                    Ok(2) => {}
+                    Ok(MotorState::Run) => {}
                     Ok(state) => {
                         if !self.tuning_stop_requested(generation) && !stop_sent {
                             self.fail_tuning_experiment(generation, format!("Motor left RUN unexpectedly (state {state}); check firmware faults"));
@@ -764,7 +766,7 @@ impl ApplicationSession {
                 let step = TUNING_POLL.min(run_window.saturating_sub(elapsed));
                 thread::sleep(step); elapsed += step;
             }
-            if completed_window && self.read_motor_state().ok() == Some(2) {
+            if completed_window && self.read_motor_state().ok() == Some(MotorState::Run) {
                 if let Err(error) = self.motion_stop() { self.fail_tuning_experiment(generation, error); return; }
                 stop_sent = true;
                 let _ = self.set_tuning_state(generation, TuningExperimentState::Stopping);
@@ -777,7 +779,7 @@ impl ApplicationSession {
                 Ok(state) => state,
                 Err(error) => { self.fail_tuning_experiment(generation, error); return; }
             };
-            if motor_state != 2 {
+            if motor_state != MotorState::Run {
                 if !stop_requested && !stop_sent {
                     self.fail_tuning_experiment(generation, format!("Motor left RUN unexpectedly (state {motor_state}); check firmware faults"));
                     return;

@@ -17,6 +17,7 @@
   import { canSaveParameters, disableMotor, enableMotor, saveParameters, stopMotor } from "./actions/api";
   import { connectParameters, disconnectParameters, parameterState, pollParameters, refreshParameters, saveParameterBaseline, selectParameters } from "./parameters/state";
   import type { ParameterValue } from "./parameters/types";
+  import { motorStateFromParameter } from "./motor/state";
 
   type Page = "connection" | "motor" | "encoder" | "limits" | "control" | "tuning" | "motion" | "analysis" | "parameters" | "events" | "automation";
   type ControlLoopPage = "current" | "speed" | "position";
@@ -24,11 +25,10 @@
   // Plot position is f32 total turns, not the exact typed turn+rad value.
   // Keep only that read and non-streamed motor state on the slow polling path.
   const POLLED_SYMBOLS = ["PARAM_MOTOR_STATE", "PARAM_RUN_POSITION"] as const;
-  const MOTOR_DISABLED = 0;
   const DEFAULT_SCHEMA_PATH = "../../../AxDr_L_Motor/build/host/axdr-host-schema.toml";
   const SCHEMA_PATH_STORAGE_KEY = "nmixx.connection.hostSchemaPath";
   const globalParameters = selectParameters(GLOBAL_SYMBOLS);
-  $: motorState = numeric($globalParameters.values.PARAM_MOTOR_STATE);
+  $: motorState = motorStateFromParameter($globalParameters.metadata.PARAM_MOTOR_STATE, $globalParameters.values.PARAM_MOTOR_STATE);
   $: currentIq = numeric($globalParameters.values.PARAM_RUN_IQ);
   $: speedWm = numeric($globalParameters.values.PARAM_RUN_WM);
   $: positionText = position($globalParameters.values.PARAM_RUN_POSITION);
@@ -101,7 +101,7 @@
   async function toggleMotorEnable() {
     if (!connection || motorState === null || globalActionBusy) return;
     globalActionBusy = true;
-    try { if (motorState === MOTOR_DISABLED) await enableMotor(); else await disableMotor(); }
+    try { if (motorState === "DISABLED") await enableMotor(); else await disableMotor(); }
     catch (error) { setError(error); } finally { globalActionBusy = false; }
   }
   async function stopCurrentMotorOperation() {
@@ -110,7 +110,7 @@
     try { await stopMotor(); } catch (error) { setError(error); } finally { globalStopBusy = false; }
   }
   async function savePersistentParameters() {
-    if (!connection || !parameterSaveAvailable || motorState !== MOTOR_DISABLED || globalActionBusy) return;
+    if (!connection || !parameterSaveAvailable || motorState !== "DISABLED" || globalActionBusy) return;
     globalActionBusy = true; saveFeedback = "idle";
     try { await saveParameterBaseline(saveParameters); showSavedFeedback(); }
     catch (error) { setError(error); } finally { globalActionBusy = false; }
@@ -142,17 +142,17 @@
   <div class="global-toolbar"><div class="global-toolbar-left">
     <div class="brand">NMIXX Motor Studio</div><div class="global-toolbar-divider" aria-hidden="true"></div>
     <div class="global-actions">
-      <button class:enable-action={motorState === MOTOR_DISABLED} class:disable-action={motorState !== null && motorState !== MOTOR_DISABLED} class="tool-button global-action"
-        disabled={!connection || motorState === null || globalActionBusy} onclick={() => void toggleMotorEnable()} title={motorState === MOTOR_DISABLED ? "Enable motor" : "Disable motor"}>
-        <i class={`codicon ${motorState === MOTOR_DISABLED ? "codicon-play" : "codicon-debug-disconnect"}`}></i>{motorState === MOTOR_DISABLED ? "Enable" : "Disable"}
+      <button class:enable-action={motorState === "DISABLED"} class:disable-action={motorState !== null && motorState !== "DISABLED"} class="tool-button global-action"
+        disabled={!connection || motorState === null || globalActionBusy} onclick={() => void toggleMotorEnable()} title={motorState === "DISABLED" ? "Enable motor" : "Disable motor"}>
+        <i class={`codicon ${motorState === "DISABLED" ? "codicon-play" : "codicon-debug-disconnect"}`}></i>{motorState === "DISABLED" ? "Enable" : "Disable"}
       </button>
       <button class="tool-button global-action stop-action" disabled={!connection || globalStopBusy} onclick={() => void stopCurrentMotorOperation()} title="Stop current motor operation">
         <i class={`codicon ${globalStopBusy ? "codicon-loading codicon-modifier-spin" : "codicon-debug-stop"}`}></i> Stop
       </button>
       <span class="global-group-gap"></span>
       <button class="tool-button global-action" disabled={!connection || readingParameters} onclick={() => void refreshAllParameters()} title="Read current RAM parameters from device"><i class={`codicon ${readingParameters ? "codicon-loading codicon-modifier-spin" : "codicon-refresh"}`}></i> Read</button>
-      <button class="tool-button global-action" disabled={!connection || !parameterSaveAvailable || motorState !== MOTOR_DISABLED || globalActionBusy} onclick={() => void savePersistentParameters()}
-        title={!parameterSaveAvailable ? "Parameter persistence is not exposed by this firmware" : motorState !== MOTOR_DISABLED ? "Disable the motor before saving persistent parameters" : "Save persistent RAM parameters to device storage"}>
+      <button class="tool-button global-action" disabled={!connection || !parameterSaveAvailable || motorState !== "DISABLED" || globalActionBusy} onclick={() => void savePersistentParameters()}
+        title={!parameterSaveAvailable ? "Parameter persistence is not exposed by this firmware" : motorState !== "DISABLED" ? "Disable the motor before saving persistent parameters" : "Save persistent RAM parameters to device storage"}>
         <i class={`codicon ${saveFeedback === "saved" ? "codicon-check" : "codicon-save"}`}></i>{saveFeedback === "saved" ? "Saved" : "Save"}
       </button>
     </div>

@@ -5,7 +5,7 @@ use std::time::{Duration, Instant};
 use serde::Deserialize;
 use serde_json::{Value, json};
 use crate::{ActionCompletionWaiter, ActionHandle, ApplicationSession, AxdrStatus, IdentificationKind,
-    IdentificationStart, MixedScopeConfig, MixedScopeSnapshot, ParameterValue,
+    IdentificationStart, MixedScopeConfig, MixedScopeSnapshot, MotorState, ParameterValue,
     PositionValue, ScopeRate, ScopeSelection, StreamState, TuningExperimentState};
 use super::{AutomationApi, RunControl};
 
@@ -33,16 +33,19 @@ impl SessionWorkflowApi {
         self.app.schema().parameter_by_key(key).map(|m| m.id)
             .ok_or_else(|| format!("Parameter '{key}' is not exposed by this schema"))
     }
-    fn read_state(&self) -> Result<u8, String> {
-        match self.app.parameter_read(self.id("PARAM_MOTOR_STATE")?).map_err(|e| e.to_string())? {
-            ParameterValue::U8(v) => Ok(v), _ => Err("Motor state has the wrong wire type".into()),
-        }
+    fn read_state(&self) -> Result<MotorState, String> {
+        self.app.motor_state().map_err(|error| error.to_string())
+    }
+    fn state_wire(&self, state: MotorState) -> Result<u8, String> {
+        self.app.schema().parameter_by_key("PARAM_MOTOR_STATE")
+            .ok_or("PARAM_MOTOR_STATE is not exposed by this schema")?
+            .enum_u8(state.symbol()).map_err(|error| error.to_string())
     }
     fn claim_motion(&self, control: &RunControl) -> Result<(), String> {
         control.check()?;
         // Never make cleanup responsible for motion that already existed before
         // this script. The Application methods still perform their normal checks.
-        if self.read_state()? == 2 { return Err("Motor is already RUN; stop it before starting another operation".into()); }
+        if self.read_state()? == MotorState::Run { return Err("Motor is already RUN; stop it before starting another operation".into()); }
         control.check()?;
         // Set before the request: a transport error can leave acceptance uncertain.
         self.owned.lock().map_err(|_| "workflow lock poisoned")?.motor = true;
@@ -85,8 +88,11 @@ impl SessionWorkflowApi {
             control.check()?;
             let state = self.read_state()?;
             match state {
-                0 | 1 => { self.owned.lock().map_err(|_| "workflow lock poisoned")?.motor = false; return Ok(json!({"state":state})); }
-                2 => {}, _ => return Err(format!("Unknown motor state {state}")),
+                MotorState::Disabled | MotorState::Enabled => {
+                    self.owned.lock().map_err(|_| "workflow lock poisoned")?.motor = false;
+                    return Ok(json!({"state":self.state_wire(state)?}));
+                }
+                MotorState::Run => {}
             }
             if Instant::now() >= deadline { return Err("Motor is still RUN after controlled-stop timeout".into()); }
             control.wait(Duration::from_millis(50))?;

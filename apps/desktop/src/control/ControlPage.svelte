@@ -4,9 +4,10 @@
   import { selectParameters } from "../parameters/state";
   import { createParameterEditor } from "../parameters/editor";
   import { modifiedParameterIds } from "../parameters/persistence";
+  import { parameterEnumValue } from "../parameters/codec";
+  import type { MotorState } from "../motor/state";
   type ControlLoopPage = "current" | "speed" | "position";
-  type Props = { connection: ConnectionInfo | undefined; motorState: number | null; loop?: ControlLoopPage; onError?: (error: unknown) => void };
-  const MOTOR_RUN = 2;
+  type Props = { connection: ConnectionInfo | undefined; motorState: MotorState | null; loop?: ControlLoopPage; onError?: (error: unknown) => void };
   const CURRENT_BW = "PARAM_CTRL_CURRENT_BW_HZ";
   const CURRENT_SOURCE = "PARAM_CTRL_CURRENT_SOURCE";
   const ID_KP = "PARAM_CTRL_ID_KP";
@@ -30,13 +31,11 @@
   let loading = $derived($parameters.loading);
   function label(symbol: string, fallback: string): string { return metadata[symbol]?.label ?? fallback; }
   function unit(symbol: string): string { return metadata[symbol]?.unit ?? ""; }
-  function locked(symbol: string): boolean { return $parameters.loading || $parameters.saving || motorState === MOTOR_RUN || writing.has(symbol) || !metadata[symbol]?.access.includes("w"); }
+  function locked(symbol: string): boolean { return $parameters.loading || $parameters.saving || motorState === "RUN" || writing.has(symbol) || !metadata[symbol]?.access.includes("w"); }
   function dirty(symbol: string): boolean { return $edits.dirty.has(symbol); }
   function numeric(value: ParameterValue | null | undefined): number | null { return !value || value.type === "position" ? null : Number(value.value); }
   function enumValue(symbol: string, enumSymbol: string): number | null {
-    const meta = metadata[symbol];
-    const index = meta?.allowedSymbols.indexOf(enumSymbol) ?? -1;
-    return index < 0 ? null : meta.allowed[index] ?? index;
+    return parameterEnumValue(metadata[symbol], enumSymbol) ?? null;
   }
   function sourceText(symbol: string): string {
     const value = numeric(values[symbol]);
@@ -113,7 +112,7 @@
           <div class="feedback-row"><span>Encoder Position</span><span class="feedback-line">───────────────↩</span></div>
         </section>
         {/if}
-        {#if motorState === MOTOR_RUN}<div class="state-note">Control parameter writes are locked while the motor is RUN.</div>{/if}
+        {#if motorState === "RUN"}<div class="state-note">Control parameter writes are locked while the motor is RUN.</div>{/if}
       </div>
     {/if}
   </section>

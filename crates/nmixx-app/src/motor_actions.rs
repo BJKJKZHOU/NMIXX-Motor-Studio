@@ -4,7 +4,7 @@ use std::sync::Arc;
 use crate::parameter_service::ParameterService;
 use crate::{
     ActionHandle, DeviceSession, HostSchema, IdentificationKind,
-    ParameterServiceError, ParameterValue, PreflightError, PreflightIssue, PreflightService, SchemaNumber,
+    ParameterServiceError, ParameterValue, PreflightError, PreflightIssue, PreflightService, SchemaError,
     SessionError,
 };
 
@@ -32,10 +32,6 @@ pub enum MotorActionError {
     MissingParameter(String),
     #[error("required action '{0}' is not exposed by the HostSchema")]
     MissingAction(String),
-    #[error("parameter '{parameter}' does not expose enum value '{symbol}'")]
-    MissingEnumValue { parameter: String, symbol: String },
-    #[error("parameter '{parameter}' enum value '{symbol}' is not a u8 value")]
-    InvalidEnumValue { parameter: String, symbol: String },
     #[error("phase-search preflight failed: {0}")]
     PreflightFailed(String),
     #[error("parameter '{0}' does not contain a u8 value")]
@@ -48,6 +44,8 @@ pub enum MotorActionError {
     Parameter(#[from] ParameterServiceError),
     #[error(transparent)]
     Session(#[from] SessionError),
+    #[error(transparent)]
+    Schema(#[from] SchemaError),
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -121,10 +119,10 @@ impl MotorActionService {
             .parameter_by_key(MOTOR_STATE)
             .ok_or_else(|| MotorActionError::MissingParameter(MOTOR_STATE.to_owned()))?;
 
-        let ident_mode = enum_u8(mode, IDENT_MODE)?;
-        let disabled = enum_u8(state, MOTOR_STATE_DISABLED)?;
-        let enabled = enum_u8(state, MOTOR_STATE_ENABLED)?;
-        let running = enum_u8(state, MOTOR_STATE_RUN)?;
+        let ident_mode = mode.enum_u8(IDENT_MODE)?;
+        let disabled = state.enum_u8(MOTOR_STATE_DISABLED)?;
+        let enabled = state.enum_u8(MOTOR_STATE_ENABLED)?;
+        let running = state.enum_u8(MOTOR_STATE_RUN)?;
 
         let mut current_state = read_u8(&self.parameters, state)?;
 
@@ -193,7 +191,7 @@ impl MotorActionService {
 
     pub(crate) fn phase_search_available(&self) -> bool {
         let Some(mode) = self.schema.parameter_by_key(MOTOR_MODE) else { return false; };
-        enum_u8(mode, PHASE_SEARCH_MODE).is_ok()
+        mode.enum_u8(PHASE_SEARCH_MODE).is_ok()
             && self.schema.action_by_key(MOTOR_ENABLE).is_some()
             && self.schema.action_by_key(MOTOR_RUN).is_some()
     }
@@ -213,7 +211,7 @@ impl MotorActionService {
             .schema
             .parameter_by_key(MOTOR_MODE)
             .ok_or_else(|| MotorActionError::MissingParameter(MOTOR_MODE.to_owned()))?;
-        let phase_search = enum_u8(mode, PHASE_SEARCH_MODE)?;
+        let phase_search = mode.enum_u8(PHASE_SEARCH_MODE)?;
 
         let enable = self
             .schema
@@ -258,48 +256,3 @@ fn read_u8(
     }
 }
 
-fn enum_u8(
-    parameter: &crate::ParameterMetadata,
-    wanted_symbol: &str,
-) -> Result<u8, MotorActionError> {
-    let index = parameter
-        .allowed_symbols
-        .iter()
-        .position(|symbol| symbol == wanted_symbol)
-        .ok_or_else(|| MotorActionError::MissingEnumValue {
-            parameter: parameter.symbol.clone(),
-            symbol: wanted_symbol.to_owned(),
-        })?;
-
-    // Preferred contract: HostSchema supplies numeric allowed values alongside
-    // their symbols. The current AxDr exporter only emits allowed_symbols for
-    // C enums; those enums are zero-based contiguous and the exported symbol
-    // order is the enum ordinal order. Keep that compatibility rule here in
-    // the AxDr application adapter rather than leaking a numeric PHASE_SEARCH
-    // constant into GUI/CLI clients.
-    if let Some(value) = parameter.allowed.get(index) {
-        return match value {
-            SchemaNumber::Integer(value) => u8::try_from(*value).map_err(|_| MotorActionError::InvalidEnumValue {
-                parameter: parameter.symbol.clone(),
-                symbol: wanted_symbol.to_owned(),
-            }),
-            SchemaNumber::Float(value)
-                if value.is_finite()
-                    && value.fract() == 0.0
-                    && *value >= 0.0
-                    && *value <= u8::MAX as f64 =>
-            {
-                Ok(*value as u8)
-            }
-            _ => Err(MotorActionError::InvalidEnumValue {
-                parameter: parameter.symbol.clone(),
-                symbol: wanted_symbol.to_owned(),
-            }),
-        };
-    }
-
-    u8::try_from(index).map_err(|_| MotorActionError::InvalidEnumValue {
-        parameter: parameter.symbol.clone(),
-        symbol: wanted_symbol.to_owned(),
-    })
-}

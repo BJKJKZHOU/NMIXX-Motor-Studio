@@ -9,6 +9,7 @@ mod application;
 mod automation;
 mod config_service;
 mod motor_actions;
+mod motor_state;
 mod preflight;
 mod connection;
 mod parameter_service;
@@ -37,6 +38,7 @@ pub use motion::{MotionConfig, MotionMode, MotionPreview, MotionService, Positio
 pub use motion_commands::{MotionRuntimeStatus, PositionMotionRequest, SpeedMotionRequest};
 pub use motion_capabilities::MotionCapabilities;
 pub use motor_actions::{IdentificationStart, MotorActionError};
+pub use motor_state::MotorState;
 pub use mixed_scope::{
     MixedScopeChannel, MixedScopeConfig, MixedScopeError, MixedScopeSeries, MixedScopeSession,
     MixedScopeSnapshot, MixedScopeStatus, ScopeRate, ScopeSelection,
