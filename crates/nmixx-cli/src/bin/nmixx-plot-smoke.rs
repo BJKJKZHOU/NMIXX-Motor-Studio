@@ -3,9 +3,10 @@ use std::path::PathBuf;
 use std::time::{Duration, Instant};
 
 use clap::Parser;
-use nmixx_app::{
-    DEFAULT_USB_BAUD, DeviceSession, HostSchema, PLOT_FAST_MASK, PLOT_GROUP_FAST,
-    SessionEvent, StreamConfig, StreamPipeline, StreamSession, StreamWireMode,
+use nmixx_app::{DEFAULT_USB_BAUD, HostSchema};
+use nmixx_app::raw::{
+    DeviceSession, PLOT_FAST_MASK, PLOT_GROUP_FAST, SessionEvent, StreamConfig,
+    StreamPipeline, StreamSession, StreamWireMode,
 };
 
 const CONFIG_ID: u8 = 1;

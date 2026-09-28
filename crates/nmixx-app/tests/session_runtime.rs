@@ -2,9 +2,8 @@ use std::collections::VecDeque;
 use std::sync::{Arc, Mutex};
 use std::time::Duration;
 
-use nmixx_app::{
-    ActionError, AxdrStatus, DeviceSession, ParameterType, ParameterValue, SessionError, SessionEvent,
-};
+use nmixx_app::{AxdrStatus, ParameterType, ParameterValue};
+use nmixx_app::raw::{ActionError, DeviceSession, SessionError, SessionEvent};
 use nmixx_core::protocol::{
     EVENT_ACTION_COMPLETE, EVENT_NOTIFY, MSG_EVENT, MSG_PARAMETER, MSG_RESPONSE, NODE_ID_DEFAULT,
     PARAM_READ, PARAM_WRITE, can_id,

@@ -1,10 +1,8 @@
 use std::error::Error;
 
 use clap::Parser;
-use nmixx_app::{
-    ActionError, AxdrStatus, DEFAULT_USB_BAUD, DeviceSession, ParameterType, ParameterValue,
-    SessionError,
-};
+use nmixx_app::{AxdrStatus, DEFAULT_USB_BAUD, ParameterType, ParameterValue};
+use nmixx_app::raw::{ActionError, DeviceSession, SessionError};
 
 /// Current AxDr_L IDs used only by this hardware bring-up smoke test.
 const PARAM_MOTOR_PP: u16 = 0x0101;

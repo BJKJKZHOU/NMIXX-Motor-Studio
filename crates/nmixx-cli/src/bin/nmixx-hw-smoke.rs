@@ -1,7 +1,8 @@
 use std::error::Error;
 
 use clap::Parser;
-use nmixx_app::{DEFAULT_USB_BAUD, DeviceSession, ParameterType, ParameterValue};
+use nmixx_app::{DEFAULT_USB_BAUD, ParameterType, ParameterValue};
+use nmixx_app::raw::DeviceSession;
 
 /// Current AxDr_L read-only Parameters used only for first hardware bring-up.
 /// Keep this smoke binary deliberately small; normal product code resolves

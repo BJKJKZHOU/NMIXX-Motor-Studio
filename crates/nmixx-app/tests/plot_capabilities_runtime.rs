@@ -2,7 +2,8 @@ use std::collections::VecDeque;
 use std::sync::{Arc, Mutex};
 use std::time::Duration;
 
-use nmixx_app::{DevicePlotCapabilities, DeviceSession};
+use nmixx_app::DevicePlotCapabilities;
+use nmixx_app::raw::DeviceSession;
 use nmixx_core::protocol::{
     AxdrStatus, MSG_PLOT, MSG_RESPONSE, NODE_ID_DEFAULT, PLOT_CAPS, PLOT_CAP_END,
     PLOT_CAP_FAST, PLOT_CAP_NORMAL, can_id,

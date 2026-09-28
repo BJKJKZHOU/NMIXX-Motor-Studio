@@ -2,7 +2,7 @@ use std::collections::VecDeque;
 use std::sync::{Arc, Mutex};
 use std::time::{Duration, Instant};
 
-use nmixx_app::{
+use nmixx_app::raw::{
     DeviceSession, ScopeChannel, ScopeConfig, ScopeError, ScopeSession, SessionEvent,
 };
 use nmixx_core::protocol::{

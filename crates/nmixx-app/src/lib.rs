@@ -40,7 +40,7 @@ pub use motion_capabilities::MotionCapabilities;
 pub use motor_actions::{IdentificationStart, MotorActionError};
 pub use motor_state::MotorState;
 pub use mixed_scope::{
-    MixedScopeChannel, MixedScopeConfig, MixedScopeError, MixedScopeSeries, MixedScopeSession,
+    MixedScopeChannel, MixedScopeConfig, MixedScopeError, MixedScopeSeries,
     MixedScopeSnapshot, MixedScopeStatus, ScopeRate, ScopeSelection,
 };
 pub use preflight::{IdentificationKind, PreflightDomain, PreflightError, PreflightIssue};
@@ -52,17 +52,41 @@ pub use schema::{
     SchemaSource,
 };
 pub use schema_store::{SchemaStore, SchemaStoreError, StoredSchema, schema_store_key};
-pub use scope::{ScopeChannel, ScopeConfig, ScopeError, ScopeSession, ScopeStatus};
-pub use session::{DeviceSession, SessionError, SessionEvent};
-pub use stream::{StreamConfig, StreamError, StreamSession, StreamSnapshot, StreamState};
-pub use stream_pipeline::{
+pub use stream::StreamState;
+
+// Internal modules keep short crate-local names while external low-level users
+// opt in explicitly through nmixx_app::raw.
+pub(crate) use mixed_scope::MixedScopeSession;
+pub(crate) use scope::{ScopeChannel, ScopeConfig, ScopeError, ScopeSession, ScopeStatus};
+pub(crate) use session::{DeviceSession, SessionError, SessionEvent};
+pub(crate) use stream::{StreamConfig, StreamError, StreamSession, StreamSnapshot};
+pub(crate) use stream_pipeline::{
     StreamIngestReport, StreamPipeline, StreamPipelineError, StreamWireMode,
 };
 
 // These are application-facing domain value types/constants. Clients import
 // them from `nmixx-app`; they do not depend on `nmixx-core` directly.
 pub use nmixx_core::protocol::{
-    ActionError, ActionHandle, AxdrStatus, PLOT_CAP_FAST, PLOT_CAP_NORMAL, PLOT_FAST_MASK,
-    PLOT_GROUP_FAST, PLOT_GROUP_NORMAL, PLOT_NORMAL_MASK, ParameterType, ParameterValue,
-    PositionValue, SequenceStatus,
+    ActionHandle, AxdrStatus, ParameterType, ParameterValue, PositionValue,
 };
+pub(crate) use nmixx_core::protocol::{
+    ActionError, PLOT_CAP_FAST, PLOT_CAP_NORMAL, PLOT_FAST_MASK, PLOT_GROUP_FAST,
+    PLOT_GROUP_NORMAL, PLOT_NORMAL_MASK, SequenceStatus,
+};
+
+/// Low-level device/session and stream primitives for protocol bring-up, smoke
+/// tests and transport validation. Normal GUI/CLI/Automation code uses
+/// ApplicationSession and the typed application-facing values at crate root.
+pub mod raw {
+    pub use crate::mixed_scope::MixedScopeSession;
+    pub use crate::scope::{ScopeChannel, ScopeConfig, ScopeError, ScopeSession, ScopeStatus};
+    pub use crate::session::{DeviceSession, SessionError, SessionEvent};
+    pub use crate::stream::{StreamConfig, StreamError, StreamSession, StreamSnapshot, StreamState};
+    pub use crate::stream_pipeline::{
+        StreamIngestReport, StreamPipeline, StreamPipelineError, StreamWireMode,
+    };
+    pub use nmixx_core::protocol::{
+        ActionError, PLOT_CAP_FAST, PLOT_CAP_NORMAL, PLOT_FAST_MASK, PLOT_GROUP_FAST,
+        PLOT_GROUP_NORMAL, PLOT_NORMAL_MASK, SequenceStatus,
+    };
+}
