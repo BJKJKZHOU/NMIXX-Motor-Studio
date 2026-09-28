@@ -14,7 +14,6 @@
   type EnumOption = { value: number; symbol: string; label: string };
 
   const PHASE_CURRENT_SYMBOL = "PARAM_PHASE_I_SEARCH";
-  const MOTOR_MODE_SYMBOL = "PARAM_MOTOR_MODE";
   const MOTOR_DIR_SYMBOL = "PARAM_MOTOR_DIR";
   const ENCODER_PROTOCOL_SYMBOL = "PARAM_ENCODER_PROTOCOL";
   const ENCODER_SPI_TYPE_SYMBOL = "PARAM_ENCODER_SPI_TYPE";
@@ -23,7 +22,7 @@
   const PHASE_SEARCH_ACTION = "ACTION_PHASE_SEARCH_START";
   const SET_ZERO_ACTION = "ACTION_POSITION_SET_ZERO";
   const HOMING_ACTION = "ACTION_HOME_START";
-  const ALL_PARAMETER_SYMBOLS = [PHASE_CURRENT_SYMBOL, MOTOR_MODE_SYMBOL, MOTOR_DIR_SYMBOL,
+  const ALL_PARAMETER_SYMBOLS = [PHASE_CURRENT_SYMBOL, MOTOR_DIR_SYMBOL,
     ENCODER_PROTOCOL_SYMBOL, ENCODER_SPI_TYPE_SYMBOL, ABZ_PPR_SYMBOL, ZERO_VALID_SYMBOL];
 
   let { connection, onError = () => undefined }: Props = $props();
@@ -87,9 +86,7 @@
   function actionLabel(symbol: string, fallback?: string): string { return actions[symbol]?.label ?? fallback ?? "Unavailable"; }
   function isWritable(symbol: string): boolean { return !$parameters.loading && !$parameters.saving && (metadata[symbol]?.access.includes("w") ?? false); }
   function actionAvailable(symbol: string): boolean { return !!actions[symbol]; }
-  function phaseSearchAvailable(): boolean {
-    return !!metadata[MOTOR_MODE_SYMBOL] && actionAvailable("ACTION_MOTOR_ENABLE") && actionAvailable("ACTION_MOTOR_RUN");
-  }
+  function phaseSearchAvailable(): boolean { return connection?.phaseSearchAvailable ?? false; }
   function enumLabel(symbol: string): string { return symbol.replace(/^ENC_PROTOCOL_/, "").replace(/^ENC_SPI_/, "").replaceAll("_", " "); }
   function enumOptions(symbol: string): EnumOption[] {
     const meta = metadata[symbol];

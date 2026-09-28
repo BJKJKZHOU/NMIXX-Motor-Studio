@@ -45,6 +45,7 @@ export type ConnectionInfo = {
   normalRateHz: number;
   channels: PlotChannel[];
   motion: MotionCapabilities;
+  phaseSearchAvailable: boolean;
   /** Already acquired for runtime values/history; selecting a trace does not add a channel. */
   runtimeChannelIds?: number[];
 };

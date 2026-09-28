@@ -65,7 +65,7 @@ pub struct MotorActionService {
 }
 
 impl MotorActionService {
-    pub fn new(session: DeviceSession, schema: HostSchema) -> Self {
+    pub(crate) fn new(session: DeviceSession, schema: HostSchema) -> Self {
         let parameters = ParameterService::new(session.clone(), schema.clone());
         Self { session, schema, parameters, checkpoint: None }
     }
@@ -193,6 +193,13 @@ impl MotorActionService {
     /// Action response, so callers must not wait for ACTION_COMPLETE.
     pub fn identification_apply(&self) -> Result<ActionHandle, MotorActionError> {
         self.start_action(IDENT_APPLY)
+    }
+
+    pub(crate) fn phase_search_available(&self) -> bool {
+        let Some(mode) = self.schema.parameter_by_key(MOTOR_MODE) else { return false; };
+        enum_u8(mode, PHASE_SEARCH_MODE).is_ok()
+            && self.schema.action_by_key(MOTOR_ENABLE).is_some()
+            && self.schema.action_by_key(MOTOR_RUN).is_some()
     }
 
     /// Start servo phase search as one application-level operation.

@@ -35,7 +35,7 @@ pub struct ConfigService {
 }
 
 impl ConfigService {
-    pub fn new(session: DeviceSession, schema: HostSchema) -> Self {
+    pub(crate) fn new(session: DeviceSession, schema: HostSchema) -> Self {
         let parameters = ParameterService::new(session.clone(), schema.clone());
         Self {
             session,

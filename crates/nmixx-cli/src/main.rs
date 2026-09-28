@@ -6,7 +6,7 @@ use std::time::Duration;
 
 use clap::{Parser, Subcommand, ValueEnum};
 use nmixx_app::{
-    ActionHandle, ActionMetadata, ApplicationSession, AxdrStatus, DEFAULT_USB_BAUD, DeviceSession,
+    ActionHandle, ActionMetadata, ApplicationSession, AxdrStatus, DEFAULT_USB_BAUD,
     HostSchema, IdentificationKind, MotionMode, MotionRuntimeStatus, ParameterMetadata,
     ParameterType, ParameterValue, PositionCommand, PositionMotionRequest, PositionValue,
     SchemaNumber, SchemaStore, SessionEvent, SpeedMotionRequest,
@@ -321,26 +321,18 @@ fn run() -> Result<(), Box<dyn Error>> {
                 print_parameter_info(metadata);
             }
             ParamCommand::Get { key, ty } => {
-                let parameter = resolve_parameter(schema.as_ref(), &key, ty)?;
-                let value = if let Some(schema) = schema.as_ref() {
-                    let app = open_application(port.as_deref(), baud, schema.clone())?;
-                    app.parameter_read(parameter.id)?
-                } else {
-                    let session = open_raw_session(port.as_deref(), baud)?;
-                    session.parameter_read(parameter.id, parameter.ty)?
-                };
+                let schema = require_schema(schema.as_ref())?;
+                let parameter = resolve_parameter(schema, &key, ty)?;
+                let app = open_application(port.as_deref(), baud, schema.clone())?;
+                let value = app.parameter_read(parameter.id)?;
                 print_parameter_value(parameter.metadata, parameter.id, value);
             }
             ParamCommand::Set { key, value, ty } => {
-                let parameter = resolve_parameter(schema.as_ref(), &key, ty)?;
+                let schema = require_schema(schema.as_ref())?;
+                let parameter = resolve_parameter(schema, &key, ty)?;
                 let value = parse_parameter_value(parameter.ty, &value)?;
-                if let Some(schema) = schema.as_ref() {
-                    let app = open_application(port.as_deref(), baud, schema.clone())?;
-                    app.parameter_write(parameter.id, value)?;
-                } else {
-                    let session = open_raw_session(port.as_deref(), baud)?;
-                    session.parameter_write(parameter.id, value)?;
-                }
+                let app = open_application(port.as_deref(), baud, schema.clone())?;
+                app.parameter_write(parameter.id, value)?;
                 println!("OK");
             }
             ParamCommand::ReadAll => {
@@ -475,33 +467,21 @@ fn run() -> Result<(), Box<dyn Error>> {
                 no_wait,
                 timeout,
             } => {
-                let (action_id, action_label) = resolve_action(schema.as_ref(), &key)?;
-
-                if let Some(schema) = schema.as_ref() {
-                    let app = open_application(port.as_deref(), baud, schema.clone())?;
-                    let events = if no_wait { None } else { Some(app.subscribe()?) };
-                    let action_key = schema
-                        .action_by_id(action_id)
-                        .map(|action| action.symbol.as_str())
-                        .ok_or_else(|| format!("action ID 0x{action_id:04X} is not present in the loaded schema"))?;
-                    let handle = app.action_start(action_key)?;
-                    println!(
-                        "accepted txn={} action={} (0x{action_id:04X})",
-                        handle.txn.get(),
-                        action_label
-                    );
-                    wait_for_action(events, handle, &action_label, Some(action_id), timeout)?;
-                } else {
-                    let session = open_raw_session(port.as_deref(), baud)?;
-                    let events = if no_wait { None } else { Some(session.subscribe()?) };
-                    let handle = session.action_start(action_id)?;
-                    println!(
-                        "accepted txn={} action={} (0x{action_id:04X})",
-                        handle.txn.get(),
-                        action_label
-                    );
-                    wait_for_action(events, handle, &action_label, Some(action_id), timeout)?;
-                }
+                let schema = require_schema(schema.as_ref())?;
+                let (action_id, action_label) = resolve_action(schema, &key)?;
+                let app = open_application(port.as_deref(), baud, schema.clone())?;
+                let events = if no_wait { None } else { Some(app.subscribe()?) };
+                let action_key = schema
+                    .action_by_id(action_id)
+                    .map(|action| action.symbol.as_str())
+                    .ok_or_else(|| format!("action ID 0x{action_id:04X} is not present in the loaded schema"))?;
+                let handle = app.action_start(action_key)?;
+                println!(
+                    "accepted txn={} action={} (0x{action_id:04X})",
+                    handle.txn.get(),
+                    action_label
+                );
+                wait_for_action(events, handle, &action_label, Some(action_id), timeout)?;
             }
         },
     }
@@ -622,11 +602,6 @@ fn open_application(
     Ok(ApplicationSession::open_usb(port, baud, schema)?)
 }
 
-fn open_raw_session(port: Option<&str>, baud: u32) -> Result<DeviceSession, Box<dyn Error>> {
-    let port = port.ok_or("--port is required for this raw command")?;
-    Ok(DeviceSession::open_usb(port, baud)?)
-}
-
 fn resolve_parameter_metadata<'a>(schema: &'a HostSchema, key: &str) -> Result<&'a ParameterMetadata, Box<dyn Error>> {
     if let Some(metadata) = schema.parameter_by_key(key) {
         return Ok(metadata);
@@ -649,59 +624,43 @@ fn resolve_action_metadata<'a>(schema: &'a HostSchema, key: &str) -> Result<&'a 
     Err(format!("unknown action key '{key}' in loaded schema").into())
 }
 
-fn resolve_parameter<'a>(schema: Option<&'a HostSchema>, key: &str, type_override: Option<CliParameterType>) -> Result<ResolvedParameter<'a>, Box<dyn Error>> {
-    if let Some(schema) = schema {
-        if let Some(metadata) = schema.parameter_by_key(key) {
-            let schema_type = metadata.parameter_type()?;
-            if let Some(override_type) = type_override {
-                let override_type: ParameterType = override_type.into();
-                if override_type != schema_type {
-                    return Err(format!(
-                        "parameter {} type mismatch: schema={}, CLI={override_type:?}",
-                        metadata.symbol, metadata.type_name
-                    ).into());
-                }
-            }
-            return Ok(ResolvedParameter { id: metadata.id, ty: schema_type, metadata: Some(metadata) });
-        }
-        if let Ok(id) = parse_u16(key) {
-            if let Some(metadata) = schema.parameter_by_id(id) {
-                return Ok(ResolvedParameter { id, ty: metadata.parameter_type()?, metadata: Some(metadata) });
-            }
-            if let Some(override_type) = type_override {
-                return Ok(ResolvedParameter { id, ty: override_type.into(), metadata: None });
-            }
+fn resolve_parameter<'a>(
+    schema: &'a HostSchema,
+    key: &str,
+    type_override: Option<CliParameterType>,
+) -> Result<ResolvedParameter<'a>, Box<dyn Error>> {
+    let metadata = if let Some(metadata) = schema.parameter_by_key(key) {
+        metadata
+    } else if let Ok(id) = parse_u16(key) {
+        schema.parameter_by_id(id)
+            .ok_or_else(|| format!("parameter ID 0x{id:04X} is not present in the loaded schema"))?
+    } else {
+        return Err(format!("unknown parameter key '{key}' in loaded schema").into());
+    };
+
+    let schema_type = metadata.parameter_type()?;
+    if let Some(override_type) = type_override {
+        let override_type: ParameterType = override_type.into();
+        if override_type != schema_type {
             return Err(format!(
-                "parameter ID 0x{id:04X} is not present in the loaded schema; use --type for raw access"
+                "parameter {} type mismatch: schema={}, CLI={override_type:?}",
+                metadata.symbol, metadata.type_name
             ).into());
         }
-        return Err(format!("unknown parameter key '{key}' in loaded schema").into());
     }
-
-    let id = parse_u16(key).map_err(|_| {
-        format!("parameter '{key}' requires --schema; without a schema only numeric IDs are accepted")
-    })?;
-    let ty = type_override.ok_or("--type is required for raw numeric parameter access without --schema")?;
-    Ok(ResolvedParameter { id, ty: ty.into(), metadata: None })
+    Ok(ResolvedParameter { id: metadata.id, ty: schema_type, metadata: Some(metadata) })
 }
 
-fn resolve_action(schema: Option<&HostSchema>, key: &str) -> Result<(u16, String), Box<dyn Error>> {
-    if let Some(schema) = schema {
-        if let Some(action) = schema.action_by_key(key) {
-            return Ok((action.id, action.label.as_str().to_owned()));
-        }
-        if let Ok(id) = parse_u16(key) {
-            if let Some(action) = schema.action_by_id(id) {
-                return Ok((id, action.label.as_str().to_owned()));
-            }
-            return Ok((id, format!("0x{id:04X}")));
-        }
+fn resolve_action(schema: &HostSchema, key: &str) -> Result<(u16, String), Box<dyn Error>> {
+    let action = if let Some(action) = schema.action_by_key(key) {
+        action
+    } else if let Ok(id) = parse_u16(key) {
+        schema.action_by_id(id)
+            .ok_or_else(|| format!("action ID 0x{id:04X} is not present in the loaded schema"))?
+    } else {
         return Err(format!("unknown action key '{key}' in loaded schema").into());
-    }
-    let id = parse_u16(key).map_err(|_| {
-        format!("action '{key}' requires --schema; without a schema only numeric IDs are accepted")
-    })?;
-    Ok((id, format!("0x{id:04X}")))
+    };
+    Ok((action.id, action.label.clone()))
 }
 
 fn parse_u16(text: &str) -> Result<u16, String> {

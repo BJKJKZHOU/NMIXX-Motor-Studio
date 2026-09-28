@@ -20,7 +20,7 @@ struct PlotChannelDto { id: u16, label: String, unit: Option<String>, supports_f
 struct ConnectionDto {
     port: String, fast_max_channels: u8, normal_max_channels: u8, fast_block_samples: u8,
     fast_rate_hz: u32, normal_rate_hz: u32, channels: Vec<PlotChannelDto>, motion: MotionCapabilities,
-    runtime_channel_ids: Vec<u16>,
+    runtime_channel_ids: Vec<u16>, phase_search_available: bool,
 }
 #[derive(Debug, Clone, Copy, Serialize)]
 #[serde(untagged)]
@@ -236,7 +236,8 @@ async fn device_connect(app_handle: tauri::AppHandle, state: State<'_, Mutex<Des
     let runtime_channel_ids = app.runtime_start().map_err(|error| error.to_string())?;
     let result = ConnectionDto { port: port.clone(), fast_max_channels: capabilities.fast_max_channels,
         normal_max_channels: capabilities.normal_max_channels, fast_block_samples: capabilities.fast_block_samples,
-        fast_rate_hz: capabilities.fast_rate_hz, normal_rate_hz: capabilities.normal_rate_hz, channels, motion: app.motion_capabilities().clone(), runtime_channel_ids };
+        fast_rate_hz: capabilities.fast_rate_hz, normal_rate_hz: capabilities.normal_rate_hz, channels, motion: app.motion_capabilities().clone(),
+        runtime_channel_ids, phase_search_available: app.phase_search_available() };
     let mut guard = state.lock().map_err(|_| "desktop state is poisoned".to_owned())?;
     guard.app = Some(app); guard.port = Some(port);
     Ok(result)

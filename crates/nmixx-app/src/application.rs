@@ -247,6 +247,7 @@ impl ApplicationSession {
         self.inner.events.lock().map_err(|_| ApplicationError::Poisoned)?.push(sender);
         Ok(receiver)
     }
+    pub fn phase_search_available(&self) -> bool { self.motor_actions().phase_search_available() }
     pub fn preflight_phase_search(&self) -> Result<Vec<PreflightIssue>, ApplicationError> {
         Ok(PreflightService::new(self.inner.parameters.clone()).check_phase_search()?)
     }

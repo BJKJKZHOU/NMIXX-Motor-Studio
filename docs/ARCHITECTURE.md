@@ -180,7 +180,7 @@ Rules:
 Approved now:
 
 - **VSCode Elements + Codicons** for basic controls and icons.
-- **uPlot** for Scope/FFT/Bode plotting mechanics, including scales, axes, cursor and plugins.
+- **ECharts** for Scope/FFT/Bode and Motion plotting mechanics, including scales, axes, zoom/pan and extension points.
 - **Split.js** for simple fixed split panes.
 - **TanStack Table** for Parameters and Events table state, sorting and filtering.
 

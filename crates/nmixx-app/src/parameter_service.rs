@@ -74,7 +74,7 @@ pub struct ParameterService {
 }
 
 impl ParameterService {
-    pub fn new(session: DeviceSession, schema: HostSchema) -> Self {
+    pub(crate) fn new(session: DeviceSession, schema: HostSchema) -> Self {
         Self {
             session,
             schema,
