@@ -623,14 +623,18 @@ One shared preview defect was found and corrected:
   a display-only start override. Actual Run still performs an exact typed
   `PARAM_RUN_POSITION` device read when current position is needed.
 
-A separate unresolved product/integration gap remains:
+A separate Repeat implementation gap remains, but the product semantic is now
+defined:
 
-- [ ] **[DESIGN/IMPL GAP]** Motion Repeat execution semantics are not formally
-  selected. Current code models A/B endpoints and tries to advance after
+- [x] **[DESIGN]** Position Repeat is manual alternating command semantics. One
+  manual Run executes one leg; after a successful leg, the next manual Run targets
+  the opposite endpoint. Repeat never launches an automatic reverse Run and never
+  means continuous cycling until Stop.
+- [ ] **[IMPL GAP]** Current code models A/B endpoints and tries to advance after
   ACTION_COMPLETE, but normal AxDr_L Motor Run does not emit a generic finite
-  ACTION_COMPLETE for Position motion. Therefore current Repeat sequencing cannot
-  be considered Wired. Do not infer “automatic out-and-back”, “continuous repeat
-  until Stop”, or “one direction per separate Run” from the current implementation.
+  ACTION_COMPLETE for Position motion. Therefore the Application still needs a
+  valid successful-leg completion criterion before Repeat can be considered Wired.
+  Continuous A <-> B servo testing remains a separate workflow/control.
 
 `MOTION_PAGE.md` was added in this pass as the normative Motion contract so future
 integration fixes do not derive product behavior from whichever implementation
@@ -697,14 +701,17 @@ happens to exist.
 - [ ] **[HW]** Stop Speed and Position motion at nonzero speed and verify controlled deceleration plus eventual ENABLED state.
 - [ ] **[HW]** Press Stop during a pending/preparing Run race and verify no delayed motion starts afterward.
 
-### Repeat — unresolved
+### Repeat — manual alternating runs
 
+- [x] **[DESIGN]** One manual Run executes exactly one A/B leg.
+- [x] **[DESIGN]** A successful leg changes only the endpoint selected by the next manual Run.
+- [x] **[DESIGN]** Repeat never starts an automatic reverse leg and is not the continuous A <-> B servo-test workflow.
 - [x] **[CODE]** Host repeat state is Application-owned rather than a firmware Parameter.
 - [x] **[CODE]** Existing endpoint logic advances direction only after a successful completion signal.
 - [x] **[CODE]** Stop clears the pending Repeat-leg marker.
-- [ ] **[IMPL]** Current normal Position Motor Run has no generic ACTION_COMPLETE event, so existing completion-driven A/B advancement is not a valid end-to-end implementation.
-- [ ] **[DESIGN]** Select the intended Motion Repeat product semantic before implementing sequencing.
-- [ ] **[HW]** Repeat verification is blocked until the semantic and completion criterion are defined.
+- [ ] **[IMPL]** Current normal Position Motor Run has no generic ACTION_COMPLETE event, so existing completion-driven A/B advancement is not yet a valid end-to-end implementation.
+- [ ] **[HW]** Verify Run #1 selects B, Run #2 selects A, Run #3 selects B, with no automatic second Run.
+- [ ] **[HW]** Verify Stop, Disable, failed Run and fault do not advance the next Repeat endpoint.
 
 ### Automated guard status
 
@@ -718,7 +725,7 @@ happens to exist.
 
 ### Exit criteria
 
-- [ ] **Wired — core mode/command/preview/Run/Stop path is wired; blocked by unresolved Repeat semantics/implementation.**
+- [ ] **Wired — core mode/command/preview/Run/Stop path is wired; blocked by the remaining Repeat successful-leg completion/advance implementation.**
 - [ ] **Verified — requires current real-device pass.**
 - [ ] **Regression Guarded — coverage exists/improved, but current-pass tests have not been executed.**
 
@@ -785,7 +792,7 @@ happens to exist.
 - [ ] Tuning Stop invokes the shared motor Stop semantic.
 - [ ] Tuning Stop does not corrupt connection-owned RuntimeTelemetry.
 - [ ] Failed/cancelled experiment performs the established motor cleanup.
-- [ ] Repeat experiment executes one Run and one reverse Run according to the documented semantics.
+- [ ] Position Repeat executes one leg per manual tuning Run; after a successful leg the next manual Run targets the opposite endpoint, with no automatic reverse Run.
 
 ### Viewer
 
