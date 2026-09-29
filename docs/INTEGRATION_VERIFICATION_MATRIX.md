@@ -22,6 +22,47 @@ feature is integrated.
 - [ ] After a shared-layer fix, rerun the affected checks on every consumer listed in the issue impact set.
 - [ ] Preserve established Stop/Run/Enable, Parameter, acquisition, persistence, reconnect, and safety semantics while fixing integration bugs.
 - [ ] Record real-device verification separately from mock/unit/build verification.
+- [ ] Before starting a domain, confirm every current-scope normative requirement has a corresponding verification item.
+- [ ] Do not patch the first page showing a symptom until the shared semantic owner and affected consumers are recorded.
+- [ ] A checklist item without a normative/invariant/regression source must not silently become a new product requirement.
+
+## Current acceptance scope
+
+This verification pass measures the currently exposed NMIXX Motor Studio workflow,
+not every future capability named anywhere in the architecture.
+
+**In scope:**
+
+- USB CDC Connection/session lifecycle and current HostSchema workflow;
+- shared Parameter state, global Read/Save persistence presentation and the generic Parameters expert page;
+- connection-owned RuntimeTelemetry baseline;
+- Analysis / Scope according to the current Scope contract;
+- Motor / Rs-Ls / Flux / J-B identification;
+- Encoder configuration, Phase Search and currently exposed reference behavior;
+- Motion modes/profile capabilities currently advertised by firmware, including manual alternating Repeat semantics;
+- Current/Speed/Position Control Architecture views currently backed by authoritative Parameters;
+- Control Tuning finite experiment workflow;
+- Limits / Safety capability-aware presentation;
+- Events / Problems;
+- Automation;
+- cross-page, reconnect and teardown regression behavior.
+
+**Capability-gated in the current UI:** when firmware does not expose a defined
+capability such as ABZ-specific configuration, zero-valid/Set Zero/Homing, hardware
+limits or position limits, verification covers the documented unavailable/disabled
+behavior. Full functional verification begins only when the authoritative capability
+exists.
+
+**Deferred/out of this pass:**
+
+- transport types not currently exposed by the desktop, including future native CAN FD connection UI;
+- Analysis FFT and Bode pages;
+- Scope Trigger, Single and horizontal Y cursors;
+- Parameters import/export, whose file/merge/persistence contract is intentionally not yet defined;
+- other future controls explicitly marked deferred/non-goal by their normative page documents.
+
+Anything added to the current acceptance scope must first have a normative contract
+and corresponding matrix coverage.
 
 ### Completion levels
 
@@ -54,7 +95,7 @@ Shared foundations come first so later page failures can be attributed correctly
 
 **Primary owner:** `ApplicationSession`, `DeviceSession`, desktop connection adapter  
 **Shared consumers:** every page, Automation, Scope/Tuning, global toolbar  
-**Normative references:** `ARCHITECTURE.md`, `UI_INTERACTION_RULES.md`
+**Normative references:** `ARCHITECTURE.md`, `UI_INTERACTION_RULES.md`, `CONNECTION_PAGE.md`
 
 ### Code review pass — 2026-09-28
 
@@ -128,7 +169,7 @@ Important findings:
 
 **Primary owner:** `ParameterService`, shared frontend Parameter state, RuntimeTelemetry projection  
 **Shared consumers:** Motor, Encoder, Limits, Control, Motion, Tuning, Parameters, status bar, Automation  
-**Normative references:** `ARCHITECTURE.md`, `UI_INTERACTION_RULES.md`, `SHARED_PARAMETER_STATE.md`, `SHARED_ACQUISITION.md`
+**Normative references:** `ARCHITECTURE.md`, `UI_INTERACTION_RULES.md`, `PARAMETERS_PAGE.md`, `SHARED_PARAMETER_STATE.md`, `SHARED_ACQUISITION.md`
 
 ### Code review pass — 2026-09-28
 
@@ -176,6 +217,21 @@ Important findings:
 - [x] **[CODE]** Action completion refresh is Application-owned and frontend action listeners mirror the updated cache before domain handlers consume completion.
 - [ ] **[HW]** Edit representative Parameters from Motor, Encoder, Limits, Control, Motion and Parameters pages and confirm all alternate views update to the exact firmware readback value.
 - [ ] **[HW]** Force one rejected/invalid write and confirm every view returns to the authoritative device/cache state with a visible error.
+
+### Parameters expert page
+
+- [x] **[CODE]** The page consumes the shared Parameter projection and does not own a second registry/cache.
+- [x] **[CODE]** Opening Parameters does not issue an independent full device Read.
+- [x] **[CODE]** Registry columns expose ID, Symbol, Label, Value, Unit, Access, Type, Range and write-state metadata from HostSchema/Application state.
+- [x] **[CODE]** Search/filter and sorting are local table presentation operations and do not call the device.
+- [x] **[CODE]** Writable cells use the shared Parameter editor rather than a page-private write path.
+- [x] **[CODE]** Read-only cells are not editable.
+- [x] **[CODE]** Per-row read/write errors remain visible without erasing unrelated known values.
+- [x] **[CODE]** Persistent RAM-modified highlighting consumes the same shared persistence projection as business pages.
+- [ ] **[WEBVIEW]** Search by label/symbol/value and sort representative columns; confirm no device state or shared ordering changes.
+- [ ] **[HW]** Edit the same writable Parameter from Parameters and a business page in turn; confirm both views adopt the exact same canonical readback and error state.
+- [ ] **[HW]** Confirm read-only and current-state-restricted writes cannot be bypassed from the expert table.
+- [ ] **[HW]** Confirm global Read and Save update the Parameters page through the same shared state/baseline used by business pages.
 
 ### RAM modified / Save
 
