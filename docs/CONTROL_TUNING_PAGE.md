@@ -234,9 +234,12 @@ execute motion
         v
 finish condition
         |
-        +-- Position, Repeat off -> trajectory time + settling -> controlled Stop
+        +-- Position -> one manual Run executes one leg
+        |      -> trajectory time + settling -> controlled Stop
+        |      -> if Repeat is enabled and the leg succeeds, arm the opposite
+        |         endpoint for the next manual Run only
         |
-        +-- Speed / Sensorless Speed / Torque / Repeat -> user Stop
+        +-- Speed / Sensorless Speed / Torque -> user Stop
         |
         +-- persistent global Stop -> same experiment stop path
         v
@@ -274,8 +277,9 @@ A capture is bounded by one tuning experiment rather than by a fixed duration fo
 The initial lifecycle uses:
 
 - pre-motion capture: 0.5 s;
-- Position with Repeat disabled: run for the calculated trajectory duration, keep a short settling interval, then issue the normal controlled Stop;
-- Speed / Sensorless Speed / Torque and repeated Position: continue until the user presses local or global Stop;
+- Position: one page-local Run executes one Position leg, runs for the calculated trajectory duration, keeps a short settling interval, then issues the normal controlled Stop;
+- when Position Repeat is enabled, a successful leg only changes the endpoint selected by the next manual Run; it does not automatically start a reverse leg;
+- Speed / Sensorless Speed / Torque: continue until the user presses local or global Stop;
 - post-stop capture: 0.75 s after the motor leaves RUN;
 - one finite non-overwriting raw capture for the complete experiment, bounded by a 128 MiB RAM protection budget;
 - a shorter live preview window while the experiment is running.
@@ -283,6 +287,10 @@ The initial lifecycle uses:
 The post-stop interval is important because position/speed tuning must show the stop transient, residual vibration and settling. Control Tuning does not silently roll over or overwrite the beginning of an experiment. The Application converts the selected FAST/NORMAL channel rates into the maximum finite capture duration that fits the 128 MiB raw-sample budget. As the capture approaches that limit, it issues a controlled Stop early enough to preserve the post-capture interval, retains the samples already recorded, and reports that the recording limit was reached.
 
 The waveform remains on screen after capture ends so the user can inspect the complete response before changing the next parameter set.
+
+Repeat does not mean continuous cycling in Control Tuning. Continuous A <-> B
+servo testing is a separate workflow/control and must not be folded into the
+Repeat checkbox or the normal tuning Run lifecycle.
 
 If the experiment is stopped early, the capture/task layer should still finish the record coherently rather than leaving the plotting service in an unrelated running state.
 
