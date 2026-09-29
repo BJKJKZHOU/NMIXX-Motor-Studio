@@ -793,27 +793,59 @@ happens to exist.
 **Shared consumers:** Control page, Control Tuning, Parameters  
 **Normative references:** `CONTROL_ARCHITECTURE_PAGE.md`, `UI_INTERACTION_RULES.md`
 
+### Navigation / page structure
+
+- [ ] Control Architecture is one parent domain with Current Loop, Speed Loop and Position Loop child pages rather than one long combined page.
+- [ ] First visit defaults to Current Loop.
+- [ ] Switching away/back preserves the selected child during the application session.
+- [ ] Child navigation changes presentation only; all children continue to use the same Application/Parameter services.
+- [ ] No empty overview page is required or inserted between the parent and child workflows.
+
+### Capability-driven structure
+
+- [ ] Controller/observer/filter/feedforward choices are shown only when the connected firmware/Application exposes authoritative capability/Parameter support.
+- [ ] The GUI does not hard-code future controller algorithms or structural blocks merely to fill the diagram.
+- [ ] When only one controller is supported, any reserved selector is clearly non-selectable and does not imply unavailable choices exist.
+- [ ] Structural blocks appear where they act in the signal path rather than as unrelated parameter cards.
+- [ ] Architecture-only controls do not leak into Control Tuning merely because they are host-visible Parameters.
+- [ ] Generic/placeholder feedback or observer labels do not claim exact signal semantics that the firmware/Application does not expose.
+
 ### Current Loop
 
 - [ ] Gain Source selector reflects firmware enum symbols, not hard-coded ordinal assumptions.
 - [ ] Bandwidth mode values write/read back correctly.
-- [ ] Manual Id/Iq Kp/Ki values write/read back correctly.
-- [ ] Model-dependent gain readbacks update automatically after relevant Motor Parameter changes.
+- [ ] Writing Bandwidth selects Bandwidth ownership and dependent Id/Iq gains adopt firmware readback.
+- [ ] Manual Id/Iq Kp/Ki values write/read back correctly and select Manual ownership.
+- [ ] Model-dependent gain readbacks update after relevant Motor Parameter changes in Bandwidth mode.
+- [ ] Manual ownership preserves directly written gains across relevant Motor Parameter changes.
 - [ ] Current Loop values match the same Parameters shown in Control Tuning/Parameters.
+- [ ] Direct edits obey Enter/Escape/blur and shared RAM-modified presentation.
 
 ### Speed Loop
 
 - [ ] Gain Source selector reflects firmware enum symbols.
 - [ ] Bandwidth and Kp/Ki write/readback correctly.
+- [ ] Bandwidth/Manual ownership follows the same firmware-driven semantics as Current Loop.
 - [ ] Mechanical ESO bandwidth writes/readbacks correctly.
+- [ ] Mechanical ESO is presented in the feedback/observer path rather than as an unrelated settings card.
 - [ ] Speed-loop feedback/observer presentation does not claim unsupported signal semantics.
 - [ ] Values stay synchronized with Control Tuning and Parameters.
+- [ ] Direct edits obey common Parameter and RAM-modified semantics.
 
 ### Position Loop
 
 - [ ] Position-loop parameters come from shared Parameter state.
 - [ ] Kp editing follows common Parameter semantics.
+- [ ] Unsupported extra position-loop parameters are not invented.
 - [ ] Unsupported controller choices remain capability placeholders rather than fake selectable algorithms.
+- [ ] Position-loop values remain synchronized with Control Tuning and Parameters.
+
+### Cross-page / ownership
+
+- [ ] Editing a shared gain/source from Architecture updates Control Tuning and Parameters after authoritative readback.
+- [ ] Editing the same value from Control Tuning/Parameters updates Architecture without page-local reload logic.
+- [ ] Architecture does not create a second Parameter cache, storage path or direct Tauri/device invocation path.
+- [ ] Architecture never behaves as a replacement live Scope or tuning-experiment owner.
 
 ### Exit criteria
 
@@ -826,36 +858,95 @@ happens to exist.
 ## 08 Control Tuning
 
 **Primary owner:** Tuning experiment orchestration + Motion semantic API + SharedAcquisition + shared Scope ECharts viewer  
-**Shared consumers:** Control Tuning, Scope infrastructure, Motor Stop, RuntimeTelemetry  
-**Normative references:** `CONTROL_TUNING_PAGE.md`, `SCOPE_PAGE.md`, `UI_INTERACTION_RULES.md`
+**Shared consumers:** Control Tuning, Motion, Scope infrastructure, Motor Stop, RuntimeTelemetry, Control Architecture  
+**Normative references:** `CONTROL_TUNING_PAGE.md`, `MOTION_PAGE.md`, `SCOPE_PAGE.md`, `UI_INTERACTION_RULES.md`
 
-### Page state / Parameters
+### Page state / shared Parameters
 
-- [ ] Entering the page shows current committed Parameters immediately.
+- [ ] Entering the page shows current committed Parameters immediately without a page-local device refresh.
 - [ ] Editing a tuning Parameter uses the same shared Parameter editor semantics.
 - [ ] Tuning page does not own a second copy of current/speed/position gains.
+- [ ] Current/Speed tuning source enums resolve through HostSchema symbols rather than hard-coded numeric ordinals.
+- [ ] Writing Current/Speed Bandwidth selects Bandwidth ownership and adopts firmware-calculated gains.
+- [ ] Writing actual Kp/Ki selects Manual ownership and adopts canonical readback.
+- [ ] Bandwidth ownership responds correctly to relevant motor-model changes; Manual ownership preserves direct gains.
+- [ ] Position Kp and Mechanical ESO Bandwidth use the same shared Parameter state.
+- [ ] Tuning writes are allowed in DISABLED/ENABLED when firmware permits and rejected/locked in RUN.
+- [ ] Parameter editing never implicitly Enable, Disable, Run or Stop the motor.
 - [ ] Controller source/mode changes remain synchronized with Control Architecture.
+- [ ] RAM-modified state agrees with Control Architecture/Parameters.
 
-### Experiment
+### Shared Motion command model
 
-- [ ] Run does not implicitly Enable the motor.
-- [ ] Run uses committed Motion/Tuning settings only.
-- [ ] Default acquisition channels exist and match the intended loop experiment.
+- [ ] Motion mode/Position command/Repeat and exposed command fields are projections of the same Application Motion model used by the Motion page.
+- [ ] Changing a shared Motion field on Motion is reflected in Control Tuning and vice versa.
+- [ ] The compact tuning layout does not create a second command model or a second motor Run implementation.
+- [ ] Unsupported Motion modes/fields are not faked in the tuning UI.
+- [ ] Copy Accel to Decel performs the documented sequential shared Parameter writes and exposes partial success/failure rather than claiming a transaction.
+
+### Run preconditions
+
+- [ ] Run does not implicitly Enable or Disable the motor.
+- [ ] Run is unavailable unless the motor is already ENABLED and gives a concise reason.
+- [ ] Run refuses to start while a tuning Parameter draft is uncommitted; Run never commits drafts.
+- [ ] Run uses already-committed Motion/Tuning values and authoritative readback.
+- [ ] Tuning controls/channel configuration are locked for the active experiment where the contract requires it.
+- [ ] One Run interaction creates at most one tuning experiment lifecycle.
+
+### Default acquisition selection
+
+- [ ] User may add/remove Plot-capable channels and choose only rates actually supported by firmware capabilities.
+- [ ] Channel/rate selection is locked while an experiment is active.
+- [ ] Position defaults include Iq Ref/Iq FAST plus Position Ref/Position/Wm Ref/Wm NORMAL.
+- [ ] Speed and Sensorless-Speed defaults include Iq Ref/Iq FAST plus Wm Ref/Wm NORMAL.
+- [ ] Torque defaults include Iq Ref/Iq FAST.
+- [ ] FAST/NORMAL samples retain native rates; NORMAL data is not artificially upsampled to FAST.
+- [ ] Selected signals share one experiment time axis.
+
+### Experiment lifecycle
+
 - [ ] Experiment recording uses SharedAcquisition, not a second transport/decoder.
 - [ ] Starting Tuning does not overwrite a frozen normal Scope record.
-- [ ] Waveform data appears while the experiment is active.
-- [ ] Experiment completion preserves the final waveform.
-- [ ] Tuning Stop invokes the shared motor Stop semantic.
-- [ ] Tuning Stop does not corrupt connection-owned RuntimeTelemetry.
-- [ ] Failed/cancelled experiment performs the established motor cleanup.
-- [ ] Position Repeat executes one leg per manual tuning Run; after a successful leg the next manual Run targets the opposite endpoint, with no automatic reverse Run.
+- [ ] Starting Tuning does not stop or replace the connection-owned RuntimeTelemetry baseline.
+- [ ] Pre-motion capture retains approximately the documented 0.5 s history.
+- [ ] Position Run executes one leg, captures the trajectory, retains settling, then uses the normal controlled Stop path.
+- [ ] Speed/Sensorless-Speed/Torque experiments continue until local/global Stop or another documented bounded condition.
+- [ ] Post-stop capture retains approximately 0.75 s after the motor leaves RUN.
+- [ ] The complete experiment is a finite non-overwriting capture; its beginning is not silently rolled over.
+- [ ] The raw-capture memory budget is bounded to the documented 128 MiB protection limit.
+- [ ] Approaching the recording limit causes a controlled early Stop that still preserves the post-stop interval and reports the limit condition.
+- [ ] Waveform data appears while the experiment is active through a shorter live preview.
+- [ ] Normal completion preserves the final waveform for inspection.
+- [ ] Early Stop/failure finalizes a coherent retained waveform rather than abandoning the record.
+- [ ] Failed/cancelled experiment performs established motor/task cleanup and remains recoverable.
 
-### Viewer
+### Stop semantics
 
-- [ ] Tuning waveform reuses `ScopeEchartsView`.
-- [ ] Per-channel Y controls work independently.
+- [ ] Persistent global Stop remains available during a tuning experiment.
+- [ ] Page-local Stop and global Stop call the same Application motor/task stop semantic.
+- [ ] Page-local Stop does not introduce an independent Abort/device path.
+- [ ] Stop preserves coherent experiment status/error and the samples captured so far.
+- [ ] Tuning Stop does not corrupt connection-owned RuntimeTelemetry or unrelated frozen Scope history.
+
+### Position Repeat
+
+- [ ] Repeat is manual alternating command semantics, not continuous cycling.
+- [ ] One manual tuning Run executes one A/B leg only.
+- [ ] After a successful leg the next manual Run targets the opposite endpoint.
+- [ ] No automatic reverse Run is issued.
+- [ ] Stop, Disable, failed Run or fault do not advance the next Repeat endpoint.
+- [ ] Continuous A <-> B servo testing is not implemented by changing the Repeat checkbox semantics.
+
+### Viewer / LOD
+
+- [ ] Tuning waveform reuses `ScopeEchartsView` and the shared Scope series/snapshot model.
+- [ ] Waveform / Channels / Scale occupy the same bounded waveform panel rather than expanding a second settings area.
+- [ ] Per-channel display multipliers/Y controls do not alter stored raw engineering values.
 - [ ] Horizontal zoom/pan behaves consistently with Scope where the workflows overlap.
-- [ ] Tuning-specific compact layout does not fork acquisition/plot semantics.
+- [ ] Dense visible windows use the shared LOD contract: representative trend plus min/max envelope without zig-zag extrema connections.
+- [ ] Zooming in returns to raw samples when density permits.
+- [ ] Panning requests only the corresponding source window and does not copy the complete retained capture.
+- [ ] Tuning-specific compact layout does not fork acquisition or chart-interaction semantics.
 
 ### Exit criteria
 
@@ -869,7 +960,7 @@ happens to exist.
 
 **Primary owner:** firmware Parameters + shared Parameter state; GUI only presents authoritative values  
 **Shared consumers:** Limits, Motor/Identification preflight, Motion, Problems  
-**Normative references:** `LIMITS_PAGE.md`, `UI_INTERACTION_RULES.md`
+**Normative references:** `LIMITS_PAGE.md`, `APPLICATION_PREFLIGHT.md`, `UI_INTERACTION_RULES.md`
 
 ### Operating limits
 
@@ -879,22 +970,43 @@ happens to exist.
 - [ ] Effective speed comes directly from `PARAM_LIMIT_WM_EFFECTIVE`.
 - [ ] GUI never recomputes Effective from User/Hardware values.
 - [ ] Writing a user limit triggers the HostSchema-defined dependent Effective readback.
-- [ ] Writing Motion Wm Max triggers the HostSchema-defined speed Effective readback.
 - [ ] Hardware limit displays only when firmware exposes an authoritative read-only Parameter.
 - [ ] Missing Hardware limit capability is displayed as unavailable, not synthesized.
+- [ ] User/Effective visual emphasis communicates configured/active source state rather than success/error.
+- [ ] A user value above a hardware limit is not treated by GUI semantics as inherently invalid; any current firmware rejection is recorded as the known firmware mismatch rather than redefined by the GUI.
+- [ ] Motion `Wm_Max`/Acc/Dec remain motion-profile settings and are not presented as a third operating-limit source.
+- [ ] Current firmware inclusion of `Motion_Config.Wm_Max` in Effective speed remains recorded as a firmware gap until corrected; GUI does not invent a replacement Effective value.
 
 ### Bus voltage
 
-- [ ] Actual Vbus uses the same baseline RuntimeTelemetry/Parameter source without a page-local poll.
+- [ ] Actual Vbus uses the connection-owned baseline RuntimeTelemetry source without a page-local periodic device read.
 - [ ] Vbus Min displays/edits only when firmware exposes it.
 - [ ] Vbus Max displays/edits only when firmware exposes it.
+- [ ] Vbus Min/Max are persistent software-protection thresholds and obey firmware write-state restrictions.
+- [ ] Firmware enforces a valid Min < Max window and rejected writes remain authoritative errors.
 - [ ] GUI out-of-window styling does not replace firmware protection authority.
+- [ ] While DISABLED, an out-of-window Vbus blocks Enable according to protection semantics rather than being presented as a GUI-only rule.
+- [ ] A low/missing bus while already DISABLED does not by itself get misrepresented as a newly latched undervoltage Stop fault.
+- [ ] While ENABLED/RUN, sustained out-of-window voltage follows firmware Protection Stop/fault behavior and is surfaced through Problems.
 
-### Position limits
+### Position limits / zero dependency
 
 - [ ] Position-limit section remains unavailable/muted while firmware capability is absent.
-- [ ] No synthetic zero-valid/position-limit values are written.
-- [ ] When capability exists, zero dependency and enable semantics follow the normative page contract.
+- [ ] When unavailable, Zero is shown unavailable, Enable remains Off/disabled, Min/Max are disabled and no synthetic values are written.
+- [ ] Position limits are not a prerequisite for ordinary continuously rotating motor operation.
+- [ ] When capability exists, Min/Max use the same user mechanical `position` coordinate representation as the rest of the product.
+- [ ] Position-limit Enable cannot become active without authoritative zero-valid state.
+- [ ] Generic Parameters/CLI/Automation cannot bypass the zero-valid dependency.
+- [ ] When enabled, Min < Max and current/command enforcement follows firmware/Application semantics.
+- [ ] Limits page never establishes mechanical zero; Set Zero/Homing remain Encoder/calibration operations.
+- [ ] Persisted position-limit configuration alone does not imply limits are active after restart when zero validity is lost.
+
+### Cross-domain behavior
+
+- [ ] Identification/preflight consumes authoritative current/speed/Vbus/protection state rather than page-local validation.
+- [ ] Motion preview/command uses firmware Effective limits where required but does not turn motion profile values into safety-limit ownership.
+- [ ] Limit writes/readbacks immediately agree with Parameters and dependent Motion/Control consumers.
+- [ ] Protection faults/warnings generated from limit violations appear through the shared Problems lifecycle.
 
 ### Exit criteria
 
@@ -913,25 +1025,46 @@ happens to exist.
 ### Event source / lifecycle
 
 - [ ] Firmware `EVENT_NOTIFY` is received without changing the raw DeviceSession event surface.
-- [ ] Application decodes Report/Warning/Error/Trip masks.
+- [ ] Application decodes Report/Warning/Error/Trip masks into structured problem state.
 - [ ] Event snapshot updates the shared `PARAM_EVENT_*` cache without extra device reads.
 - [ ] Active problem set reflects current authoritative protection masks.
 - [ ] Resolving a protection condition removes it from Active.
 - [ ] Resolved record remains in History.
-- [ ] Repeated/new mask occurrences update count/timestamps consistently.
-- [ ] Clear History deletes resolved history but leaves active problems.
-- [ ] Recheck explicitly rereads the four Protection Parameters.
-- [ ] Clear Fault uses semantic Protection Clear and then rechecks.
+- [ ] Merely viewing/opening a problem does not clear it.
+- [ ] Repeated/new occurrences update first/last timestamps and occurrence count consistently.
+- [ ] Severity/domain/summary/source data remains structured; GUI does not parse opaque error strings to infer problem meaning.
+- [ ] Reconnect/session generation does not allow stale problem state from the previous session to become active.
 
-### UI
+### Recheck / fault clear / history clear
 
-- [ ] Top-right badge count equals active problem count.
-- [ ] Top-right icon reflects highest active severity.
-- [ ] Popover shows only the highest-priority concise problem summary.
-- [ ] Clicking the summary opens Events.
-- [ ] Events page shows Active separately from History.
-- [ ] Raw mask is visible while per-bit Host metadata is unavailable.
-- [ ] GUI does not invent specific PROT_* names that are not supplied by an authoritative Host contract.
+- [ ] Recheck explicitly rereads/evaluates current authoritative protection conditions.
+- [ ] A resolved condition disappears from Active immediately after successful recheck and reduces the toolbar count.
+- [ ] Recheck does not delete the corresponding History record.
+- [ ] Clear Fault uses semantic Protection Clear and then rechecks authoritative state.
+- [ ] Clear Fault is distinct from Recheck and distinct from Clear History.
+- [ ] Clear History removes resolved history records only and never hides active conditions.
+- [ ] Active conditions can repopulate/remain visible independently of history deletion.
+
+### Toolbar summary
+
+- [ ] Top-right badge count equals total active problem count.
+- [ ] Top-right icon reflects the highest active severity and does not rely on color alone.
+- [ ] Collapsed toolbar form contains severity icon + count only, with no persistent problem text.
+- [ ] Popover shows only the single highest-priority concise active problem summary.
+- [ ] Priority is severity first, then application-defined importance within the same severity.
+- [ ] Popover does not rotate through problems or duplicate the full diagnostic/history presentation.
+- [ ] Clicking the concise summary navigates to Events/Problems and does not itself mark the condition resolved.
+
+### Events page
+
+- [ ] Active and History are visibly separate concepts.
+- [ ] Each Active row presents severity/domain hint, useful diagnostic description and advisory quick action.
+- [ ] Detailed description covers what happened/effect/normal inspection guidance when authoritative metadata is available.
+- [ ] Quick action navigates to the relevant workflow but does not own/clear the problem.
+- [ ] History retains severity, domain/hint, summary, first/last occurrence, count, state and source/code when available.
+- [ ] Raw masks remain visible while per-bit Host metadata is unavailable.
+- [ ] GUI does not invent specific `PROT_*` names/descriptions that are not supplied by authoritative Host metadata.
+- [ ] When richer per-bit Host metadata is added, it replaces raw-mask-only presentation without creating a second hand-maintained GUI dictionary.
 
 ### Exit criteria
 
@@ -945,40 +1078,75 @@ happens to exist.
 
 **Primary owner:** AutomationRuntime + SessionWorkflowApi + the same ApplicationSession used by GUI  
 **Shared consumers:** Parameter, Motor, Motion, Identification, Scope, Tuning  
-**Normative references:** `AUTOMATION_PAGE.md`, `ARCHITECTURE.md`
+**Normative references:** `AUTOMATION_PAGE.md`, `ARCHITECTURE.md`, `UI_INTERACTION_RULES.md`
 
 ### Ownership / execution
 
-- [ ] Script executes through the current ApplicationSession rather than opening another transport.
-- [ ] Script does not call `nmixxctl` as its motor-control implementation.
-- [ ] Script source preview matches the contents actually executed.
-- [ ] Only one active Automation task owns conflicting workflow mutations.
+- [ ] Script executes through the current ApplicationSession rather than opening another transport/device session.
+- [ ] Script does not call `nmixxctl` or synthesize raw protocol frames as its motor-control implementation.
+- [ ] Only one active Automation task exists per connection and owns conflicting workflow mutations.
+- [ ] Conflicting manual mutations are rejected while task ownership applies; read-only views continue updating.
 - [ ] Page navigation does not stop the running task.
 - [ ] Logs/task state remain visible after leaving/re-entering Automation.
-- [ ] Cancellation prevents later scripted Run from starting.
-- [ ] Disconnect prevents stale script operations from reaching a reconnected session.
+- [ ] An Automation task remains tied to its original session and never migrates to reconnect.
+- [ ] Disconnect revokes old task access and prevents stale script operations from reaching the old or new session.
+
+### Desktop page / source
+
+- [ ] Opening Automation or connecting a device never runs the selected script automatically.
+- [ ] Script source preview matches the exact contents executed for that run.
+- [ ] The page exposes run/cancel/progress/output/error/exit status and log export.
+- [ ] Page-only Automation dependencies are loaded so they cannot prevent the Connection workspace from mounting.
+- [ ] A plain source preview/log is not presented as a Monaco/xterm IDE/terminal when those components are not actually present.
+- [ ] The default/read-only example does not energize the motor.
+- [ ] Motor/Identification examples require explicit user selection/configuration.
+- [ ] Script exit does not automatically roll back Parameter changes or Save them to Flash.
 
 ### Shared semantic operations
 
-- [ ] Parameter set uses shared write + dependent readback semantics.
-- [ ] Config Save preserves the exact successful post-save baseline.
+- [ ] Parameter set uses shared write + dependent readback semantics and updates all GUI views.
+- [ ] Parameter drafts in GUI are not silently committed by Automation.
+- [ ] Config Save uses the same semantic Save and preserves the exact successful post-save baseline.
 - [ ] Motor Enable/Disable/Stop use semantic Application methods.
-- [ ] Motion Run uses the same Motion service as GUI.
+- [ ] Motion Run uses the same Motion service/model as GUI and does not implicitly Enable.
 - [ ] Identification uses the same preflight/start/completion/apply semantics as GUI.
 - [ ] Phase Search uses the same semantic Application API.
-- [ ] Scope operations use SharedAcquisition.
-- [ ] Tuning operations use the existing Tuning experiment runtime.
-- [ ] Script cleanup stops only task-owned motion/scope resources.
-- [ ] Read-only script cancellation does not stop unrelated motor motion or Scope recording.
+- [ ] Finite Action waits use actual completion events; command acceptance is not treated as universal completion.
+- [ ] Synchronous Save/Identification Apply do not wait for nonexistent completion notifications.
+- [ ] Scope operations use SharedAcquisition and never start a parallel decoder/stream.
+- [ ] Tuning operations use the existing Tuning experiment runtime and do not use Scope recording as scratch storage.
+- [ ] Script-composed loops/thresholds remain composition over Application APIs rather than new private core/device services.
 
-### Failure handling
+### Cancellation / cleanup ownership
 
+- [ ] Cancel during preparation prevents a later scripted Run.
+- [ ] Global Stop/Disable remain available and revoke pending scripted starts before acting.
+- [ ] If the task started motor motion, cancel/failure/exit requests the established controlled Stop and observes stop completion.
+- [ ] A controlled-stop failure/timeout is reported; cleanup does not silently substitute Disable.
+- [ ] Script cleanup stops only task-owned motion/tuning/scope resources.
+- [ ] Read-only script cancellation does not stop unrelated motor motion or a pre-existing Scope recording.
+- [ ] Scope Stop freezes only the task-owned Scope record and leaves motor/baseline telemetry alone.
+- [ ] Tuning cleanup remains distinct from Scope cleanup.
+- [ ] Killing/ending the interpreter alone is never treated as device cleanup.
+
+### Time / failure / output behavior
+
+- [ ] Finite waits and task timeout use monotonic bounded deadlines despite unrelated telemetry/events.
 - [ ] Interpreter launch failure is explicit.
-- [ ] Timeout is explicit.
-- [ ] Abnormal exit is explicit.
-- [ ] Excess output remains bounded.
-- [ ] Cleanup failure is reported and not converted into success.
+- [ ] Task timeout is explicit.
+- [ ] Abnormal interpreter exit is explicit.
+- [ ] Excess output remains bounded and truncation is visible rather than exhausting memory.
+- [ ] Cleanup failure is reported and cannot be converted into success.
 - [ ] Motor controlled-stop timeout remains observable.
+- [ ] A panic/internal runner failure becomes explicit task failure and still attempts owned-operation cleanup.
+
+### Cross-client equivalence
+
+- [ ] The same Parameter write through GUI and Automation produces identical canonical value/dependent readback.
+- [ ] The same semantic Motion/Identification/Phase Search operation obeys the same state/preflight/Stop rules from GUI and Automation.
+- [ ] Automation Scope Stop leaves RuntimeTelemetry updating exactly as GUI Scope Stop does.
+- [ ] An Automation Tuning experiment does not overwrite an existing frozen normal Scope record.
+- [ ] Page switching during a task does not change device behavior.
 
 ### Exit criteria
 
