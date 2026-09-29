@@ -113,14 +113,29 @@ for (const page of ["motor/MotorPage", "encoder/EncoderPage", "limits/LimitsPage
 }
 test("Motion preview implementation uses a cache snapshot, not device reads", () => {
   const source = readFileSync(resolve(desktop, "../../crates/nmixx-app/src/motion.rs"), "utf8");
-  const preview = source.slice(source.indexOf("pub fn preview_with_parameters"), source.indexOf("pub(crate) fn run"));
+  const start = source.indexOf("pub(crate) fn preview_with_parameters");
+  const end = source.indexOf("pub(crate) fn run_checked", start);
+  assert.notEqual(start, -1, "preview_with_parameters must remain an internal MotionService method");
+  assert.notEqual(end, -1, "run_checked boundary must remain discoverable");
+  const preview = source.slice(start, end);
   assert.match(preview, /parameters\.snapshot\(\)/);
   assert.doesNotMatch(preview, /parameters\.read\(/);
 });
 test("dependency readback and changed notification are shared backend responsibilities", () => {
   const source = readFileSync(resolve(desktop, "../../crates/nmixx-app/src/parameter_service.rs"), "utf8");
   assert.match(source, /fn readback_ids/);
+  assert.match(source, /metadata\.readback/);
   assert.match(source, /self\.readback_ids\(id\)/);
+  assert.doesNotMatch(source, /\brelated_parameter\s*\(/);
   assert.match(source, /cache\.get\(&id\) != Some\(&entry\)/);
   assert.match(source, /ReadbackFailed/);
+});
+
+
+test("RAM-modified tracking is limited to HostSchema persistent Parameters", () => {
+  const state = readFileSync(join(desktop, "src/parameters/state.ts"), "utf8");
+  const persistence = readFileSync(join(desktop, "src/parameters/persistence.ts"), "utf8");
+  assert.match(state, /registry\.filter\(\(meta\) => meta\.persistent\)/);
+  assert.match(persistence, /const tracked = new Set<number>\(\)/);
+  assert.match(persistence, /tracked\.has\(result\.id\)/);
 });

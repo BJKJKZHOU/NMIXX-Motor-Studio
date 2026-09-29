@@ -45,3 +45,15 @@ export function equalParameterValue(a: ParameterValue | null | undefined, b: Par
   }
   return a.value === b.value;
 }
+
+
+export function parameterEnumValue(meta: ParameterMetadata | undefined, symbol: string): number | undefined {
+  if (!meta) return undefined;
+  const index = meta.allowedSymbols.indexOf(symbol);
+  return index < 0 ? undefined : Number(meta.allowed[index] ?? index);
+}
+
+export function parameterEnumSymbol(meta: ParameterMetadata | undefined, raw: number): string | undefined {
+  if (!meta || !Number.isFinite(raw)) return undefined;
+  return meta.allowedSymbols.find((symbol) => parameterEnumValue(meta, symbol) === raw);
+}

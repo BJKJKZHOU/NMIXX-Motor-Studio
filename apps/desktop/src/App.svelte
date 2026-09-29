@@ -1,6 +1,8 @@
 <script lang="ts">
   import { onDestroy, onMount } from "svelte";
   import ConnectionPage from "./connection/ConnectionPage.svelte";
+  import AutomationHost from "./automation/AutomationHost.svelte";
+  import { startAutomationTracking, clearAutomationProjection } from "./automation/state";
   import { disconnectDevice } from "./connection/api";
   import type { ConnectionInfo } from "./connection/types";
   import ScopePage from "./analysis/scope/ScopeEchartsPage.svelte";
@@ -12,24 +14,29 @@
   import ControlPage from "./control/ControlPage.svelte";
   import ControlTuningPage from "./control/ControlTuningPage.svelte";
   import MotionPage from "./motion/MotionPage.svelte";
+  import EventsPage from "./events/EventsPage.svelte";
+  import { clearProblemsProjection, problemSnapshot, refreshProblems, startProblemsTracking } from "./problems/state";
   import { canSaveParameters, disableMotor, enableMotor, saveParameters, stopMotor } from "./actions/api";
   import { connectParameters, disconnectParameters, parameterState, pollParameters, refreshParameters, saveParameterBaseline, selectParameters } from "./parameters/state";
-  import type { ParameterValue } from "./parameters/types";
+  import { motorStateFromParameter } from "./motor/state";
+  import { clearRuntimeTelemetry, refreshRuntimeTelemetry, runtimeTelemetry, startRuntimeTelemetryTracking } from "./runtime/state";
 
   type Page = "connection" | "motor" | "encoder" | "limits" | "control" | "tuning" | "motion" | "analysis" | "parameters" | "events" | "automation";
   type ControlLoopPage = "current" | "speed" | "position";
-  const GLOBAL_SYMBOLS = ["PARAM_MOTOR_STATE", "PARAM_RUN_IQ", "PARAM_RUN_WM", "PARAM_RUN_POSITION"] as const;
-  // Plot position is f32 total turns, not the exact typed turn+rad value.
-  // Keep only that read and non-streamed motor state on the slow polling path.
-  const POLLED_SYMBOLS = ["PARAM_MOTOR_STATE", "PARAM_RUN_POSITION"] as const;
-  const MOTOR_DISABLED = 0;
+  const GLOBAL_SYMBOLS = ["PARAM_MOTOR_STATE"] as const;
+  // Motor state is not a Plot signal; runtime Current/Speed/Position/Vbus come
+  // from the connection-owned 1 kHz baseline acquisition instead.
+  const POLLED_SYMBOLS = ["PARAM_MOTOR_STATE"] as const;
   const DEFAULT_SCHEMA_PATH = "../../../AxDr_L_Motor/build/host/axdr-host-schema.toml";
   const SCHEMA_PATH_STORAGE_KEY = "nmixx.connection.hostSchemaPath";
   const globalParameters = selectParameters(GLOBAL_SYMBOLS);
-  $: motorState = numeric($globalParameters.values.PARAM_MOTOR_STATE);
-  $: currentIq = numeric($globalParameters.values.PARAM_RUN_IQ);
-  $: speedWm = numeric($globalParameters.values.PARAM_RUN_WM);
-  $: positionText = position($globalParameters.values.PARAM_RUN_POSITION);
+  $: motorState = motorStateFromParameter($globalParameters.metadata.PARAM_MOTOR_STATE, $globalParameters.values.PARAM_MOTOR_STATE);
+  $: currentIq = $runtimeTelemetry.currentIq ?? null;
+  $: speedWm = $runtimeTelemetry.speedWm ?? null;
+  $: positionText = runtimePosition($runtimeTelemetry.positionTurns ?? null);
+  $: vbus = $runtimeTelemetry.vbus ?? null;
+  $: activeProblems = $problemSnapshot.active;
+  $: topProblem = activeProblems[0];
   let activePage: Page = "connection";
   let activeControlLoop: ControlLoopPage = "current";
   let controlArchitectureExpanded = true;
@@ -45,6 +52,7 @@
   let saveFeedbackTimer: ReturnType<typeof setTimeout> | undefined;
   let readingParameters = false;
   let connectionGeneration = 0;
+  let problemsOpen = false;
 
   const workflowPages: Array<{ id: Page; title: string; icon: string }> = [
     { id: "connection", title: "Connection", icon: "codicon-plug" },
@@ -67,6 +75,10 @@
   }
   async function setConnection(next: ConnectionInfo | undefined) {
     const token = ++connectionGeneration;
+    clearAutomationProjection();
+    clearProblemsProjection();
+    clearRuntimeTelemetry();
+    problemsOpen = false;
     connection = next;
     errorText = ""; parameterSaveAvailable = false; saveFeedback = "idle";
     if (saveFeedbackTimer) clearTimeout(saveFeedbackTimer);
@@ -79,12 +91,22 @@
     try {
       await connectParameters();
       const available = await canSaveParameters();
-      if (token === connectionGeneration) parameterSaveAvailable = available;
+      if (token === connectionGeneration) {
+        parameterSaveAvailable = available;
+        await refreshRuntimeTelemetry();
+        await refreshProblems();
+      }
     } catch (error) { if (token === connectionGeneration) setError(error); }
   }
   function pageTitle(page: Page): string { return [...workflowPages, ...toolPages].find((item) => item.id === page)?.title ?? page; }
-  function numeric(value: ParameterValue | null | undefined): number | null { return !value || value.type === "position" ? null : Number(value.value); }
-  function position(value: ParameterValue | null | undefined): string { return value?.type === "position" ? `${value.value.turns} turn + ${Number(value.value.theta).toFixed(3)} rad` : "—"; }
+  function runtimePosition(totalTurns: number | null): string {
+    if (totalTurns === null || !Number.isFinite(totalTurns)) return "—";
+    let turn = Math.floor(totalTurns);
+    let theta = (totalTurns - turn) * Math.PI * 2;
+    if (theta >= Math.PI * 2 - 1e-6) { turn += 1; theta = 0; }
+    if (Object.is(turn, -0)) turn = 0;
+    return `${turn} turn + ${theta.toFixed(3)} rad`;
+  }
   async function refreshAllParameters() {
     if (!connection || readingParameters) return;
     readingParameters = true;
@@ -98,7 +120,7 @@
   async function toggleMotorEnable() {
     if (!connection || motorState === null || globalActionBusy) return;
     globalActionBusy = true;
-    try { if (motorState === MOTOR_DISABLED) await enableMotor(); else await disableMotor(); }
+    try { if (motorState === "DISABLED") await enableMotor(); else await disableMotor(); }
     catch (error) { setError(error); } finally { globalActionBusy = false; }
   }
   async function stopCurrentMotorOperation() {
@@ -107,7 +129,7 @@
     try { await stopMotor(); } catch (error) { setError(error); } finally { globalStopBusy = false; }
   }
   async function savePersistentParameters() {
-    if (!connection || !parameterSaveAvailable || motorState !== MOTOR_DISABLED || globalActionBusy) return;
+    if (!connection || !parameterSaveAvailable || motorState !== "DISABLED" || globalActionBusy) return;
     globalActionBusy = true; saveFeedback = "idle";
     try { await saveParameterBaseline(saveParameters); showSavedFeedback(); }
     catch (error) { setError(error); } finally { globalActionBusy = false; }
@@ -117,7 +139,11 @@
       const storedPath = localStorage.getItem(SCHEMA_PATH_STORAGE_KEY);
       if (storedPath?.trim()) connectionSchemaPath = storedPath;
     } catch { /* Use the development default when storage is unavailable. */ }
-    return pollParameters(POLLED_SYMBOLS, 500, setError);
+    const stopStatus = pollParameters(POLLED_SYMBOLS, 500, setError);
+    const stopRuntime = startRuntimeTelemetryTracking(() => !!connection);
+    const stopAutomation = startAutomationTracking(() => !!connection);
+    const stopProblems = startProblemsTracking(() => !!connection);
+    return () => { stopStatus(); stopRuntime(); stopAutomation(); stopProblems(); };
   });
   onDestroy(() => {
     ++connectionGeneration;
@@ -137,21 +163,41 @@
   <div class="global-toolbar"><div class="global-toolbar-left">
     <div class="brand">NMIXX Motor Studio</div><div class="global-toolbar-divider" aria-hidden="true"></div>
     <div class="global-actions">
-      <button class:enable-action={motorState === MOTOR_DISABLED} class:disable-action={motorState !== null && motorState !== MOTOR_DISABLED} class="tool-button global-action"
-        disabled={!connection || motorState === null || globalActionBusy} onclick={() => void toggleMotorEnable()} title={motorState === MOTOR_DISABLED ? "Enable motor" : "Disable motor"}>
-        <i class={`codicon ${motorState === MOTOR_DISABLED ? "codicon-play" : "codicon-debug-disconnect"}`}></i>{motorState === MOTOR_DISABLED ? "Enable" : "Disable"}
+      <button class:enable-action={motorState === "DISABLED"} class:disable-action={motorState !== null && motorState !== "DISABLED"} class="tool-button global-action"
+        disabled={!connection || motorState === null || globalActionBusy} onclick={() => void toggleMotorEnable()} title={motorState === "DISABLED" ? "Enable motor" : "Disable motor"}>
+        <i class={`codicon ${motorState === "DISABLED" ? "codicon-play" : "codicon-debug-disconnect"}`}></i>{motorState === "DISABLED" ? "Enable" : "Disable"}
       </button>
       <button class="tool-button global-action stop-action" disabled={!connection || globalStopBusy} onclick={() => void stopCurrentMotorOperation()} title="Stop current motor operation">
         <i class={`codicon ${globalStopBusy ? "codicon-loading codicon-modifier-spin" : "codicon-debug-stop"}`}></i> Stop
       </button>
       <span class="global-group-gap"></span>
       <button class="tool-button global-action" disabled={!connection || readingParameters} onclick={() => void refreshAllParameters()} title="Read current RAM parameters from device"><i class={`codicon ${readingParameters ? "codicon-loading codicon-modifier-spin" : "codicon-refresh"}`}></i> Read</button>
-      <button class="tool-button global-action" disabled={!connection || !parameterSaveAvailable || motorState !== MOTOR_DISABLED || globalActionBusy} onclick={() => void savePersistentParameters()}
-        title={!parameterSaveAvailable ? "Parameter persistence is not exposed by this firmware" : motorState !== MOTOR_DISABLED ? "Disable the motor before saving persistent parameters" : "Save persistent RAM parameters to device storage"}>
+      <button class="tool-button global-action" disabled={!connection || !parameterSaveAvailable || motorState !== "DISABLED" || globalActionBusy} onclick={() => void savePersistentParameters()}
+        title={!parameterSaveAvailable ? "Parameter persistence is not exposed by this firmware" : motorState !== "DISABLED" ? "Disable the motor before saving persistent parameters" : "Save persistent RAM parameters to device storage"}>
         <i class={`codicon ${saveFeedback === "saved" ? "codicon-check" : "codicon-save"}`}></i>{saveFeedback === "saved" ? "Saved" : "Save"}
       </button>
     </div>
-  </div><button class="problems-indicator" disabled title="Problems service is not implemented yet"><i class="codicon codicon-warning"></i><span>0</span></button></div>
+  </div><div class="problems-host">
+    <button class:problem-error={topProblem?.severity === "FAULT" || topProblem?.severity === "ERROR"}
+      class:problem-warning={topProblem?.severity === "WARNING"} class:problem-info={topProblem?.severity === "INFO"}
+      class="problems-indicator" disabled={!connection}
+      title={connection ? "Active problems" : "Connect a device to inspect problems"}
+      onclick={() => problemsOpen = !problemsOpen}>
+      <i class={`codicon ${topProblem?.severity === "FAULT" || topProblem?.severity === "ERROR" ? "codicon-error" : topProblem?.severity === "WARNING" ? "codicon-warning" : "codicon-info"}`}></i><span>{activeProblems.length}</span>
+    </button>
+    {#if problemsOpen && connection}
+      <div class="problems-popover">
+        {#if topProblem}
+          <button class="problem-summary" onclick={() => { activePage = "events"; problemsOpen = false; }}>
+            <strong>{topProblem.summary}</strong>
+            <span>{topProblem.description}</span>
+          </button>
+        {:else}
+          <div class="problem-summary empty">No active problems.</div>
+        {/if}
+      </div>
+    {/if}
+  </div></div>
   <main class="main-area">
     {#if activePage === "connection"}
       <ConnectionPage {connection} bind:port={connectionPort} bind:schemaPath={connectionSchemaPath} onSchemaPathChanged={persistConnectionSchemaPath} onConnected={(next) => void setConnection(next)} onDisconnected={() => void setConnection(undefined)} onError={setError} />
@@ -170,6 +216,8 @@
     {:else if activePage === "tuning"}<div class="domain-page-container"><ControlTuningPage {connection} {motorState} onError={setError} /></div>
     {:else if activePage === "motion"}<div class="domain-page-container"><MotionPage capabilities={connection?.motion} {motorState} onError={setError} /></div>
     {:else if activePage === "parameters"}<div class="domain-page-container"><ParameterTablePage {connection} onError={setError} /></div>
+    {:else if activePage === "events"}<div class="domain-page-container"><EventsPage {connection} onError={setError} /></div>
+    {:else if activePage === "automation"}<div class="domain-page-container"><AutomationHost connected={!!connection} /></div>
     {:else if activePage !== "analysis"}
       <section class="page-toolbar"><div class="page-title">{pageTitle(activePage).toUpperCase()}</div></section>
       <section class="placeholder-page"><div class="placeholder-title">{pageTitle(activePage)}</div><div class="placeholder-copy">This workflow page is reserved for the corresponding application domain. Device behavior will be added through the shared Application API rather than implemented in the shell.</div></section>
@@ -179,7 +227,7 @@
   </main>
 </div>
 <footer class="statusbar"><div class="connection-status"><span class:connected={!!connection} class="status-dot"></span>{connection ? "AxDr_L" : "Disconnected"}</div><div class="status-spacer"></div>
-  <div class="live-status"><span>Current {currentIq === null ? "—" : `${currentIq.toFixed(3)} A`}</span><span>Speed {speedWm === null ? "—" : `${speedWm.toFixed(3)} rad/s`}</span><span>Position {positionText}</span></div>
+  <div class="live-status"><span>Current {currentIq === null ? "—" : `${currentIq.toFixed(3)} A`}</span><span>Speed {speedWm === null ? "—" : `${speedWm.toFixed(3)} rad/s`}</span><span>Position {positionText}</span><span>Vbus {vbus === null ? "—" : `${vbus.toFixed(2)} V`}</span></div>
 </footer></div>
 
 <style>
@@ -192,7 +240,18 @@
   .enable-action:not(:disabled) { color: #3fb950; }
   .disable-action:not(:disabled) { color: #f85149; }
   .stop-action:not(:disabled) { font-weight: 600; }
-  .problems-indicator { flex: 0 0 auto; display: inline-flex; align-items: center; gap: 5px; border: 0; background: transparent; color: inherit; padding: 4px 7px; }
+  .problems-host { position: relative; flex: 0 0 auto; }
+  .problems-indicator { display: inline-flex; align-items: center; gap: 5px; border: 0; background: transparent; color: inherit; padding: 4px 7px; }
+  .problems-indicator:not(:disabled) { cursor: pointer; }
+  .problems-indicator.problem-error { color: var(--vscode-errorForeground); }
+  .problems-indicator.problem-warning { color: var(--vscode-inputValidation-warningBorder, #cca700); }
+  .problems-indicator.problem-info { color: var(--vscode-descriptionForeground); }
+  .problems-popover { position: absolute; top: calc(100% + 6px); right: 0; z-index: 30; width: 320px; padding: 6px; border: 1px solid var(--vscode-panel-border); border-radius: 3px; background: var(--vscode-menu-background, #252526); box-shadow: 0 8px 24px rgba(0,0,0,.35); }
+  .problem-summary { width: 100%; display: grid; gap: 5px; padding: 9px 10px; border: 0; text-align: left; color: var(--vscode-menu-foreground, var(--vscode-foreground)); background: transparent; }
+  button.problem-summary { cursor: pointer; }
+  button.problem-summary:hover { background: var(--vscode-list-hoverBackground); }
+  .problem-summary strong { font-size: 12px; }
+  .problem-summary span, .problem-summary.empty { color: var(--vscode-descriptionForeground); font-size: 11px; line-height: 1.4; }
   .domain-page-container { grid-row: 1 / -1; min-width: 0; min-height: 0; display: grid; }
   .control-domain-shell { grid-row: 1 / -1; min-width: 0; min-height: 0; display: grid; grid-template-columns: 196px minmax(0, 1fr); }
   .control-navigation { min-width: 0; min-height: 0; background: var(--vscode-sideBar-background); border-right: 1px solid var(--vscode-panel-border); }

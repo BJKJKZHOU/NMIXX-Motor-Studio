@@ -21,15 +21,17 @@ function scope() {
     };
   `;
   const calls = [], ticks = [], mounts = [];
+  let scopeState = 'STOPPED';
+  let scopeHasRecord = false;
   const sandbox = {
     console, Map, Set, Number, Array, Math,
     onMount: (fn) => mounts.push(fn), onDestroy: () => {},
     subscribeRefresh: (_ms, fn) => { ticks.push(fn); return () => {}; },
     setTimeout: () => 1, clearTimeout: () => {},
     configureScope: async (items) => { calls.push(['configure', JSON.parse(JSON.stringify(items))]); },
-    startScope: async () => { calls.push(['scope-start']); },
-    stopScope: async () => { calls.push(['scope-stop']); },
-    readScopeSnapshot: async () => { calls.push(['snapshot']); return { state: 'LIVE', recordedSeconds: 1, lostFrames: 0, series: [] }; },
+    startScope: async () => { calls.push(['scope-start']); scopeHasRecord = true; scopeState = 'LIVE'; },
+    stopScope: async () => { calls.push(['scope-stop']); scopeState = 'STOPPED'; },
+    readScopeSnapshot: async () => { calls.push(['snapshot']); return { state: scopeState, preview: !scopeHasRecord, recordedSeconds: 1, lostFrames: 0, series: [] }; },
   };
   vm.createContext(sandbox);
   vm.runInContext(ts.transpile(script, { target: ts.ScriptTarget.ES2022, module: ts.ModuleKind.None }), sandbox);
@@ -52,12 +54,26 @@ test('baseline traces start at NORMAL even when Iq supports FAST', () => {
   assert.deepEqual(Array.from(unit.selected()), connection.runtimeChannelIds);
 });
 
-test('a first-visible Scope obtains existing history without Run/configure', async () => {
+test('a first-visible Scope previews baseline while remaining STOPPED', async () => {
   const { unit, calls, ticks } = scope();
   ticks.forEach((tick) => tick());
   await new Promise(setImmediate);
-  assert.equal(unit.snapshot().state, 'LIVE');
+  assert.equal(unit.snapshot().state, 'STOPPED');
+  assert.equal(unit.snapshot().preview, true);
   assert.deepEqual(calls, [['snapshot']]);
+
+  // Preview remains rolling even though the recording state is STOPPED.
+  ticks.forEach((tick) => tick());
+  await new Promise(setImmediate);
+  assert.deepEqual(calls, [['snapshot'], ['snapshot']]);
+});
+
+test('Scope Run starts recording before refreshing the snapshot', async () => {
+  const { unit, calls } = scope();
+  await unit.toggleRun();
+  assert.deepEqual(calls, [['scope-start'], ['snapshot']]);
+  assert.equal(unit.snapshot().state, 'LIVE');
+  assert.equal(unit.snapshot().preview, false);
 });
 
 test('all baseline traces may be hidden; no minimum selected-channel restriction', async () => {

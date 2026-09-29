@@ -1,6 +1,7 @@
 <script lang="ts">
   import { onDestroy, onMount } from "svelte";
   import ScopeEchartsView from "./ScopeEchartsView.svelte";
+  import { scopeOperation, type ScopeOperation } from "../../automation/operations";
   import type { ConnectionInfo, PlotChannel } from "../../connection/types";
   import { subscribeRefresh } from "../../refreshScheduler";
   import { configureScope, readScopeSnapshot, startScope, stopScope } from "./api";
@@ -54,6 +55,21 @@
     selectedChannels: selectedIds.size,
     lostFrames: snapshot?.lostFrames ?? 0,
   });
+
+  // Automation changes the same Application record. Mirror its canonical
+  // selection; do not turn this notification into another device reconfigure.
+  $: adoptScopeOperation($scopeOperation, connection);
+  function adoptScopeOperation(operation: ScopeOperation | undefined, session: ConnectionInfo | undefined) {
+    if (!operation || !session) return;
+    const config = operation.config;
+    selectedIds = new Set(config.channels.map((channel) => channel.id));
+    rates = new Map(config.channels.map((channel) => [channel.id, channel.rate]));
+    activeChannelId = config.channels[0]?.id;
+    configured = true;
+    configurationDirty = false;
+    viewRevision += 1;
+    scheduleViewRefresh(0);
+  }
 
   function defaultRate(channel: PlotChannel): ScopeRate {
     if (connection?.runtimeChannelIds?.includes(channel.id)) return "normal";
@@ -378,7 +394,7 @@
 
   onMount(() => {
     refreshUnsubscribe = subscribeRefresh(refreshIntervalMs, () => {
-      if (active && configured && followingLatest && (running || !snapshot)) void refreshSnapshot();
+      if (active && configured && followingLatest && (running || snapshot?.preview || !snapshot)) void refreshSnapshot();
     });
   });
 
@@ -392,7 +408,7 @@
 </script>
 
 <section class="page-toolbar">
-  <div class="page-title">ANALYSIS / SCOPE · ECHARTS SPIKE</div>
+  <div class="page-title">ANALYSIS / SCOPE</div>
   <div class="toolbar-actions">
     <!-- svelte-ignore a11y_click_events_have_key_events a11y_no_static_element_interactions -->
     <vscode-button
@@ -475,7 +491,7 @@
     <div class="scope-spike-meta">
       <span>{followingLatest ? `latest ${viewSpan(viewRange).toFixed(3)} s` : `history ${viewSpan(viewRange).toFixed(3)} s`}</span>
       {#if !followingLatest}<button class="latest-button" onclick={returnToLatest}>Latest</button>{/if}
-      <span>{snapshot?.recordedSeconds?.toFixed(3) ?? "0.000"} s recorded</span>
+      <span>{snapshot?.preview ? "baseline preview" : (snapshot?.recordedSeconds?.toFixed(3) ?? "0.000") + " s recorded"}</span>
       <span>loss {snapshot?.lostFrames ?? 0}</span>
     </div>
     <div class="scope-spike-plot">

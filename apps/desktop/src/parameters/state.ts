@@ -109,7 +109,7 @@ export async function connectParameters(): Promise<void> {
     const initial = Object.values(get(mutable).entries);
     const failed = initial.find((entry) => entry.error || entry.value === null);
     if (failed) throw new Error(`Initial Parameter snapshot failed: ${failed.error ?? "value unavailable"}`);
-    initializeParameterPersistence(initial);
+    initializeParameterPersistence(initial, registry.filter((meta) => meta.persistent).map((meta) => meta.id));
   } catch (error) {
     report(error, token);
     throw error;
@@ -148,6 +148,14 @@ export function commitParameter(id: number, value: ParameterValue): Promise<Para
     if (count) pendingWrites.set(id, count); else pendingWrites.delete(id);
     mutable.update((state) => ({ ...state, writing: new Set(pendingWrites.keys()) }));
   });
+}
+
+/** Adopt an immutable baseline captured by a successful Application Save.
+ * Re-observe current values so writes made after Save remain highlighted. */
+export function acceptSavedParameterBaseline(results: ParameterReadResult[]): void {
+  if (!get(mutable).connected) return;
+  commitParameterPersistence(results);
+  observeParameterResults(Object.values(get(mutable).entries));
 }
 
 export async function refreshParameters(): Promise<void> {

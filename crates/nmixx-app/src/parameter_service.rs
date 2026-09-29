@@ -43,13 +43,23 @@ pub enum ParameterServiceError {
     Session(#[from] SessionError),
 }
 
+#[derive(Debug, Clone, serde::Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct RuntimeChannelProgress {
+    pub id: u16, pub symbol: String, pub received_batches: u64, pub age_ms: u64,
+}
+#[derive(Debug, Clone, serde::Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct RuntimeStreamProgress { pub channels: Vec<RuntimeChannelProgress> }
+
 struct StreamUpdates {
+    observations: HashMap<u16, (u64, Instant)>,
     ids: HashSet<u16>,
     dirty: HashSet<u16>,
     published: Instant,
 }
 impl Default for StreamUpdates {
-    fn default() -> Self { Self { ids: HashSet::new(), dirty: HashSet::new(), published: Instant::now() } }
+    fn default() -> Self { Self { ids: HashSet::new(), dirty: HashSet::new(), published: Instant::now(), observations: HashMap::new() } }
 }
 
 #[derive(Clone)]
@@ -64,7 +74,7 @@ pub struct ParameterService {
 }
 
 impl ParameterService {
-    pub fn new(session: DeviceSession, schema: HostSchema) -> Self {
+    pub(crate) fn new(session: DeviceSession, schema: HostSchema) -> Self {
         Self {
             session,
             schema,
@@ -157,6 +167,29 @@ impl ParameterService {
         Ok(results)
     }
 
+    /// Apply authoritative values delivered by a device event. This is cache-only:
+    /// it performs no device I/O and publishes the same changed-ID notification
+    /// used by normal Parameter reads.
+    pub(crate) fn ingest_external_values(
+        &self,
+        values: &[(u16, ParameterValue)],
+    ) -> Result<(), ParameterServiceError> {
+        let stream = self.stream.lock().map_err(|_| ParameterServiceError::CachePoisoned)?;
+        let entries = values.iter().filter_map(|(id, value)| {
+            let metadata = self.schema.parameter_by_id(*id)?;
+            if !metadata.access.contains('r') || stream.ids.contains(id) {
+                return None;
+            }
+            Some((*id, Ok(value.clone())))
+        }).collect::<Vec<_>>();
+        let mut cache = self.cache.write().map_err(|_| ParameterServiceError::CachePoisoned)?;
+        let changed = update_cache(&mut cache, entries);
+        drop(cache);
+        drop(stream);
+        self.notify_changed(changed);
+        Ok(())
+    }
+
     /// Consumes already-decoded baseline samples; never performs device I/O.
     /// Preserve wire types: f32 total-turn Plot samples cannot replace Position.
     pub(crate) fn ingest_stream_values(&self, samples: &[(u16, f32)]) -> Result<(), ParameterServiceError> {
@@ -165,6 +198,9 @@ impl ParameterService {
         for &(id, value) in samples {
             let meta = self.metadata(id)?;
             if meta.access.contains('w') { continue; }
+            let observation = stream.observations.entry(id).or_insert((0, Instant::now()));
+            observation.0 = observation.0.saturating_add(1);
+            observation.1 = Instant::now();
             let Some(value) = stream_scalar(meta.parameter_type()?, value) else { continue; };
             stream.ids.insert(id);
             entries.push((id, value));
@@ -185,6 +221,18 @@ impl ParameterService {
         Ok(())
     }
 
+    /// Reception evidence is independent of value changes and rolling-buffer capacity.
+    /// Counts received batches, not firmware sample rate; never starts a device read.
+    pub fn runtime_stream_progress(&self) -> Result<RuntimeStreamProgress, ParameterServiceError> {
+        let stream = self.stream.lock().map_err(|_| ParameterServiceError::CachePoisoned)?;
+        let mut channels = stream.observations.iter().map(|(&id, &(received_batches, received))| {
+            Ok(RuntimeChannelProgress { id, symbol: self.metadata(id)?.symbol.clone(), received_batches,
+                age_ms: received.elapsed().as_millis().min(u64::MAX as u128) as u64 })
+        }).collect::<Result<Vec<_>, ParameterServiceError>>()?;
+        channels.sort_by_key(|channel| channel.id);
+        Ok(RuntimeStreamProgress { channels })
+    }
+
     pub(crate) fn invalidate_stream_values(&self, message: &str) {
         let Ok(mut stream) = self.stream.lock() else { return; };
         let entries = stream.ids.iter().map(|id| (*id, Err(format!("Runtime stream: {message}")))).collect();
@@ -197,11 +245,19 @@ impl ParameterService {
     }
 
     fn readback_ids(&self, id: u16) -> Result<Vec<u16>, ParameterServiceError> {
-        let symbol = &self.metadata(id)?.symbol;
-        let mut ids = vec![id];
-        ids.extend(self.parameters().iter().filter(|meta| {
-            meta.id != id && meta.access.contains('r') && related_parameter(symbol, &meta.symbol)
-        }).map(|meta| meta.id));
+        let metadata = self.metadata(id)?;
+        let mut ids = Vec::with_capacity(metadata.readback.len() + 1);
+        ids.push(id);
+        for symbol in &metadata.readback {
+            let target = self.schema.parameter_by_symbol(symbol).ok_or_else(|| {
+                ParameterServiceError::Schema(SchemaError::InvalidReadback {
+                    parameter: metadata.symbol.clone(),
+                    target: symbol.clone(),
+                    reason: "target is not present in HostSchema".to_owned(),
+                })
+            })?;
+            ids.push(target.id);
+        }
         Ok(ids)
     }
 
@@ -257,7 +313,14 @@ impl ParameterService {
 
         let ids = self.readback_ids(id)?;
         let _io = self.io.lock().map_err(|_| ParameterServiceError::CachePoisoned)?;
-        self.session.parameter_write(id, value)?;
+        if let Err(error) = self.session.parameter_write(id, value) {
+            // A transport/protocol failure can leave write acceptance uncertain.
+            // Re-read the same authoritative group so every client sees the device
+            // state that actually survived the failed request. Read failures
+            // invalidate cache entries instead of preserving stale success values.
+            let _ = self.read_many_locked(&ids);
+            return Err(error.into());
+        }
         let results = self.read_many_locked(&ids)?;
         let mut written = None;
         let mut failures = Vec::new();
@@ -296,8 +359,8 @@ impl ParameterService {
             });
         };
 
-        let disabled = enum_u8(state_metadata, "DISABLED")?;
-        let run = enum_u8(state_metadata, "RUN")?;
+        let disabled = state_metadata.enum_u8("DISABLED")?;
+        let run = state_metadata.enum_u8("RUN")?;
         let allowed = match write_state {
             "disabled" => state == disabled,
             "not_running" => state != run,
@@ -333,59 +396,8 @@ fn update_cache(
     changed
 }
 
-#[cfg(test)]
-mod linkage_readback_tests {
-    use super::related_parameter;
-
-    #[test]
-    fn motion_limit_write_invalidates_the_effective_speed_view() {
-        assert!(related_parameter("PARAM_MOTION_WM_MAX", "PARAM_LIMIT_WM_EFFECTIVE"));
-    }
-    #[test]
-    fn model_and_encoder_changes_reread_actual_calibration_validity() {
-        for written in ["PARAM_MOTOR_PP", "PARAM_ENCODER_PROTOCOL", "PARAM_ENCODER_SPI_TYPE"] {
-            assert!(related_parameter(written, "PARAM_CAL_VALID"));
-        }
-        assert!(!related_parameter("PARAM_ENCODER_PROTOCOL", "PARAM_POSITION_ZERO_VALID"));
-    }
-    #[test]
-    fn encoder_reset_and_direction_mapping_refresh_user_feedback() {
-        for written in ["PARAM_ENCODER_PROTOCOL", "PARAM_ENCODER_SPI_TYPE", "PARAM_MOTOR_DIR"] {
-            for candidate in ["PARAM_RUN_POSITION", "PARAM_RUN_WM"] {
-                assert!(related_parameter(written, candidate));
-            }
-        }
-    }
-}
-
-// Firmware owns these calculations. The host only rereads their outputs. This small
-// dependency table is shared by every client; pages must not supply readback lists.
-fn related_parameter(written: &str, candidate: &str) -> bool {
-    const CURRENT: &[&str] = &[
-        "PARAM_CTRL_CURRENT_BW_HZ", "PARAM_CTRL_CURRENT_SOURCE",
-        "PARAM_CTRL_ID_KP", "PARAM_CTRL_ID_KI", "PARAM_CTRL_IQ_KP", "PARAM_CTRL_IQ_KI",
-    ];
-    const SPEED: &[&str] = &[
-        "PARAM_CTRL_SPEED_BW_HZ", "PARAM_CTRL_SPEED_SOURCE", "PARAM_CTRL_SPEED_KP", "PARAM_CTRL_SPEED_KI",
-    ];
-    const MODEL: &[&str] = &[
-        "PARAM_MOTOR_PP", "PARAM_MOTOR_RS", "PARAM_MOTOR_LD", "PARAM_MOTOR_LQ",
-        "PARAM_MOTOR_FLUX", "PARAM_MOTOR_J", "PARAM_MOTOR_B",
-    ];
-    (CURRENT.contains(&written) && CURRENT.contains(&candidate))
-        || (SPEED.contains(&written) && SPEED.contains(&candidate))
-        || (MODEL.contains(&written)
-            && (candidate.starts_with("PARAM_CTRL_") || candidate.starts_with("PARAM_LIMIT_")))
-        || (written.starts_with("PARAM_LIMIT_") && candidate.starts_with("PARAM_LIMIT_"))
-        || (written == "PARAM_MOTION_WM_MAX" && candidate == "PARAM_LIMIT_WM_EFFECTIVE")
-        || (written == "PARAM_MOTOR_PP" && candidate == "PARAM_CAL_VALID")
-        || ((written.starts_with("PARAM_ENCODER_") || written == "PARAM_MOTOR_DIR")
-            && (candidate.starts_with("PARAM_ENCODER_") || candidate == "PARAM_CAL_VALID"
-                || candidate == "PARAM_RUN_POSITION" || candidate == "PARAM_RUN_WM"))
-        || (written == "PARAM_MOTOR_MODE"
-            && (candidate == "PARAM_MOTOR_STATE" || candidate.starts_with("PARAM_TARGET_")))
-}
-
+// Firmware/YAML owns dependency declarations. ParameterService only executes
+// the explicit HostSchema readback list after a successful write.
 
 fn validate_static_constraints(
     metadata: &ParameterMetadata,
@@ -469,50 +481,8 @@ fn schema_number(value: SchemaNumber) -> f64 {
 }
 
 
-fn enum_u8(
-    metadata: &ParameterMetadata,
-    wanted_symbol: &str,
-) -> Result<u8, ParameterServiceError> {
-    let Some(index) = metadata
-        .allowed_symbols
-        .iter()
-        .position(|symbol| symbol == wanted_symbol)
-    else {
-        return Err(ParameterServiceError::Schema(SchemaError::Parse(format!(
-            "parameter '{}' does not expose enum symbol '{}'",
-            metadata.symbol, wanted_symbol
-        ))));
-    };
-
-    if let Some(value) = metadata.allowed.get(index).copied() {
-        let number = schema_number(value);
-        if number.is_finite()
-            && number.fract() == 0.0
-            && number >= 0.0
-            && number <= f64::from(u8::MAX)
-        {
-            return Ok(number as u8);
-        }
-        return Err(ParameterServiceError::Schema(SchemaError::Parse(format!(
-            "parameter '{}' enum symbol '{}' is not a u8 value",
-            metadata.symbol, wanted_symbol
-        ))));
-    }
-
-    u8::try_from(index).map_err(|_| {
-        ParameterServiceError::Schema(SchemaError::Parse(format!(
-            "parameter '{}' enum symbol '{}' ordinal does not fit u8",
-            metadata.symbol, wanted_symbol
-        )))
-    })
-}
-
 fn state_symbol(metadata: &ParameterMetadata, state: u8) -> String {
-    metadata
-        .allowed_symbols
-        .get(usize::from(state))
-        .cloned()
-        .unwrap_or_else(|| state.to_string())
+    metadata.enum_symbol_u8(state).map(str::to_owned).unwrap_or_else(|| state.to_string())
 }
 
 #[cfg(test)]
@@ -539,22 +509,122 @@ mod shared_cache_tests {
     }
 
     #[test]
-    fn current_bandwidth_and_gains_always_include_source() {
-        assert!(related_parameter("PARAM_CTRL_CURRENT_BW_HZ", "PARAM_CTRL_CURRENT_SOURCE"));
-        assert!(related_parameter("PARAM_CTRL_ID_KP", "PARAM_CTRL_CURRENT_SOURCE"));
-        assert!(related_parameter("PARAM_CTRL_CURRENT_SOURCE", "PARAM_CTRL_IQ_KI"));
-        assert!(related_parameter("PARAM_MOTOR_RS", "PARAM_CTRL_IQ_KI"));
-        assert!(related_parameter("PARAM_MOTOR_J", "PARAM_CTRL_SPEED_KP"));
-        assert!(!related_parameter("PARAM_TARGET_SPEED", "PARAM_CTRL_SPEED_KP"));
-    }
-
-    #[test]
     fn groups_publish_only_the_ids_that_changed() {
         let mut cache = HashMap::new();
         update_cache(&mut cache, vec![(1, Ok(ParameterValue::U8(0)))]);
         assert_eq!(update_cache(&mut cache, vec![
             (1, Ok(ParameterValue::U8(0))), (2, Ok(ParameterValue::F32(10.0))),
         ]), vec![2]);
+    }
+}
+
+#[cfg(test)]
+mod write_reconcile_tests {
+    use super::*;
+    use std::collections::VecDeque;
+    use std::sync::{Arc, Mutex};
+    use std::time::Duration;
+
+    use nmixx_core::protocol::{
+        can_id, AxdrStatus, MSG_PARAMETER, MSG_RESPONSE, NODE_ID_DEFAULT, PARAM_READ, PARAM_WRITE,
+    };
+    use nmixx_core::transport::{FrameTransport, TransportError};
+    use nmixx_core::wire::CanFdFrame;
+
+    #[derive(Clone, Default)]
+    struct ScriptState {
+        incoming: Arc<Mutex<VecDeque<Result<CanFdFrame, TransportError>>>>,
+        on_send: Arc<Mutex<VecDeque<Vec<Result<CanFdFrame, TransportError>>>>>,
+    }
+
+    impl ScriptState {
+        fn respond_on_send(&self, frames: Vec<Result<CanFdFrame, TransportError>>) {
+            self.on_send.lock().unwrap().push_back(frames);
+        }
+    }
+
+    struct ScriptedTransport {
+        state: ScriptState,
+    }
+
+    impl FrameTransport for ScriptedTransport {
+        fn send(&mut self, _frame: &CanFdFrame) -> Result<(), TransportError> {
+            if let Some(frames) = self.state.on_send.lock().unwrap().pop_front() {
+                self.state.incoming.lock().unwrap().extend(frames);
+            }
+            Ok(())
+        }
+
+        fn receive(&mut self, _timeout: Duration) -> Result<CanFdFrame, TransportError> {
+            self.state.incoming.lock().unwrap().pop_front()
+                .unwrap_or(Err(TransportError::Timeout))
+        }
+    }
+
+    fn response(txn: u8, op: u8, status: AxdrStatus, data: &[u8]) -> CanFdFrame {
+        let mut payload = vec![txn, MSG_PARAMETER, op, status as u8];
+        payload.extend_from_slice(data);
+        CanFdFrame::new(can_id(MSG_RESPONSE, NODE_ID_DEFAULT), &payload).unwrap()
+    }
+
+    fn read_response(txn: u8, value: u8) -> CanFdFrame {
+        response(txn, PARAM_READ, AxdrStatus::Ok, &[1, 0, ParameterType::U8 as u8, value])
+    }
+
+    fn schema() -> HostSchema {
+        HostSchema::parse(r#"
+schema_version = 1
+protocol = "axdr-canfd-v1"
+
+[source]
+repository = "fixture"
+git_sha = "abc"
+parameter_schema = 1
+
+[[parameters]]
+symbol = "PARAM_TEST"
+label = "Test"
+id = 1
+type = "u8"
+access = "rw"
+description = "test"
+"#).unwrap()
+    }
+
+    #[test]
+    fn failed_write_reconciles_cache_from_authoritative_readback() {
+        let state = ScriptState::default();
+        state.respond_on_send(vec![Ok(read_response(1, 7))]);
+        // Simulate an uncertain write: firmware response is syntactically valid
+        // but identifies another Parameter, so Host cannot trust acceptance.
+        state.respond_on_send(vec![Ok(response(2, PARAM_WRITE, AxdrStatus::Ok, &[2, 0]))]);
+        // Device state observed after the failed request is authoritative.
+        state.respond_on_send(vec![Ok(read_response(3, 9))]);
+
+        let session = DeviceSession::spawn(Box::new(ScriptedTransport { state }));
+        let service = ParameterService::new(session, schema());
+        assert_eq!(service.read(1).unwrap(), ParameterValue::U8(7));
+
+        assert!(service.write_readback(1, ParameterValue::U8(9)).is_err());
+        assert_eq!(service.cached(1).unwrap(), Some(ParameterValue::U8(9)));
+    }
+
+    #[test]
+    fn failed_write_with_failed_reconciliation_invalidates_stale_cache() {
+        let state = ScriptState::default();
+        state.respond_on_send(vec![Ok(read_response(1, 7))]);
+        state.respond_on_send(vec![Ok(response(2, PARAM_WRITE, AxdrStatus::Ok, &[2, 0]))]);
+        state.respond_on_send(vec![Ok(response(3, PARAM_READ, AxdrStatus::ErrState, &[]))]);
+
+        let session = DeviceSession::spawn(Box::new(ScriptedTransport { state }));
+        let service = ParameterService::new(session, schema());
+        assert_eq!(service.read(1).unwrap(), ParameterValue::U8(7));
+
+        assert!(service.write_readback(1, ParameterValue::U8(9)).is_err());
+        assert!(matches!(
+            service.cached(1),
+            Err(ParameterServiceError::CachedReadFailed { id: 1, .. })
+        ));
     }
 }
 

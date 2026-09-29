@@ -1,13 +1,35 @@
 use std::collections::HashMap;
-use std::sync::{Arc, RwLock};
+use std::sync::{Arc, Mutex, RwLock};
 
 use serde::{Deserialize, Serialize};
 
-use crate::{ActionHandle, DeviceSession, ParameterService, ParameterValue, PositionValue};
+use crate::parameter_service::ParameterService;
+use crate::{ActionHandle, AxdrStatus, DeviceSession, HostSchema, MotorState, ParameterValue, PositionValue};
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "kebab-case")]
 pub enum MotionMode { Position, Speed, SensorlessSpeed, Torque }
+
+impl MotionMode {
+    pub fn symbol(self) -> &'static str {
+        match self {
+            Self::Position => "POSITION",
+            Self::Speed => "SPEED",
+            Self::SensorlessSpeed => "SENSORLESS_SPEED",
+            Self::Torque => "TORQUE",
+        }
+    }
+
+    fn from_symbol(symbol: &str) -> Option<Self> {
+        match symbol {
+            "POSITION" => Some(Self::Position),
+            "SPEED" => Some(Self::Speed),
+            "SENSORLESS_SPEED" => Some(Self::SensorlessSpeed),
+            "TORQUE" => Some(Self::Torque),
+            _ => None,
+        }
+    }
+}
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "kebab-case")]
@@ -38,8 +60,32 @@ pub struct MotionPreview {
     pub secondary_unit: Option<&'static str>,
 }
 
-#[derive(Debug, Clone, Default)]
-pub struct MotionService { config: Arc<RwLock<MotionConfig>> }
+#[derive(Debug)]
+struct MotionRepeatRuntime {
+    endpoint_a: Option<f64>,
+    endpoint_b: Option<f64>,
+    next_is_b: bool,
+    pending_target_is_b: Option<bool>,
+}
+impl Default for MotionRepeatRuntime {
+    fn default() -> Self {
+        Self { endpoint_a: None, endpoint_b: None, next_is_b: true, pending_target_is_b: None }
+    }
+}
+
+#[derive(Debug, Clone)]
+pub struct MotionService {
+    config: Arc<RwLock<MotionConfig>>,
+    repeat: Arc<Mutex<MotionRepeatRuntime>>,
+}
+impl Default for MotionService {
+    fn default() -> Self {
+        Self {
+            config: Arc::new(RwLock::new(MotionConfig::default())),
+            repeat: Arc::new(Mutex::new(MotionRepeatRuntime::default())),
+        }
+    }
+}
 
 impl MotionService {
     pub fn get(&self) -> MotionConfig {
@@ -47,16 +93,79 @@ impl MotionService {
     }
     pub fn set(&self, config: MotionConfig) -> Result<MotionConfig, String> {
         validate_host_config(&config)?;
+        let current = self.get();
+        let reset_repeat = current.repeat != config.repeat
+            || current.position_command != config.position_command
+            || current.incremental_delta_turn != config.incremental_delta_turn;
         *self.config.write().map_err(|_| "Motion config lock poisoned")? = config.clone();
+        if reset_repeat { self.reset_repeat()?; }
         Ok(config)
+    }
+
+    pub(crate) fn repeat_target(
+        &self,
+        current_position_turn: f64,
+        absolute_target_turn: Option<f64>,
+    ) -> Result<Option<(f64, bool)>, String> {
+        let config = self.get();
+        if !config.repeat { return Ok(None); }
+
+        let mut runtime = self.repeat.lock().map_err(|_| "Motion repeat lock poisoned")?;
+        if runtime.endpoint_a.is_none() || runtime.endpoint_b.is_none() {
+            let target = match config.position_command {
+                PositionCommand::Absolute => absolute_target_turn
+                    .ok_or_else(|| "Absolute repeat target is unavailable".to_owned())?,
+                PositionCommand::Incremental => current_position_turn + config.incremental_delta_turn,
+            };
+            if (target - current_position_turn).abs() <= 1e-9 {
+                return Err("Repeat position endpoints must be different".to_owned());
+            }
+            runtime.endpoint_a = Some(current_position_turn);
+            runtime.endpoint_b = Some(target);
+            runtime.next_is_b = true;
+            runtime.pending_target_is_b = None;
+        }
+
+        let target_is_b = runtime.next_is_b;
+        let target = (if target_is_b { runtime.endpoint_b } else { runtime.endpoint_a })
+            .ok_or_else(|| "Repeat position endpoints are not initialized".to_owned())?;
+        Ok(Some((target, target_is_b)))
+    }
+
+    pub(crate) fn repeat_mark_started(&self, target_is_b: bool) -> Result<(), String> {
+        self.repeat.lock().map_err(|_| "Motion repeat lock poisoned")?.pending_target_is_b = Some(target_is_b);
+        Ok(())
+    }
+
+    pub(crate) fn repeat_completed(&self, status: AxdrStatus) -> Result<(), String> {
+        let mut runtime = self.repeat.lock().map_err(|_| "Motion repeat lock poisoned")?;
+        if let Some(target_is_b) = runtime.pending_target_is_b.take() {
+            if status == AxdrStatus::Ok { runtime.next_is_b = !target_is_b; }
+        }
+        Ok(())
+    }
+
+    pub(crate) fn cancel_repeat_leg(&self) -> Result<(), String> {
+        self.repeat.lock().map_err(|_| "Motion repeat lock poisoned")?.pending_target_is_b = None;
+        Ok(())
+    }
+
+    pub(crate) fn reset_runtime(&self) -> Result<(), String> {
+        self.reset_repeat()
+    }
+
+    fn reset_repeat(&self) -> Result<(), String> {
+        *self.repeat.lock().map_err(|_| "Motion repeat lock poisoned")? = MotionRepeatRuntime::default();
+        Ok(())
     }
 
     /// A display preview uses one committed cache snapshot. It never reads the device
     /// or publishes Parameter events. Execution-time reads remain in `run`/Application.
-    pub fn preview_with_parameters(
+    pub(crate) fn preview_with_parameters(
         &self,
         parameters: &ParameterService,
         effective_speed_limit: Option<f64>,
+        current_position_turn_override: Option<f64>,
     ) -> Result<MotionPreview, String> {
         let config = self.get();
         validate_host_config(&config)?;
@@ -75,7 +184,7 @@ impl MotionService {
             }
         };
         let mode = match value("PARAM_MOTOR_MODE")? {
-            ParameterValue::U8(value) => mode_from_wire_value(value)?,
+            ParameterValue::U8(value) => mode_from_wire_value(parameters.schema(), value)?,
             _ => return Err("Motor mode is not a synchronized u8 parameter".to_owned()),
         };
         let limit = if let Some(limit) = effective_speed_limit {
@@ -93,7 +202,15 @@ impl MotionService {
                 let distance_turn = match config.position_command {
                     PositionCommand::Incremental => config.incremental_delta_turn,
                     PositionCommand::Absolute => {
-                        let current = position_to_turns(position("PARAM_RUN_POSITION")?);
+                        // The display preview may use the latest 1 kHz Plot
+                        // position from RuntimeTelemetry. Do not write that f32
+                        // projection back into the exact typed Position Parameter.
+                        // Execution-time Run still reads PARAM_RUN_POSITION from
+                        // the device before deriving an absolute/incremental target.
+                        let current = match current_position_turn_override {
+                            Some(value) if value.is_finite() => value,
+                            _ => position_to_turns(position("PARAM_RUN_POSITION")?),
+                        };
                         let target = position_to_turns(position("PARAM_TARGET_POSITION")?);
                         target - current
                     }
@@ -107,17 +224,20 @@ impl MotionService {
         }
     }
 
-    pub(crate) fn run(
+    pub(crate) fn run_checked(
         &self,
         parameters: &ParameterService,
         session: &DeviceSession,
         position_target_override: Option<f64>,
+        checkpoint: impl Fn() -> Result<(), String>,
     ) -> Result<ActionHandle, String> {
         let config = self.get();
         validate_host_config(&config)?;
-        let state = read_u8(parameters, "PARAM_MOTOR_STATE")?;
-        if state != 1 { return Err("motor must be ENABLED before Run".to_owned()); }
-        let mode = mode_from_wire_value(read_u8(parameters, "PARAM_MOTOR_MODE")?)?;
+        let state_parameter = parameters.schema().parameter_by_key("PARAM_MOTOR_STATE")
+            .ok_or_else(|| "connected device does not expose PARAM_MOTOR_STATE".to_owned())?;
+        let state = MotorState::from_parameter(state_parameter, read_u8(parameters, "PARAM_MOTOR_STATE")?)?;
+        if state != MotorState::Enabled { return Err(format!("motor must be ENABLED before Run; current state is {state}")); }
+        let mode = mode_from_wire_value(parameters.schema(), read_u8(parameters, "PARAM_MOTOR_MODE")?)?;
         if mode == MotionMode::Position {
             let target_turns = if let Some(target) = position_target_override {
                 Some(target)
@@ -126,9 +246,11 @@ impl MotionService {
                 Some(current + config.incremental_delta_turn)
             } else { None };
             if let Some(target) = target_turns {
+                checkpoint()?;
                 write_by_symbol(parameters, "PARAM_TARGET_POSITION", ParameterValue::Position(turns_to_position(target)?))?;
             }
         }
+        checkpoint()?;
         start_action(parameters, session, "ACTION_MOTOR_RUN")
     }
 }
@@ -179,14 +301,17 @@ pub(crate) fn turns_to_position(turns: f64) -> Result<PositionValue, String> {
     if whole < f64::from(i32::MIN) || whole > f64::from(i32::MAX) { return Err("position target is outside the supported turn range".to_owned()); }
     Ok(PositionValue { turns: whole as i32, theta: ((turns - whole) * std::f64::consts::TAU) as f32 })
 }
-pub(crate) fn mode_wire_value(mode: MotionMode) -> u8 {
-    match mode { MotionMode::Torque => 0, MotionMode::Speed => 1, MotionMode::Position => 2, MotionMode::SensorlessSpeed => 5 }
+pub(crate) fn mode_wire_value(schema: &HostSchema, mode: MotionMode) -> Result<u8, String> {
+    let parameter = schema.parameter_by_key("PARAM_MOTOR_MODE")
+        .ok_or_else(|| "Motor mode is not exposed".to_owned())?;
+    parameter.enum_u8(mode.symbol()).map_err(|error| error.to_string())
 }
-pub(crate) fn mode_from_wire_value(value: u8) -> Result<MotionMode, String> {
-    match value {
-        0 => Ok(MotionMode::Torque), 1 => Ok(MotionMode::Speed), 2 => Ok(MotionMode::Position), 5 => Ok(MotionMode::SensorlessSpeed),
-        other => Err(format!("unsupported motor mode value {other}")),
-    }
+pub(crate) fn mode_from_wire_value(schema: &HostSchema, value: u8) -> Result<MotionMode, String> {
+    let parameter = schema.parameter_by_key("PARAM_MOTOR_MODE")
+        .ok_or_else(|| "Motor mode is not exposed".to_owned())?;
+    let symbol = parameter.enum_symbol_u8(value)
+        .ok_or_else(|| format!("unsupported motor mode value {value}"))?;
+    MotionMode::from_symbol(symbol).ok_or_else(|| format!("unsupported motor mode symbol {symbol}"))
 }
 fn validate_host_config(config: &MotionConfig) -> Result<(), String> {
     if !config.incremental_delta_turn.is_finite() { return Err("Incremental position must be finite".to_owned()); }
@@ -267,5 +392,64 @@ mod tests {
         let preview = speed_preview(-100.0, 20.0, Some(30.0));
         assert!(preview.primary.iter().all(|value| *value >= -30.0 && *value <= 0.0));
         assert_eq!(preview.primary.last(), Some(&-30.0));
+    }
+
+    #[test]
+    fn motion_mode_uses_schema_values_not_fixed_ordinals() {
+        let schema = HostSchema::parse(r#"
+schema_version = 1
+protocol = "axdr-canfd-v1"
+
+[source]
+repository = "fixture"
+git_sha = "abc"
+parameter_schema = 1
+
+[[parameters]]
+symbol = "PARAM_MOTOR_MODE"
+label = "Motor Mode"
+id = 1793
+type = "u8"
+access = "rw"
+description = "mode"
+allowed = [7, 8, 9, 12]
+allowed_symbols = ["TORQUE", "SPEED", "POSITION", "SENSORLESS_SPEED"]
+"#).unwrap();
+
+        assert_eq!(mode_wire_value(&schema, MotionMode::Position).unwrap(), 9);
+        assert_eq!(mode_from_wire_value(&schema, 12).unwrap(), MotionMode::SensorlessSpeed);
+    }
+
+    #[test]
+    fn repeat_advances_only_after_successful_leg() {
+        let service = MotionService::default();
+        let mut config = service.get();
+        config.repeat = true;
+        config.position_command = PositionCommand::Incremental;
+        config.incremental_delta_turn = 1.0;
+        service.set(config).unwrap();
+
+        let (target, target_is_b) = service.repeat_target(2.0, None).unwrap().unwrap();
+        assert_eq!(target, 3.0);
+        assert!(target_is_b);
+        service.repeat_mark_started(target_is_b).unwrap();
+        service.repeat_completed(AxdrStatus::ErrState).unwrap();
+
+        let (target, target_is_b) = service.repeat_target(2.0, None).unwrap().unwrap();
+        assert_eq!(target, 3.0);
+        assert!(target_is_b);
+        service.repeat_mark_started(target_is_b).unwrap();
+        service.repeat_completed(AxdrStatus::Ok).unwrap();
+
+        let (target, target_is_b) = service.repeat_target(3.0, None).unwrap().unwrap();
+        assert_eq!(target, 2.0);
+        assert!(!target_is_b);
+
+        service.reset_runtime().unwrap();
+        assert!(service.get().repeat);
+        assert_eq!(service.get().incremental_delta_turn, 1.0);
+        let (target, target_is_b) = service.repeat_target(10.0, None).unwrap().unwrap();
+        assert_eq!(target, 11.0);
+        assert!(target_is_b);
     }
 }

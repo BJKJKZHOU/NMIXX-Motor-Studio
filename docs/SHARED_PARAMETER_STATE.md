@@ -32,11 +32,17 @@ selection and uncommitted text are local view state, not firmware parameter copi
 A write validates and sends one firmware value, then rereads the written parameter
 and its affected group in ParameterService. Firmware owns all calculations.
 
-The current affected groups cover current-loop bandwidth/source/gains,
+The affected readback relationships cover current-loop bandwidth/source/gains,
 speed-loop bandwidth/source/gains, model-dependent control and limit values,
 operating limits, encoder/reference configuration and motor-mode targets.
-Only parameters advertised as readable by the loaded schema are included.
-Adding a firmware dependency requires updating this shared table, not each page.
+They are declared once in firmware `Parameter/parameter.yaml` as Host-only
+`host.readback` / `host.readback_prefixes` metadata. The firmware exporter expands
+those declarations into explicit HostSchema `readback` symbols.
+
+ParameterService reads only that HostSchema list after a successful write. It does not
+maintain a second hand-written dependency table, and pages never provide dependent
+readback lists. Adding or changing a dependency therefore starts in firmware YAML,
+while generated firmware C tables/code remain unchanged by this Host-only metadata.
 
 Device read groups and write/readback groups are serialized. Cache changes are
 published as a group after the reads finish. Identical values do not generate a
@@ -73,10 +79,16 @@ reported and successful partial readbacks remain visible.
 ## Persistence presentation
 
 The frontend baseline is presentation state, not a host implementation of Flash.
-It is initialized from the first successful connection snapshot. Existing unsaved
-changes made before that connection cannot be inferred without a firmware persisted
-snapshot. Within the connection, all views compare the same canonical values against
-that baseline.
+It is initialized from the first successful connection snapshot, but only for
+Parameters whose generated HostSchema metadata declares `persistent = true`.
+Existing unsaved changes made before that connection cannot be inferred without a
+firmware persisted snapshot. Within the connection, all views compare the same
+canonical persistent values against that baseline.
+
+Writable RAM-only command/target Parameters are deliberately excluded from the
+modified set. The GUI must not keep a hand-written persistence list: firmware YAML
+owns the persistence declaration and HostSchema exports it to the shared Parameter
+metadata.
 
 Save is serialized with GUI writes. Only a successful firmware Save followed by
 successful synchronization establishes a new presentation baseline. Failed Save or

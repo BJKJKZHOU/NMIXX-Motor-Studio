@@ -1,5 +1,7 @@
 # UI Interaction Rules
 
+> **Normative interaction contract.** These rules are not implementation notes and must not be changed merely because current code differs. See `docs/README.md`.
+
 ## Purpose
 
 This document defines interaction rules shared by NMIXX Motor Studio pages. These rules belong to the application workbench rather than to any one Motor, Encoder, Control, Tuning or Analysis page.
@@ -21,7 +23,7 @@ Current page
 
 Bottom status bar
     connection/device identity
-    live Current / Speed / Position
+    live Current / Speed / Position / Vbus
 ```
 
 Do not duplicate the same information in all three areas.
@@ -36,9 +38,9 @@ The action group is aligned to the left edge of the main content area and must n
 
 ## Human-facing labels
 
-HostSchema `label` is the user-facing name for Parameters and Actions. Business pages, notifications, validation errors and accessibility text must use the label rather than firmware macro/symbol names.
+HostSchema `label` is the user-facing name for Parameters and metadata-driven expert surfaces. Semantic business operations such as Identification, Phase Search or Set Zero may use stable product labels owned by that workflow instead of exposing the underlying firmware Action metadata.
 
-`symbol` remains the stable programmatic key used by Application/GUI code to look up metadata and actions. It may be shown deliberately in expert/debug surfaces such as the generic Parameters table, logs or diagnostics, but it is not a fallback UI label.
+`symbol` remains the stable programmatic key used by Application code and expert tooling. It may be shown deliberately in expert/debug surfaces such as the generic Parameters table, logs or diagnostics, but it is never a fallback UI label for normal business pages.
 
 If expected metadata is unavailable, normal business UI should show an unavailable/missing state or an explicit human fallback defined by that workflow. It must not expose `PARAM_*`, `ACTION_*` or C variable-style names merely because schema lookup failed.
 
@@ -59,7 +61,7 @@ The `Enable / Disable` control is one stable stateful button, not two separate b
 
 The control must not rely on color alone. Text, icon and color change together so its action remains unambiguous across themes and for users who do not distinguish the colors reliably.
 
-`Stop` remains a separate button because stopping motion and changing motor enable state are different operations. The Stop control keeps a stable location even when it is currently unavailable; when no stoppable operation is active it is disabled/muted rather than removed.
+`Stop` remains a separate button because stopping motion and changing motor enable state are different operations. The host must not decide that Stop is unavailable merely because the current motor state is DISABLED or ENABLED. While a device is connected, pressing Stop immediately invokes the shared Application motor-stop semantic; the control is disabled only when the session is unavailable or a Stop request is already being issued.
 
 `Run` is not a generic global action. Run/Start belongs to the domain that defines what operation will execute.
 
@@ -144,12 +146,12 @@ Examples include:
 
 ```text
 Enable <-> Disable
-Start <-> Stop
 Record <-> Stop recording
-Start search <-> Abort search
 ```
 
-Use this pattern when the actions operate on the same task/resource and only one side is meaningful at a time. The button always describes the action that pressing it will perform.
+Use this pattern only when the domain itself owns both transitions of that resource and only one side is meaningful at a time. The button always describes the action that pressing it will perform.
+
+Motor operations are the important exception. Identification, Phase Search, Motion and Control Tuning share the workbench-level motor `Stop` semantic. Their page-level Start/Run controls must not invent an independent Abort/Stop path merely to form a visual pair. A domain page may expose a local Stop convenience control, but it must call the exact same Application motor-stop operation as the global Stop control.
 
 Do not merge unrelated actions merely because their names form a verbal pair. In particular, the global `Enable / Disable` button does not absorb the separate global `Stop` action, and domain-specific `Run` does not become a global toggle.
 
@@ -282,14 +284,21 @@ but single-device sessions should remain visually minimal.
 The right side is right-aligned and keeps this stable order:
 
 ```text
-Current    Speed    Position
+Current    Speed    Position    Vbus
 ```
 
 The intended meanings are:
 
 - **Current**: actual q-axis current `Iq` unless a future product decision explicitly changes the displayed quantity;
 - **Speed**: mechanical speed;
-- **Position**: user mechanical position, retaining the multi-turn `Turn + Theta` representation when appropriate.
+- **Position**: user mechanical position. The persistent status display is derived
+  from the 1 kHz baseline Plot total-turn signal and formats it as `Turn + Theta`
+  for presentation only; it does not replace the exact typed Position Parameter.
+- **Vbus**: sampled DC-bus voltage from the same connection-owned 1 kHz baseline.
+
+Current, Speed, Position and Vbus therefore share one runtime source. The device
+samples that baseline at 1 kHz; the desktop projects the latest values at its
+normal UI refresh cadence rather than issuing four independent Parameter reads.
 
 Page-specific acquisition information such as Scope state, FAST sample rate, selected channels or stream-loss counters belongs to Analysis, not to the global status bar.
 

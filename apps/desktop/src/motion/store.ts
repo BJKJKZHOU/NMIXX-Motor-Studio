@@ -14,6 +14,12 @@ let revision = 0;
 let writeChain: Promise<void> = Promise.resolve();
 let previewRevision = 0;
 
+/** Mirror a completed Application operation; never submit a second write. */
+export function acceptMotionSnapshot(config: MotionState): void {
+  ++revision;
+  motionState.set(config);
+}
+
 export async function initializeMotion(): Promise<void> {
   const epoch = get(parameterState).epoch;
   const before = revision;

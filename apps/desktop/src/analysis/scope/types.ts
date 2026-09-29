@@ -32,6 +32,7 @@ export type ScopeSnapshot = {
   recordedSeconds: number;
   lostFrames: number;
   state: string;
+  preview: boolean;
   series: ScopeSeries[];
 };
 

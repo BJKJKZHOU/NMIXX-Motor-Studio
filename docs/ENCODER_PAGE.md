@@ -139,7 +139,7 @@ The phase-search result is automatically applied by the firmware when the operat
 
 The resulting encoder direction and electrical offset are implementation/calibration results. They remain readable through the generic Parameters page but are not permanently displayed on the normal Encoder page. For the normal workflow, `Success` is sufficient.
 
-Phase Search follows the shared stateful-action interaction rule in `UI_INTERACTION_RULES.md`: while the same search task is active, the action control may change from Start to Abort/Stop in the same location rather than presenting two permanently adjacent controls.
+Phase Search uses the shared motor Stop semantic. Its page control remains the Phase Search Start/status control; stopping an active search goes through the same Application motor-stop operation used by the global Stop control. The page must not introduce a separate phase-search Abort/Stop implementation.
 
 ### Encoder direction versus motor direction
 
@@ -231,7 +231,7 @@ Without a valid mechanical zero, position limits cannot be enabled because their
 
 The GUI must not reproduce motor-state orchestration required to perform phase search or homing.
 
-The current AxDr_L firmware starts phase search by selecting `PHASE_SEARCH` motor mode, completing the generic motor-enable action, and then using the generic motor-run action. That device-side composition is hidden by the Rust Application API:
+The current AxDr_L firmware starts phase search by selecting `PHASE_SEARCH` motor mode, executing the synchronous motor-enable action, and then using the finite motor-run action. That device-side composition is hidden by the Rust Application API:
 
 ```text
 GUI / CLI / Automation
@@ -244,12 +244,22 @@ MotorActionService
         |
         +-- PARAM_MOTOR_MODE = PHASE_SEARCH
         +-- ACTION_MOTOR_ENABLE
-        +-- wait for Enable completion
+        +-- successful Enable response means Enable is complete
         +-- ACTION_MOTOR_RUN
-        +-- expose final completion as semantic phase-search completion
+        +-- wait for the finite Run/phase-search completion
+        +-- expose that completion as semantic phase-search completion
 ```
 
 The desktop client calls the semantic phase-search command. It does not know or reproduce the firmware sequence.
+
+Motor-state orchestration is part of that semantic operation as well:
+
+- if the motor is `RUN`, Phase Search is rejected and the shared Stop operation must be used first;
+- if the motor is `ENABLED` in another mode, Application disables it, selects `PHASE_SEARCH` while DISABLED, then enables again;
+- if the motor is already `ENABLED` in `PHASE_SEARCH`, Application does not perform a redundant Disable/Enable cycle;
+- if the motor is `DISABLED`, Application selects `PHASE_SEARCH`, enables, and starts the finite Run.
+
+The Encoder page must not add its own Enable/Disable sequence to compensate for firmware mode-write restrictions.
 
 This is intentionally an Application-level compatibility adapter. If firmware later exposes a native phase-search Action, only the Application implementation needs to change; Encoder GUI, CLI and automation semantics stay stable.
 

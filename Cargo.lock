@@ -1981,8 +1981,10 @@ checksum = "650eef8c711430f1a879fdd01d4745a7deea475becfb90269c06775983bbf086"
 name = "nmixx-app"
 version = "0.1.0"
 dependencies = [
+ "libc",
  "nmixx-core",
  "serde",
+ "serde_json",
  "thiserror 2.0.20",
  "toml 0.9.12+spec-1.1.0",
 ]

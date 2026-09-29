@@ -1,5 +1,5 @@
 import type { ParameterMetadata, ParameterValue, PositionValue } from "../parameters/types";
-import { parameterText, parseParameterText } from "../parameters/codec";
+import { parameterEnumSymbol, parameterEnumValue, parameterText, parseParameterText } from "../parameters/codec";
 import type { MotionMode } from "./types";
 
 export const MOTION_MODE = "PARAM_MOTOR_MODE";
@@ -19,16 +19,11 @@ const MODE_SYMBOL: Record<MotionMode, string> = {
 };
 export function modeFromParameter(meta: ParameterMetadata | undefined, value: ParameterValue | null | undefined): MotionMode | undefined {
   if (!meta || !value || value.type !== "u8") return undefined;
-  for (const [mode, symbol] of Object.entries(MODE_SYMBOL) as Array<[MotionMode, string]>) {
-    const index = meta.allowedSymbols.indexOf(symbol);
-    if (index >= 0 && Number(meta.allowed[index] ?? index) === Number(value.value)) return mode;
-  }
-  return undefined;
+  const symbol = parameterEnumSymbol(meta, Number(value.value));
+  return (Object.entries(MODE_SYMBOL) as Array<[MotionMode, string]>).find(([, candidate]) => candidate === symbol)?.[0];
 }
 export function modeParameterValue(meta: ParameterMetadata | undefined, mode: MotionMode): number | undefined {
-  if (!meta) return undefined;
-  const index = meta.allowedSymbols.indexOf(MODE_SYMBOL[mode]);
-  return index < 0 ? undefined : Number(meta.allowed[index] ?? index);
+  return parameterEnumValue(meta, MODE_SYMBOL[mode]);
 }
 export function positionToTurns(value: PositionValue): number {
   return Number(value.turns) + Number(value.theta) / (2 * Math.PI);

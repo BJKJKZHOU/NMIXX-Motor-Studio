@@ -1,6 +1,7 @@
 use thiserror::Error;
 
-use crate::{HostSchema, ParameterService, ParameterServiceError, ParameterValue};
+use crate::parameter_service::ParameterService;
+use crate::{HostSchema, ParameterServiceError, ParameterValue};
 
 const MOTOR_PP: &str = "PARAM_MOTOR_PP";
 const MOTOR_RS: &str = "PARAM_MOTOR_RS";
@@ -16,6 +17,8 @@ const ENCODER_READY: &str = "PARAM_ENCODER_READY";
 const ENCODER_VALID: &str = "PARAM_ENCODER_VALID";
 const ENCODER_FAULT: &str = "PARAM_ENCODER_FAULT";
 const PHASE_I_SEARCH: &str = "PARAM_PHASE_I_SEARCH";
+const EVENT_ERROR: &str = "PARAM_EVENT_ERROR";
+const EVENT_TRIP: &str = "PARAM_EVENT_TRIP";
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum IdentificationKind {
@@ -30,6 +33,7 @@ pub enum PreflightDomain {
     Motor,
     Encoder,
     Identification,
+    Protection,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -70,6 +74,8 @@ impl PreflightService {
         kind: IdentificationKind,
     ) -> Result<Vec<PreflightIssue>, PreflightError> {
         let mut issues = Vec::new();
+
+        self.require_clear_protection(&mut issues)?;
 
         let current_limit = self.require_positive(
             LIMIT_I_MAX,
@@ -186,6 +192,8 @@ impl PreflightService {
     pub fn check_phase_search(&self) -> Result<Vec<PreflightIssue>, PreflightError> {
         let mut issues = Vec::new();
 
+        self.require_clear_protection(&mut issues)?;
+
         self.require_flag(
             ENCODER_READY,
             true,
@@ -227,6 +235,47 @@ impl PreflightService {
         )?;
 
         Ok(issues)
+    }
+
+    fn require_clear_protection(
+        &self,
+        issues: &mut Vec<PreflightIssue>,
+    ) -> Result<(), PreflightError> {
+        self.require_zero_u32(
+            EVENT_ERROR,
+            PreflightDomain::Protection,
+            "Clear active protection errors before starting this operation.",
+            issues,
+        )?;
+        self.require_zero_u32(
+            EVENT_TRIP,
+            PreflightDomain::Protection,
+            "Clear the active hardware trip before starting this operation.",
+            issues,
+        )
+    }
+
+    fn require_zero_u32(
+        &self,
+        key: &str,
+        domain: PreflightDomain,
+        reason: &str,
+        issues: &mut Vec<PreflightIssue>,
+    ) -> Result<(), PreflightError> {
+        let metadata = self
+            .schema
+            .parameter_by_key(key)
+            .ok_or_else(|| PreflightError::MissingParameter(key.to_owned()))?;
+        match self.parameters.read(metadata.id)? {
+            ParameterValue::U32(0) => {}
+            ParameterValue::U32(_) => issues.push(PreflightIssue {
+                parameter_id: Some(metadata.id),
+                reason: reason.to_owned(),
+                suggested_domain: domain,
+            }),
+            _ => return Err(PreflightError::InvalidParameterType(key.to_owned())),
+        }
+        Ok(())
     }
 
     fn require_flag(

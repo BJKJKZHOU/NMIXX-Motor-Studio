@@ -7,7 +7,7 @@
 
 AxDr_L firmware already maintains `Parameter/parameter.yaml` as the single source of truth for Host-visible Parameters and Actions. NMIXX Motor Studio needs the same IDs, types, access rules, units, labels and descriptions without duplicating firmware implementation details or maintaining a second hand-written table.
 
-The source YAML also contains firmware-only fields such as `binding`, `getter`, `command` and `on_change`. Those must not become part of the Host API contract.
+The source YAML also contains firmware-only fields such as `binding`, `getter`, `command` and `on_change`. Those must not become part of the Host API contract. Conversely, Host-only metadata such as write/readback dependencies must not be emitted into firmware runtime tables or change MCU Flash/RAM usage.
 
 ## Decision
 
@@ -26,6 +26,20 @@ HostSchema / ParameterMetadata / ActionMetadata
 ```
 
 The TOML file is generated and must not be hand-edited. NMIXX treats it as an import/serialization format only; clients consume Rust metadata types rather than TOML parser values.
+
+Writable Parameters may declare Host-only dependency metadata in YAML:
+
+```yaml
+host:
+  readback: [PARAM_LIMIT_WM_EFFECTIVE]
+  readback_prefixes: [PARAM_CTRL_]
+```
+
+The firmware HostSchema exporter expands prefixes into an explicit `readback = [...]`
+symbol list. NMIXX ParameterService uses that list after a successful write to refresh
+firmware-derived values. The normal firmware generator deliberately ignores `host`
+metadata; CI verifies that stripping all Host metadata produces byte-identical
+generated firmware files.
 
 Each exported Parameter/Action has two different naming roles:
 
@@ -47,7 +61,7 @@ NMIXX does not infer a separate public API name from C symbols. If a future exte
 
 ## Consequences
 
-- `parameter.yaml` remains the only hand-maintained contract source.
+- `parameter.yaml` remains the only hand-maintained contract source, including Host write/readback relationships.
 - Firmware implementation-only fields do not leak into the Host contract.
 - Stable exported symbols remain available even when human-facing labels are added.
 - GUI and other clients can present concise labels without using them as the only identity.

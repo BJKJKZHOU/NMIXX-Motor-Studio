@@ -1,14 +1,14 @@
 use std::error::Error;
 use std::path::PathBuf;
 use std::str::FromStr;
-use std::sync::mpsc::RecvTimeoutError;
 use std::time::Duration;
 
 use clap::{Parser, Subcommand, ValueEnum};
 use nmixx_app::{
-    ActionHandle, ActionMetadata, ApplicationSession, AxdrStatus, DEFAULT_USB_BAUD, DeviceSession,
-    HostSchema, IdentificationKind, ParameterMetadata, ParameterType, ParameterValue, PositionValue,
-    SchemaNumber, SchemaStore, SessionEvent,
+    ActionCompletionWaiter, ActionHandle, ActionMetadata, ApplicationSession, AxdrStatus,
+    DEFAULT_USB_BAUD, HostSchema, IdentificationKind, MotionMode, MotionRuntimeStatus,
+    ParameterMetadata, ParameterType, ParameterValue, PositionCommand, PositionMotionRequest,
+    PositionValue, SchemaNumber, SchemaStore, SpeedMotionRequest,
 };
 
 #[derive(Debug, Parser)]
@@ -45,6 +45,10 @@ enum Command {
     Motor {
         #[command(subcommand)]
         command: MotorCommand,
+    },
+    Motion {
+        #[command(subcommand)]
+        command: MotionCommand,
     },
     Config {
         #[command(subcommand)]
@@ -90,16 +94,11 @@ enum ParamCommand {
 
 #[derive(Debug, Subcommand)]
 enum MotorCommand {
-    Enable {
-        #[arg(long, default_value_t = 30)]
-        timeout: u64,
-    },
-    Disable {
-        #[arg(long, default_value_t = 30)]
-        timeout: u64,
-    },
+    Enable,
+    Disable,
+    ClearFault,
     Stop {
-        #[arg(long, default_value_t = 30)]
+        #[arg(long, default_value_t = 60)]
         timeout: u64,
     },
     PhaseSearch {
@@ -109,11 +108,69 @@ enum MotorCommand {
 }
 
 #[derive(Debug, Subcommand)]
-enum ConfigCommand {
-    Save {
-        #[arg(long, default_value_t = 30)]
-        timeout: u64,
+enum MotionCommand {
+    Status,
+    Mode {
+        #[arg(value_enum)]
+        mode: CliMotionMode,
     },
+    Speed {
+        /// Mechanical speed target in rad/s.
+        target: f32,
+        #[arg(long)]
+        max_speed: Option<f32>,
+        #[arg(long)]
+        acc: Option<f32>,
+        #[arg(long)]
+        dec: Option<f32>,
+    },
+    Position {
+        /// Absolute target turns or incremental delta turns, selected by --command.
+        target_turn: f64,
+        #[arg(long, value_enum, default_value = "incremental")]
+        command: CliPositionCommand,
+        #[arg(long)]
+        max_speed: Option<f32>,
+        #[arg(long)]
+        acc: Option<f32>,
+        #[arg(long)]
+        dec: Option<f32>,
+    },
+}
+
+#[derive(Debug, Clone, Copy, ValueEnum)]
+enum CliMotionMode {
+    Position,
+    Speed,
+}
+
+impl From<CliMotionMode> for MotionMode {
+    fn from(value: CliMotionMode) -> Self {
+        match value {
+            CliMotionMode::Position => Self::Position,
+            CliMotionMode::Speed => Self::Speed,
+        }
+    }
+}
+
+#[derive(Debug, Clone, Copy, ValueEnum)]
+enum CliPositionCommand {
+    Absolute,
+    Incremental,
+}
+
+impl From<CliPositionCommand> for PositionCommand {
+    fn from(value: CliPositionCommand) -> Self {
+        match value {
+            CliPositionCommand::Absolute => Self::Absolute,
+            CliPositionCommand::Incremental => Self::Incremental,
+        }
+    }
+}
+
+#[derive(Debug, Subcommand)]
+enum ConfigCommand {
+    Save,
 }
 
 #[derive(Debug, Clone, Copy, ValueEnum)]
@@ -146,6 +203,7 @@ enum PreflightCommand {
 enum ActionCommand {
     List,
     Info { key: String },
+    /// Expert Action dispatch kept for protocol bring-up and compatibility.
     Start {
         key: String,
         #[arg(long)]
@@ -264,26 +322,18 @@ fn run() -> Result<(), Box<dyn Error>> {
                 print_parameter_info(metadata);
             }
             ParamCommand::Get { key, ty } => {
-                let parameter = resolve_parameter(schema.as_ref(), &key, ty)?;
-                let value = if let Some(schema) = schema.as_ref() {
-                    let app = open_application(port.as_deref(), baud, schema.clone())?;
-                    app.parameter_read(parameter.id)?
-                } else {
-                    let session = open_raw_session(port.as_deref(), baud)?;
-                    session.parameter_read(parameter.id, parameter.ty)?
-                };
+                let schema = require_schema(schema.as_ref())?;
+                let parameter = resolve_parameter(schema, &key, ty)?;
+                let app = open_application(port.as_deref(), baud, schema.clone())?;
+                let value = app.parameter_read(parameter.id)?;
                 print_parameter_value(parameter.metadata, parameter.id, value);
             }
             ParamCommand::Set { key, value, ty } => {
-                let parameter = resolve_parameter(schema.as_ref(), &key, ty)?;
+                let schema = require_schema(schema.as_ref())?;
+                let parameter = resolve_parameter(schema, &key, ty)?;
                 let value = parse_parameter_value(parameter.ty, &value)?;
-                if let Some(schema) = schema.as_ref() {
-                    let app = open_application(port.as_deref(), baud, schema.clone())?;
-                    app.parameter_write(parameter.id, value)?;
-                } else {
-                    let session = open_raw_session(port.as_deref(), baud)?;
-                    session.parameter_write(parameter.id, value)?;
-                }
+                let app = open_application(port.as_deref(), baud, schema.clone())?;
+                app.parameter_write(parameter.id, value)?;
                 println!("OK");
             }
             ParamCommand::ReadAll => {
@@ -311,27 +361,89 @@ fn run() -> Result<(), Box<dyn Error>> {
         Command::Motor { command } => {
             let schema = require_schema(schema.as_ref())?;
             let app = open_application(port.as_deref(), baud, schema.clone())?;
-            let events = app.subscribe()?;
-            let (handle, label, timeout) = match command {
-                MotorCommand::Enable { timeout } => (app.motor_enable()?, "motor enable", timeout),
-                MotorCommand::Disable { timeout } => (app.motor_disable()?, "motor disable", timeout),
-                MotorCommand::Stop { timeout } => (app.motor_stop()?, "motor stop", timeout),
-                MotorCommand::PhaseSearch { timeout } => {
-                    (app.phase_search_start()?, "phase search", timeout)
+            match command {
+                MotorCommand::Enable => {
+                    let handle = app.motor_enable()?;
+                    println!("completed txn={} motor enable", handle.txn.get());
                 }
-            };
-            println!("accepted txn={} {}", handle.txn.get(), label);
-            wait_for_action(Some(events), handle, label, None, timeout)?;
+                MotorCommand::Disable => {
+                    let handle = app.motor_disable()?;
+                    println!("completed txn={} motor disable", handle.txn.get());
+                }
+                MotorCommand::ClearFault => {
+                    let handle = app.protection_clear()?;
+                    println!("completed txn={} clear fault", handle.txn.get());
+                }
+                MotorCommand::Stop { timeout } => {
+                    let handle = app.motor_stop()?;
+                    println!("accepted txn={} motor stop", handle.txn.get());
+                    let status = app.motor_wait_stopped(Duration::from_secs(timeout))?;
+                    println!("stopped state={}", status.motor_state);
+                }
+                MotorCommand::PhaseSearch { timeout } => {
+                    let completion = app.action_completion_waiter()?;
+                    let handle = app.phase_search_start()?;
+                    println!("accepted txn={} phase search", handle.txn.get());
+                    wait_for_action(&completion, handle, "phase search", timeout)?;
+                }
+            }
+        }
+        Command::Motion { command } => {
+            let schema = require_schema(schema.as_ref())?;
+            let app = open_application(port.as_deref(), baud, schema.clone())?;
+            match command {
+                MotionCommand::Status => print_motion_status(&app.motion_status()?),
+                MotionCommand::Mode { mode } => {
+                    let mode = app.motion_set_mode(mode.into())?;
+                    println!("mode: {}", motion_mode_name(mode));
+                }
+                MotionCommand::Speed {
+                    target,
+                    max_speed,
+                    acc,
+                    dec,
+                } => {
+                    let handle = app.motion_run_speed(SpeedMotionRequest {
+                        target_rad_s: target,
+                        max_speed_rad_s: max_speed,
+                        acceleration_rad_s2: acc,
+                        deceleration_rad_s2: dec,
+                    })?;
+                    println!(
+                        "started txn={} speed target={target:.6} rad/s",
+                        handle.txn.get()
+                    );
+                }
+                MotionCommand::Position {
+                    target_turn,
+                    command,
+                    max_speed,
+                    acc,
+                    dec,
+                } => {
+                    let command = PositionCommand::from(command);
+                    let handle = app.motion_run_position(PositionMotionRequest {
+                        command,
+                        target_turn,
+                        max_speed_rad_s: max_speed,
+                        acceleration_rad_s2: acc,
+                        deceleration_rad_s2: dec,
+                    })?;
+                    println!(
+                        "started txn={} position {:?} target={target_turn:.9} turn",
+                        handle.txn.get(),
+                        command
+                    );
+                }
+            }
         }
         Command::Config { command } => {
             let schema = require_schema(schema.as_ref())?;
             let app = open_application(port.as_deref(), baud, schema.clone())?;
-            let events = app.subscribe()?;
             match command {
-                ConfigCommand::Save { timeout } => {
+                ConfigCommand::Save => {
                     let handle = app.config_save()?;
-                    println!("accepted txn={} config save", handle.txn.get());
-                    wait_for_action(Some(events), handle, "config save", None, timeout)?;
+                    println!("completed txn={} config save", handle.txn.get());
                 }
             }
         }
@@ -355,42 +467,77 @@ fn run() -> Result<(), Box<dyn Error>> {
                 let metadata = resolve_action_metadata(require_schema(schema.as_ref())?, &key)?;
                 print_action_info(metadata);
             }
-            ActionCommand::Start {
-                key,
-                no_wait,
-                timeout,
-            } => {
-                let (action_id, action_label) = resolve_action(schema.as_ref(), &key)?;
-
-                if let Some(schema) = schema.as_ref() {
-                    let app = open_application(port.as_deref(), baud, schema.clone())?;
-                    let events = if no_wait { None } else { Some(app.subscribe()?) };
-                    let action_key = schema
-                        .action_by_id(action_id)
-                        .map(|action| action.symbol.as_str())
-                        .ok_or_else(|| format!("action ID 0x{action_id:04X} is not present in the loaded schema"))?;
-                    let handle = app.action_start(action_key)?;
-                    println!(
-                        "accepted txn={} action={} (0x{action_id:04X})",
-                        handle.txn.get(),
-                        action_label
-                    );
-                    wait_for_action(events, handle, &action_label, Some(action_id), timeout)?;
-                } else {
-                    let session = open_raw_session(port.as_deref(), baud)?;
-                    let events = if no_wait { None } else { Some(session.subscribe()?) };
-                    let handle = session.action_start(action_id)?;
-                    println!(
-                        "accepted txn={} action={} (0x{action_id:04X})",
-                        handle.txn.get(),
-                        action_label
-                    );
-                    wait_for_action(events, handle, &action_label, Some(action_id), timeout)?;
+            ActionCommand::Start { key, no_wait, timeout } => {
+                let schema = require_schema(schema.as_ref())?;
+                let action = resolve_action_metadata(schema, &key)?;
+                let app = open_application(port.as_deref(), baud, schema.clone())?;
+                let completion = if no_wait { None } else { Some(app.action_completion_waiter()?) };
+                let handle = app.expert_action_start(&action.symbol)?;
+                println!(
+                    "accepted txn={} action={} (0x{:04X})",
+                    handle.txn.get(),
+                    action.label,
+                    action.id
+                );
+                if let Some(completion) = completion {
+                    wait_for_action(&completion, handle, &action.label, timeout)?;
                 }
             }
         },
     }
     Ok(())
+}
+
+fn print_motion_status(status: &MotionRuntimeStatus) {
+    println!("state: {}", status.motor_state);
+    println!("mode: {}", motion_mode_name(status.mode));
+
+    print_optional_f32("speed target", status.speed_target_rad_s, "rad/s");
+    print_optional_f32("speed ref", status.speed_ref_rad_s, "rad/s");
+    print_optional_f32("speed feedback", status.speed_feedback_rad_s, "rad/s");
+    print_optional_f32("encoder speed", status.encoder_speed_rad_s, "rad/s");
+    print_optional_f32("speed limit", status.speed_limit_rad_s, "rad/s");
+
+    print_optional_position("position target", status.position_target);
+    print_optional_position("position ref", status.position_ref);
+    print_optional_position("position feedback", status.position_feedback);
+
+    if status.encoder_ready.is_some()
+        || status.encoder_valid.is_some()
+        || status.encoder_fault.is_some()
+    {
+        println!(
+            "encoder: ready={} valid={} fault={}",
+            status.encoder_ready.map_or("-".to_owned(), |value| value.to_string()),
+            status.encoder_valid.map_or("-".to_owned(), |value| value.to_string()),
+            status.encoder_fault.map_or("-".to_owned(), |value| value.to_string())
+        );
+    }
+}
+
+fn motion_mode_name(mode: MotionMode) -> &'static str {
+    match mode {
+        MotionMode::Position => "POSITION",
+        MotionMode::Speed => "SPEED",
+        MotionMode::SensorlessSpeed => "SENSORLESS_SPEED",
+        MotionMode::Torque => "TORQUE",
+    }
+}
+
+fn print_optional_f32(label: &str, value: Option<f32>, unit: &str) {
+    if let Some(value) = value {
+        println!("{label}: {value:.6} {unit}");
+    }
+}
+
+fn print_optional_position(label: &str, value: Option<PositionValue>) {
+    if let Some(value) = value {
+        let turns = f64::from(value.turns) + f64::from(value.theta) / std::f64::consts::TAU;
+        println!(
+            "{label}: {:.9} turn (turn={}, theta={:.9} rad)",
+            turns, value.turns, value.theta
+        );
+    }
 }
 
 fn print_preflight_issues(issues: &[nmixx_app::PreflightIssue]) {
@@ -408,37 +555,17 @@ fn print_preflight_issues(issues: &[nmixx_app::PreflightIssue]) {
 }
 
 fn wait_for_action(
-    events: Option<std::sync::mpsc::Receiver<SessionEvent>>,
+    completion: &ActionCompletionWaiter,
     handle: ActionHandle,
     label: &str,
-    action_id: Option<u16>,
     timeout: u64,
 ) -> Result<(), Box<dyn Error>> {
-    let Some(events) = events else { return Ok(()); };
-
-    loop {
-        match events.recv_timeout(Duration::from_secs(timeout)) {
-            Ok(SessionEvent::ActionCompleted { handle: completed, status }) if completed == handle => {
-                match status {
-                    AxdrStatus::Ok => println!("completed OK"),
-                    other => return Err(match action_id {
-                        Some(id) => format!("{label} (0x{id:04X}) completed {other:?}").into(),
-                        None => format!("{label} completed {other:?}").into(),
-                    }),
-                }
-                return Ok(());
-            }
-            Ok(_) => continue,
-            Err(RecvTimeoutError::Timeout) => {
-                return Err(match action_id {
-                    Some(id) => format!("{label} (0x{id:04X}) completion timed out after {timeout}s").into(),
-                    None => format!("{label} completion timed out after {timeout}s").into(),
-                });
-            }
-            Err(RecvTimeoutError::Disconnected) => {
-                return Err("device session closed while waiting for action".into());
-            }
+    match completion.wait(handle, Some(Duration::from_secs(timeout)))? {
+        AxdrStatus::Ok => {
+            println!("completed OK");
+            Ok(())
         }
+        status => Err(format!("{label} completed {status:?}").into()),
     }
 }
 
@@ -453,11 +580,6 @@ fn open_application(
 ) -> Result<ApplicationSession, Box<dyn Error>> {
     let port = port.ok_or("--port is required for this command")?;
     Ok(ApplicationSession::open_usb(port, baud, schema)?)
-}
-
-fn open_raw_session(port: Option<&str>, baud: u32) -> Result<DeviceSession, Box<dyn Error>> {
-    let port = port.ok_or("--port is required for this raw command")?;
-    Ok(DeviceSession::open_usb(port, baud)?)
 }
 
 fn resolve_parameter_metadata<'a>(schema: &'a HostSchema, key: &str) -> Result<&'a ParameterMetadata, Box<dyn Error>> {
@@ -482,59 +604,31 @@ fn resolve_action_metadata<'a>(schema: &'a HostSchema, key: &str) -> Result<&'a 
     Err(format!("unknown action key '{key}' in loaded schema").into())
 }
 
-fn resolve_parameter<'a>(schema: Option<&'a HostSchema>, key: &str, type_override: Option<CliParameterType>) -> Result<ResolvedParameter<'a>, Box<dyn Error>> {
-    if let Some(schema) = schema {
-        if let Some(metadata) = schema.parameter_by_key(key) {
-            let schema_type = metadata.parameter_type()?;
-            if let Some(override_type) = type_override {
-                let override_type: ParameterType = override_type.into();
-                if override_type != schema_type {
-                    return Err(format!(
-                        "parameter {} type mismatch: schema={}, CLI={override_type:?}",
-                        metadata.symbol, metadata.type_name
-                    ).into());
-                }
-            }
-            return Ok(ResolvedParameter { id: metadata.id, ty: schema_type, metadata: Some(metadata) });
-        }
-        if let Ok(id) = parse_u16(key) {
-            if let Some(metadata) = schema.parameter_by_id(id) {
-                return Ok(ResolvedParameter { id, ty: metadata.parameter_type()?, metadata: Some(metadata) });
-            }
-            if let Some(override_type) = type_override {
-                return Ok(ResolvedParameter { id, ty: override_type.into(), metadata: None });
-            }
+fn resolve_parameter<'a>(
+    schema: &'a HostSchema,
+    key: &str,
+    type_override: Option<CliParameterType>,
+) -> Result<ResolvedParameter<'a>, Box<dyn Error>> {
+    let metadata = if let Some(metadata) = schema.parameter_by_key(key) {
+        metadata
+    } else if let Ok(id) = parse_u16(key) {
+        schema.parameter_by_id(id)
+            .ok_or_else(|| format!("parameter ID 0x{id:04X} is not present in the loaded schema"))?
+    } else {
+        return Err(format!("unknown parameter key '{key}' in loaded schema").into());
+    };
+
+    let schema_type = metadata.parameter_type()?;
+    if let Some(override_type) = type_override {
+        let override_type: ParameterType = override_type.into();
+        if override_type != schema_type {
             return Err(format!(
-                "parameter ID 0x{id:04X} is not present in the loaded schema; use --type for raw access"
+                "parameter {} type mismatch: schema={}, CLI={override_type:?}",
+                metadata.symbol, metadata.type_name
             ).into());
         }
-        return Err(format!("unknown parameter key '{key}' in loaded schema").into());
     }
-
-    let id = parse_u16(key).map_err(|_| {
-        format!("parameter '{key}' requires --schema; without a schema only numeric IDs are accepted")
-    })?;
-    let ty = type_override.ok_or("--type is required for raw numeric parameter access without --schema")?;
-    Ok(ResolvedParameter { id, ty: ty.into(), metadata: None })
-}
-
-fn resolve_action(schema: Option<&HostSchema>, key: &str) -> Result<(u16, String), Box<dyn Error>> {
-    if let Some(schema) = schema {
-        if let Some(action) = schema.action_by_key(key) {
-            return Ok((action.id, action.label.as_str().to_owned()));
-        }
-        if let Ok(id) = parse_u16(key) {
-            if let Some(action) = schema.action_by_id(id) {
-                return Ok((id, action.label.as_str().to_owned()));
-            }
-            return Ok((id, format!("0x{id:04X}")));
-        }
-        return Err(format!("unknown action key '{key}' in loaded schema").into());
-    }
-    let id = parse_u16(key).map_err(|_| {
-        format!("action '{key}' requires --schema; without a schema only numeric IDs are accepted")
-    })?;
-    Ok((id, format!("0x{id:04X}")))
+    Ok(ResolvedParameter { id: metadata.id, ty: schema_type, metadata: Some(metadata) })
 }
 
 fn parse_u16(text: &str) -> Result<u16, String> {
