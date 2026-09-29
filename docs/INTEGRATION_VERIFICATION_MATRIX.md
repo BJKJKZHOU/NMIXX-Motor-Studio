@@ -1161,6 +1161,14 @@ happens to exist.
 This section is intentionally cross-domain. It catches bugs caused by fixing one
 page at the wrong ownership layer.
 
+### Documentation / traceability regression
+
+- [ ] Every current Activity Bar page/domain has an explicit normative page contract or is explicitly covered by a shared normative contract.
+- [ ] Every current-scope normative requirement is represented by at least one Matrix verification item.
+- [ ] Deferred/future features are explicitly listed as out of the current acceptance scope rather than silently omitted.
+- [ ] No Matrix item relies only on an incidental current implementation detail with no normative/invariant/regression source.
+- [ ] Any product-semantic change made during integration updates the normative document first, then affected Matrix items/tests, then implementation.
+
 ### Shared Parameter regression
 
 - [ ] Change one Motor Parameter; Motor, Parameters, Control/Limits dependent views all agree.
