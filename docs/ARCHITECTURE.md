@@ -93,6 +93,11 @@ A client may format values, render a progress bar, or compose a workflow, but it
 
 The desktop client is split by **functional domain and shared internal capability**, not by visual rectangles or one-file-per-widget rules.
 
+This architecture includes both current and planned domains. Whether a capability
+counts toward the current software-completion target is defined explicitly by
+`INTEGRATION_VERIFICATION_MATRIX.md`; planned domains must not be mistaken for
+currently verified functionality.
+
 ```text
 App shell
   |
@@ -108,6 +113,7 @@ App shell
   |     +-- Current Loop
   |     +-- Speed Loop
   |     +-- Position Loop
+  +-- Motion
   +-- Control Tuning
   |
   +-- Analysis
@@ -213,6 +219,9 @@ Limits / Safety
 Control architecture
     |
     v
+Motion
+    |
+    v
 Control Tuning
     |
     v
@@ -226,6 +235,7 @@ The order communicates the normal engineering sequence without turning the appli
 - **Encoder** configures feedback protocol/interface and protocol-specific parameters. Phase search current, homing and zero-setting tools belong here because they establish position/electrical alignment.
 - **Limits / Safety** configures user operating limits and other software safety boundaries while keeping hardware protection semantics distinct.
 - **Control Architecture** is a parent workflow with three child pages: **Current Loop**, **Speed Loop**, and **Position Loop**. Each child configures that loop's control structure: controller type, topology, feedback/observer choice, filters, feedforward and the Parameters that belong to those blocks. It may expose editable Bandwidth/Kp/Ki inside the diagram when those Parameters are part of the active block, but it is not the primary repeated tune-run-inspect workspace. Detailed page rules are in `CONTROL_ARCHITECTURE_PAGE.md`.
+- **Motion** is the general direct-command workspace for the currently supported Position/Speed/Sensorless-Speed/Torque command semantics and trajectory preview. It uses the shared Parameter/Application state and does not own motor Enable/Disable. Detailed page rules are in `MOTION_PAGE.md`.
 - **Control Tuning** runs bounded tuning experiments for the already selected structure: it repeats only the common / primary tuning Parameters, binds them to one motion command, captures the synchronized response, and preserves the completed waveform for comparison. It does not absorb structural options such as controller type, filters, feedback selection or feedforward.
 - **Analysis** provides general-purpose continuous or manually triggered engineering analysis. Scope, FFT and Bode share acquisition and plotting infrastructure but are not responsible for the Control Tuning experiment workflow.
 
@@ -238,7 +248,7 @@ The Parameter subsystem is the single source of truth for host-visible parameter
 ```text
 Parameter service
       |
-      +--> Parameters table   (all parameters, direct read/write/import/export)
+      +--> Parameters table   (all parameters, direct read/write; import/export requires its own approved contract)
       +--> Motor page         (motor-related parameter view)
       +--> Encoder page       (feedback-related parameter view)
       +--> Limits page        (operating/safety limits)
