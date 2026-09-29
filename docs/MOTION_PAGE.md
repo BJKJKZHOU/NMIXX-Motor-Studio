@@ -154,24 +154,36 @@ inventing a second completion meaning.
 
 Disable remains distinct from Stop.
 
-## Repeat — deferred product semantic
+## Repeat — manual alternating runs
 
-The Motion page contains a Repeat concept, but the execution contract has not yet
-been formally selected.
+Repeat is Host-side Position command semantics. It is not a firmware Repeat mode
+and it does not start a continuous oscillation.
 
-Do **not** infer one of these behaviors from the current code:
+When Repeat is enabled, the first manual Run establishes endpoints A and B. Each
+manual Run executes exactly one leg:
 
-- one Run automatically executes a forward and reverse pair;
-- Repeat continuously alternates until Stop;
-- each separate Run alternates the target.
+```text
+Run #1: A -> B
+Run #2: B -> A
+Run #3: A -> B
+```
+
+After one leg completes successfully, only the target for the **next manual Run**
+is switched to the opposite endpoint. Repeat must never issue an automatic second
+Run.
+
+A continuously cycling A <-> B servo-test is a separate workflow with its own
+control/button and lifecycle. It must not be implemented by changing the meaning
+of Repeat.
 
 The current AxDr_L generic Motor Run does not emit an ACTION_COMPLETE event for
-normal Position motion, so an implementation that advances Repeat purely from
-generic Action completion is not valid.
+normal Position motion. Therefore the existing completion-driven Repeat bookkeeping
+is not yet a valid end-to-end implementation: Application must use a valid
+successful-leg completion criterion before advancing the next manual Run target.
+Stop, Disable, a failed Run or a fault must not advance Repeat direction.
 
-Until an explicit product decision defines Repeat completion and sequencing, Repeat
-must not be considered Wired/Verified. Any future implementation belongs in the
-Application Motion workflow and must remain cancellable by the shared Stop path.
+Repeat sequencing belongs in the Application Motion workflow and remains
+cancellable by the shared Stop path.
 
 ## Relationship to Control Tuning
 
