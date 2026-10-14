@@ -162,7 +162,12 @@ impl Worker {
                 Ok(command) => { self.handle_command(command); continue; }
                 Err(mpsc::TryRecvError::Empty) => {}
             }
-            let _ = self.poll_one(RX_POLL);
+            // A permanent I/O failure closes the worker instead of spinning on a
+            // disconnected port. A malformed frame remains recoverable.
+            if matches!(self.poll_one(RX_POLL),
+                Err(SessionError::Transport(TransportError::Io(_) | TransportError::NotConnected))) {
+                break;
+            }
         }
     }
 

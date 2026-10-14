@@ -141,9 +141,14 @@ impl ApplicationSession {
                     }
                     _ => {}
                 }
-                if let Ok(mut subscribers) = inner.events.lock() {
-                    subscribers.retain(|sender| sender.send(event.clone()).is_ok());
-                };
+                // Scope consumes the raw stream directly from DeviceSession.
+                // Application subscribers only need actions and device events;
+                // relaying waveform frames here queues unbounded redundant data.
+                if !matches!(&event, SessionEvent::FastData(_) | SessionEvent::NormalData(_)) {
+                    if let Ok(mut subscribers) = inner.events.lock() {
+                        subscribers.retain(|sender| sender.send(event.clone()).is_ok());
+                    }
+                }
             }
         });
         Ok(app)

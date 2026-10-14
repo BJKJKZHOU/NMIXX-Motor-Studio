@@ -238,6 +238,9 @@ impl ParameterService {
         let entries = stream.ids.iter().map(|id| (*id, Err(format!("Runtime stream: {message}")))).collect();
         let Ok(mut cache) = self.cache.write() else { return; };
         let changed = update_cache(&mut cache, entries);
+        // The failed/stopped stream no longer owns these Parameter values.
+        // A later explicit device Read must be allowed to restore the cache.
+        stream.ids.clear();
         stream.dirty.clear();
         drop(cache);
         drop(stream);

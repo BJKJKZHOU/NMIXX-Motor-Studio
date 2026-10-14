@@ -241,3 +241,21 @@ fn malformed_response_does_not_poison_following_request() {
         ParameterValue::U8(0)
     );
 }
+
+#[test]
+fn permanent_transport_io_failure_closes_the_session_worker() {
+    let state = ScriptState::default();
+    state.incoming.lock().unwrap().push_back(Err(TransportError::Io("cable removed".into())));
+    let session = DeviceSession::spawn(Box::new(ScriptedTransport::new(state)));
+    // The worker must terminate after the permanent I/O failure rather than
+    // consuming further requests on the dead transport.
+    let mut closed = false;
+    for _ in 0..100 {
+        if matches!(session.parameter_read(0x0710, ParameterType::U8), Err(SessionError::Closed)) {
+            closed = true;
+            break;
+        }
+        std::thread::sleep(Duration::from_millis(1));
+    }
+    assert!(closed);
+}
