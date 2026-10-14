@@ -95,6 +95,16 @@ When future firmware exposes another profile through stable Parameters/capabilit
 metadata, the page may add that option without creating a second Host-owned copy of
 those values.
 
+Position's Max Speed input is a workflow label for the absolute value of
+`PARAM_TARGET_SPEED`, not a separate firmware `PARAM_MOTION_WM_MAX` Parameter.
+The same target-speed Parameter supplies the signed Speed-mode command, so both
+pages must use one shared committed value. Torque slew uses `PARAM_MOTION_TE_RATE`.
+
+The current firmware also exports `PARAM_MOTION_PROFILE` with two S-curve
+variants. The desktop can detect this capability, but the current Motion editor
+and theoretical preview have not yet implemented S-curve selection/shape; they
+must not claim the T-profile preview predicts an S-curve run.
+
 ## Preview semantics
 
 Trajectory preview is a read-only projection.

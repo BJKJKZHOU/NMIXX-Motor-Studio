@@ -40,7 +40,7 @@
     { activeSymbol: "PARAM_MOTOR_J", identifiedSymbol: "PARAM_IDENT_J_RESULT", identifiedValidSymbol: "PARAM_IDENT_JB_VALID", identKey: "jb" },
     { activeSymbol: "PARAM_MOTOR_B", identifiedSymbol: "PARAM_IDENT_B_RESULT", identifiedValidSymbol: "PARAM_IDENT_JB_VALID" },
   ];
-  const IDENTIFICATION_SETTING_SYMBOLS = ["PARAM_IDENT_IF_CURRENT", "PARAM_IDENT_JB_EXCITE_RATIO", "PARAM_IDENT_JB_EXCITE_HZ"] as const;
+  const IDENTIFICATION_SETTING_SYMBOLS = ["PARAM_MOTOR_IF_CURRENT", "PARAM_IDENT_JB_EXCITE_RATIO", "PARAM_IDENT_JB_EXCITE_HZ"] as const;
   const failReasonSymbol = "PARAM_IDENT_FAIL_REASON";
   const parameters = selectParameters([
     ...ROWS.flatMap((row) => [row.activeSymbol, row.identifiedSymbol, row.identifiedValidSymbol].filter((symbol): symbol is string => !!symbol)),

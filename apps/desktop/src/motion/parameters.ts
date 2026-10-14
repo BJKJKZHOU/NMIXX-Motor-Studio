@@ -3,17 +3,18 @@ import { parameterEnumSymbol, parameterEnumValue, parameterText, parseParameterT
 import type { MotionMode } from "./types";
 
 export const MOTION_MODE = "PARAM_MOTOR_MODE";
-export const MOTION_MAX_SPEED = "PARAM_MOTION_WM_MAX";
+// Position planning uses the absolute shared Speed Target as its maximum speed.
+export const MOTION_MAX_SPEED = "PARAM_TARGET_SPEED";
 export const MOTION_ACCEL = "PARAM_MOTION_WM_ACC";
 export const MOTION_DECEL = "PARAM_MOTION_WM_DEC";
 export const TARGET_POSITION = "PARAM_TARGET_POSITION";
 export const TARGET_SPEED = "PARAM_TARGET_SPEED";
 export const TARGET_TORQUE = "PARAM_TARGET_TORQUE";
-export const TORQUE_RAMP = "PARAM_MOTION_TORQUE_RAMP";
-export const SENSORLESS_STARTUP_CURRENT = "PARAM_SENSORLESS_STARTUP_CURRENT";
+export const TORQUE_RAMP = "PARAM_MOTION_TE_RATE";
+export const SENSORLESS_STARTUP_CURRENT = "PARAM_MOTOR_IF_CURRENT";
 export const SENSORLESS_ENTRY_SPEED = "PARAM_SENSORLESS_ENTRY_SPEED";
 export const MOTION_PARAMETER_SYMBOLS = [MOTION_MODE, MOTION_MAX_SPEED, MOTION_ACCEL, MOTION_DECEL,
-  TARGET_POSITION, TARGET_SPEED, TARGET_TORQUE, TORQUE_RAMP, SENSORLESS_STARTUP_CURRENT, SENSORLESS_ENTRY_SPEED] as const;
+  TARGET_POSITION, TARGET_TORQUE, TORQUE_RAMP, SENSORLESS_STARTUP_CURRENT, SENSORLESS_ENTRY_SPEED] as const;
 const MODE_SYMBOL: Record<MotionMode, string> = {
   position: "POSITION", speed: "SPEED", "sensorless-speed": "SENSORLESS_SPEED", torque: "TORQUE",
 };

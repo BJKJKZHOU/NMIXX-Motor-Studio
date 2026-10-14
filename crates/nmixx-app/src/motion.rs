@@ -199,7 +199,7 @@ impl MotionService {
             MotionMode::Position => {
                 let acc = number("PARAM_MOTION_WM_ACC")?;
                 let dec = number("PARAM_MOTION_WM_DEC")?;
-                let max_speed = number("PARAM_MOTION_WM_MAX")?;
+                let max_speed = number("PARAM_TARGET_SPEED")?;
                 let distance_turn = match config.position_command {
                     PositionCommand::Incremental => config.incremental_delta_turn,
                     PositionCommand::Absolute => {
