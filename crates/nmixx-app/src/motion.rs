@@ -132,6 +132,16 @@ impl MotionService {
         Ok(Some((target, target_is_b)))
     }
 
+    pub(crate) fn repeat_pending_target(&self) -> Result<Option<f64>, String> {
+        let runtime = self.repeat.lock().map_err(|_| "Motion repeat lock poisoned")?;
+        let target = match runtime.pending_target_is_b {
+            Some(true) => runtime.endpoint_b,
+            Some(false) => runtime.endpoint_a,
+            None => return Ok(None),
+        };
+        target.ok_or_else(|| "Pending Repeat endpoint is unavailable".to_owned()).map(Some)
+    }
+
     pub(crate) fn repeat_mark_started(&self, target_is_b: bool) -> Result<(), String> {
         self.repeat.lock().map_err(|_| "Motion repeat lock poisoned")?.pending_target_is_b = Some(target_is_b);
         Ok(())
@@ -433,13 +443,17 @@ allowed_symbols = ["TORQUE", "SPEED", "POSITION", "SENSORLESS_SPEED"]
         assert_eq!(target, 3.0);
         assert!(target_is_b);
         service.repeat_mark_started(target_is_b).unwrap();
+        assert_eq!(service.repeat_pending_target().unwrap(), Some(3.0));
         service.repeat_completed(AxdrStatus::ErrState).unwrap();
+        assert_eq!(service.repeat_pending_target().unwrap(), None);
 
         let (target, target_is_b) = service.repeat_target(2.0, None).unwrap().unwrap();
         assert_eq!(target, 3.0);
         assert!(target_is_b);
         service.repeat_mark_started(target_is_b).unwrap();
+        assert_eq!(service.repeat_pending_target().unwrap(), Some(3.0));
         service.repeat_completed(AxdrStatus::Ok).unwrap();
+        assert_eq!(service.repeat_pending_target().unwrap(), None);
 
         let (target, target_is_b) = service.repeat_target(3.0, None).unwrap().unwrap();
         assert_eq!(target, 2.0);

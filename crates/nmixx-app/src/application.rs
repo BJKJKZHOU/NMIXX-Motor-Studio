@@ -370,6 +370,8 @@ impl ApplicationSession {
         Ok(handle)
     }
     pub fn motor_stop(&self) -> Result<ActionHandle, ApplicationError> {
+        // Explicit Stop/Disable cancels the current Repeat leg without advancing it.
+        self.inner.motion.cancel_repeat_leg().map_err(ApplicationError::Motion)?;
         if self.workflow_owner.is_none() { self.inner.workflow_access.revoke(); }
         // Cancel delayed Run before sending Stop, including while PREPARING.
         self.inner.motor_gate.cancel();
@@ -383,6 +385,8 @@ impl ApplicationSession {
         Ok(handle)
     }
     pub fn motor_disable(&self) -> Result<ActionHandle, ApplicationError> {
+        // Explicit Stop/Disable cancels the current Repeat leg without advancing it.
+        self.inner.motion.cancel_repeat_leg().map_err(ApplicationError::Motion)?;
         if self.workflow_owner.is_none() { self.inner.workflow_access.revoke(); }
         self.inner.motor_gate.cancel();
         let cancelled = self.request_tuning_stop();
@@ -488,10 +492,26 @@ impl ApplicationSession {
                 return Err(ApplicationError::TuningExperimentBusy);
             }
         }
-        let completion = self.action_completion_waiter()?;
         let config = self.inner.motion.get();
         let mode = self.read_motion_mode()?;
         let repeat_target = if mode == MotionMode::Position && config.repeat {
+            if let Some(previous_target) = self.inner.motion.repeat_pending_target().map_err(ApplicationError::Motion)? {
+                // Normal Position Run has no ACTION_COMPLETE. Its trajectory reference
+                // snaps exactly to the target at the end of the firmware planner.
+                // Complete one manual leg only when the user requests the next one.
+                if self.read_motor_state()? != MotorState::Run {
+                    return Err(ApplicationError::Motion("Previous Repeat leg is no longer RUN; Stop or reset Repeat before retrying".into()));
+                }
+                let reference = self.read_position_turns("PARAM_REF_POSITION")?;
+                if (reference - previous_target).abs() > 8.0 * f32::EPSILON as f64 {
+                    return Err(ApplicationError::Motion("Previous Repeat trajectory has not reached its target".into()));
+                }
+                self.workflow_checkpoint(ticket)?;
+                self.motor_actions().stop()?;
+                self.wait_motor_stopped()?;
+                self.workflow_checkpoint(ticket)?;
+                self.inner.motion.repeat_completed(AxdrStatus::Ok).map_err(ApplicationError::Motion)?;
+            }
             let current = self.read_position_turns("PARAM_RUN_POSITION")?;
             let absolute_target = if config.position_command == PositionCommand::Absolute {
                 Some(self.read_position_turns("PARAM_TARGET_POSITION")?)
@@ -506,19 +526,8 @@ impl ApplicationSession {
             .map_err(ApplicationError::Motion)?;
         if let Some((_, target_is_b)) = repeat_target {
             self.inner.motion.repeat_mark_started(target_is_b).map_err(ApplicationError::Motion)?;
-            // Do not keep the whole connection alive while waiting for an Action.
-            let weak = Arc::downgrade(&self.inner);
-            thread::spawn(move || {
-                let Ok(status) = completion.wait(handle, None) else { return; };
-                if let Some(inner) = weak.upgrade() {
-                    let _ = (ApplicationSession { inner, workflow_owner: None, workflow_cleanup: false }).motion_run_completed(status);
-                }
-            });
         }
         Ok(handle)
-    }
-    fn motion_run_completed(&self, status: AxdrStatus) -> Result<(), ApplicationError> {
-        self.inner.motion.repeat_completed(status).map_err(ApplicationError::Motion)
     }
     pub fn motion_stop(&self) -> Result<ActionHandle, ApplicationError> {
         self.inner.motion.cancel_repeat_leg().map_err(ApplicationError::Motion)?;
