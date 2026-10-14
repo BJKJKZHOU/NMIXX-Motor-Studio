@@ -281,6 +281,9 @@ fn disconnect_application(state: &State<'_, Mutex<DesktopState>>) -> Result<(), 
         let mut guard = state.lock().map_err(|_| "desktop state is poisoned".to_owned())?;
         guard.disconnecting = false;
         if result.is_ok() && guard.app.as_ref().is_some_and(|current| current.is_same_session(&app)) {
+            // Automation tasks and logs belong to the old device session.
+            // Reset only after successful motor/transport and task cleanup.
+            guard.automation = nmixx_app::AutomationRuntime::default();
             guard.app.take()
         } else { None }
     };
