@@ -52,7 +52,6 @@ def position_turns(row):
 required = [
     "PARAM_MOTOR_STATE",
     "PARAM_RUN_POSITION",
-    "PARAM_ENCODER_WM",
     "PARAM_ENCODER_READY",
     "PARAM_ENCODER_VALID",
     "PARAM_ENCODER_FAULT",
@@ -77,19 +76,23 @@ show("Before hand turn", before_rows)
 progress_before = client.stream_progress()
 
 print(
-    "\nRotate the motor shaft by hand NOW. Observing exact Position and Encoder WM for 2 seconds...",
+    "\nRotate the motor shaft by hand NOW. Observing exact Position for 2 seconds...",
     flush=True,
 )
 
 samples = []
+previous_position = position_turns(before["PARAM_RUN_POSITION"])
 for index in range(10):
     client.wait(0.2)
-    rows = rows_by_symbol(client.read(["PARAM_RUN_POSITION", "PARAM_ENCODER_WM"]))
+    rows = rows_by_symbol(client.read(["PARAM_RUN_POSITION"]))
+    current_position = position_turns(rows["PARAM_RUN_POSITION"])
     samples.append({
         "tSeconds": round((index + 1) * 0.2, 1),
-        "positionTurns": position_turns(rows["PARAM_RUN_POSITION"]),
-        "encoderWm": float(typed_value(rows["PARAM_ENCODER_WM"], "f32")),
+        "positionTurns": current_position,
+        # Observed average speed, not the firmware's mechanical speed feedback.
+        "positionDeltaSpeedRadPerSec": (current_position - previous_position) * math.tau / 0.2,
     })
+    previous_position = current_position
 
 after_rows = client.read(keys)
 after = rows_by_symbol(after_rows)
@@ -99,7 +102,7 @@ scope = client.scope_summary(window_seconds=2.0)
 start_position = position_turns(before["PARAM_RUN_POSITION"])
 end_position = position_turns(after["PARAM_RUN_POSITION"])
 positions = [start_position] + [sample["positionTurns"] for sample in samples] + [end_position]
-speeds = [sample["encoderWm"] for sample in samples]
+speeds = [sample["positionDeltaSpeedRadPerSec"] for sample in samples]
 
 before_progress = {item["id"]: item for item in progress_before["channels"]}
 batch_delta = []
@@ -121,7 +124,7 @@ summary = {
     "exactPositionDeltaTurns": end_position - start_position,
     "exactPositionObservedMinTurns": min(positions),
     "exactPositionObservedMaxTurns": max(positions),
-    "encoderWmPeakAbsRadPerSec": max((abs(speed) for speed in speeds), default=0.0),
+    "positionDerivedSpeedPeakAbsRadPerSec": max((abs(speed) for speed in speeds), default=0.0),
     "encoderReadyEnd": typed_value(after["PARAM_ENCODER_READY"], "u8"),
     "encoderValidEnd": typed_value(after["PARAM_ENCODER_VALID"], "u8"),
     "encoderFaultEnd": typed_value(after["PARAM_ENCODER_FAULT"], "u8"),
@@ -150,11 +153,11 @@ show("Hand-turn diagnosis summary", summary)
 
 print(
     "\nInterpretation: PARAM_RUN_WM is allowed to remain 0 while DISABLED; "
-    "use exact Position and PARAM_ENCODER_WM for this hand-turn check.",
+    "use exact Position changes for this hand-turn check. Derived speed is a 0.2 s interval average.",
     flush=True,
 )
 print(
-    "If you physically rotated the shaft but exact Position, Encoder WM and the existing "
+    "If you physically rotated the shaft but exact Position and the existing "
     "Scope Position range all stayed unchanged while baseline batches kept arriving, "
     "the fault is below the GUI/Automation display path.",
     flush=True,

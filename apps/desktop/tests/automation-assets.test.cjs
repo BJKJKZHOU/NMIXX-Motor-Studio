@@ -46,3 +46,12 @@ test("all built-in Automation Python assets parse with Python 3", () => {
     `Python syntax validation failed:\n${result.stderr || result.stdout}`,
   );
 });
+
+test("hand-turn diagnosis does not require a nonexistent Encoder speed Parameter", () => {
+  const { readFileSync } = require("node:fs");
+  const filename = path.resolve(__dirname, "../../../crates/nmixx-app/src/automation/assets/encoder_turn_diagnosis.py");
+  const source = readFileSync(filename, "utf8");
+  assert.doesNotMatch(source, /PARAM_ENCODER_WM/);
+  assert.match(source, /positionDeltaSpeedRadPerSec/);
+  assert.match(source, /PARAM_RUN_POSITION/);
+});
