@@ -61,7 +61,7 @@ enum Command {
     PlotStart { group_mask: u8, reply: mpsc::Sender<Result<(), SessionError>> },
     PlotStop { group_mask: u8, reply: mpsc::Sender<Result<(), SessionError>> },
     PlotCapabilities { start: u8, reply: mpsc::Sender<Result<PlotCapabilitiesPage, SessionError>> },
-    Subscribe { subscriber: mpsc::Sender<SessionEvent> },
+    Subscribe { subscriber: mpsc::Sender<SessionEvent>, include_stream: bool },
     Shutdown,
 }
 
@@ -137,17 +137,31 @@ impl DeviceSession {
     }
 
     pub fn subscribe(&self) -> Result<mpsc::Receiver<SessionEvent>, SessionError> {
+        self.subscribe_filtered(true)
+    }
+
+    /// Subscribe to Actions and device events without queuing high-rate Plot frames.
+    pub fn subscribe_control(&self) -> Result<mpsc::Receiver<SessionEvent>, SessionError> {
+        self.subscribe_filtered(false)
+    }
+
+    fn subscribe_filtered(&self, include_stream: bool) -> Result<mpsc::Receiver<SessionEvent>, SessionError> {
         let (tx, rx) = mpsc::channel();
-        self.inner.commands.send(Command::Subscribe { subscriber: tx }).map_err(|_| SessionError::Closed)?;
+        self.inner.commands.send(Command::Subscribe { subscriber: tx, include_stream }).map_err(|_| SessionError::Closed)?;
         Ok(rx)
     }
+}
+
+struct Subscriber {
+    sender: mpsc::Sender<SessionEvent>,
+    include_stream: bool,
 }
 
 struct Worker {
     transport: Box<dyn FrameTransport>,
     transactions: TransactionTable,
     actions: ActionTracker,
-    subscribers: Vec<mpsc::Sender<SessionEvent>>,
+    subscribers: Vec<Subscriber>,
     io_failed: bool,
 }
 
@@ -185,7 +199,7 @@ impl Worker {
             Command::PlotStart { group_mask, reply } => { let _ = reply.send(self.plot_start(group_mask)); }
             Command::PlotStop { group_mask, reply } => { let _ = reply.send(self.plot_stop(group_mask)); }
             Command::PlotCapabilities { start, reply } => { let _ = reply.send(self.plot_capabilities_page(start)); }
-            Command::Subscribe { subscriber } => self.subscribers.push(subscriber),
+            Command::Subscribe { subscriber, include_stream } => self.subscribers.push(Subscriber { sender: subscriber, include_stream }),
             Command::Shutdown => {}
         }
     }
@@ -337,6 +351,12 @@ impl Worker {
             InboundFrame::NormalData(frame) => Some(SessionEvent::NormalData(frame)),
             InboundFrame::Response(_) | InboundFrame::Unknown(_) => None,
         };
-        if let Some(event) = event { self.subscribers.retain(|subscriber| subscriber.send(event.clone()).is_ok()); }
+        if let Some(event) = event {
+            let stream = matches!(&event, SessionEvent::FastData(_) | SessionEvent::NormalData(_));
+            self.subscribers.retain(|subscriber| {
+                if stream && !subscriber.include_stream { return true; }
+                subscriber.sender.send(event.clone()).is_ok()
+            });
+        }
     }
 }

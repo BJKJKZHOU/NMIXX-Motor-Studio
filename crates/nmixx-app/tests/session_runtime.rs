@@ -144,6 +144,20 @@ fn async_event_is_dispatched_while_waiting_for_parameter_response() {
 }
 
 #[test]
+fn control_subscription_does_not_receive_waveform_frames() {
+    use nmixx_core::protocol::MSG_FAST_DATA;
+
+    let state = ScriptState::default();
+    let stream = CanFdFrame::new(can_id(MSG_FAST_DATA, NODE_ID_DEFAULT), &[1, 0, 7, 1, 10, 0]).unwrap();
+    let notify = CanFdFrame::new(can_id(MSG_EVENT, NODE_ID_DEFAULT), &[EVENT_NOTIFY, 0, 0, 0]).unwrap();
+    let session = DeviceSession::spawn(Box::new(ScriptedTransport::new(state.clone())));
+    let control = session.subscribe_control().unwrap();
+    state.incoming.lock().unwrap().extend([Ok(stream), Ok(notify)]);
+    assert!(matches!(control.recv_timeout(Duration::from_millis(100)).unwrap(), SessionEvent::DeviceEvent(_)));
+    assert!(control.try_recv().is_err());
+}
+
+#[test]
 fn action_completion_can_arrive_before_accept_response() {
     let state = ScriptState::default();
     let action_id = 0x1001;

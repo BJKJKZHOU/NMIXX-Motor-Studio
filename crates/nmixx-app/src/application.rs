@@ -100,7 +100,7 @@ impl ApplicationSession {
     }
     pub(crate) fn from_session_with_motion(session: DeviceSession, schema: HostSchema, motion: MotionService) -> Result<Self, ApplicationError> {
         motion.reset_runtime().map_err(ApplicationError::Motion)?;
-        let events = session.subscribe()?;
+        let events = session.subscribe_control()?;
         let parameters = ParameterService::new(session.clone(), schema.clone());
         let motion_capabilities = MotionCapabilities::from_schema(&schema);
         let commissioning_capabilities = CommissioningCapabilities::from_schema(&schema);
