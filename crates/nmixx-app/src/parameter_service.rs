@@ -595,6 +595,42 @@ description = "test"
     }
 
     #[test]
+    fn explicit_read_recovers_cache_after_stream_stops() {
+        let schema = HostSchema::parse(r#"
+schema_version = 1
+protocol = "axdr-canfd-v1"
+
+[source]
+repository = "fixture"
+git_sha = "abc"
+parameter_schema = 1
+
+[[parameters]]
+symbol = "PARAM_RUN_TEST"
+label = "Runtime Test"
+id = 8
+type = "f32"
+access = "ro"
+description = "read-only runtime sample"
+"#).unwrap();
+        let state = ScriptState::default();
+        let mut data = vec![8, 0, ParameterType::F32 as u8];
+        data.extend_from_slice(&3.25f32.to_le_bytes());
+        state.respond_on_send(vec![Ok(response(1, PARAM_READ, AxdrStatus::Ok, &data))]);
+
+        let session = DeviceSession::spawn(Box::new(ScriptedTransport { state }));
+        let service = ParameterService::new(session, schema);
+        service.ingest_stream_values(&[(8, 2.5)]).unwrap();
+        assert_eq!(service.cached(8).unwrap(), Some(ParameterValue::F32(2.5)));
+
+        service.invalidate_stream_values("acquisition stopped");
+        assert!(matches!(service.cached(8), Err(ParameterServiceError::CachedReadFailed { id: 8, .. })));
+
+        assert_eq!(service.read(8).unwrap(), ParameterValue::F32(3.25));
+        assert_eq!(service.cached(8).unwrap(), Some(ParameterValue::F32(3.25)));
+    }
+
+    #[test]
     fn failed_write_reconciles_cache_from_authoritative_readback() {
         let state = ScriptState::default();
         state.respond_on_send(vec![Ok(read_response(1, 7))]);
