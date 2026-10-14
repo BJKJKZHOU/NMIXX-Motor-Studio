@@ -148,18 +148,23 @@ struct Worker {
     transactions: TransactionTable,
     actions: ActionTracker,
     subscribers: Vec<mpsc::Sender<SessionEvent>>,
+    io_failed: bool,
 }
 
 impl Worker {
     fn new(transport: Box<dyn FrameTransport>) -> Self {
-        Self { transport, transactions: TransactionTable::default(), actions: ActionTracker::default(), subscribers: Vec::new() }
+        Self { transport, transactions: TransactionTable::default(), actions: ActionTracker::default(), subscribers: Vec::new(), io_failed: false }
     }
 
     fn run(mut self, commands: mpsc::Receiver<Command>) {
         loop {
             match commands.try_recv() {
                 Ok(Command::Shutdown) | Err(mpsc::TryRecvError::Disconnected) => break,
-                Ok(command) => { self.handle_command(command); continue; }
+                Ok(command) => {
+                    self.handle_command(command);
+                    if self.io_failed { break; }
+                    continue;
+                }
                 Err(mpsc::TryRecvError::Empty) => {}
             }
             // A permanent I/O failure closes the worker instead of spinning on a
@@ -188,7 +193,11 @@ impl Worker {
     fn parameter_read(&mut self, id: u16, ty: ParameterType) -> Result<ParameterValue, SessionError> {
         let txn = self.transactions.allocate(MSG_PARAMETER, PARAM_READ)?;
         let frame = build_parameter_read_default(txn, id).map_err(|error| SessionError::Parameter(error.to_string()))?;
-        if let Err(error) = self.transport.send(&frame) { self.transactions.cancel(txn); return Err(error.into()); }
+        if let Err(error) = self.transport.send(&frame) {
+            self.transactions.cancel(txn);
+            self.io_failed = matches!(error, TransportError::Io(_) | TransportError::NotConnected);
+            return Err(error.into());
+        }
         let response = self.wait_response(txn, REQUEST_TIMEOUT)?;
         parse_parameter_read(&response, id, ty).map_err(|error| SessionError::Parameter(error.to_string()))
     }
@@ -196,7 +205,11 @@ impl Worker {
     fn parameter_write(&mut self, id: u16, value: ParameterValue) -> Result<(), SessionError> {
         let txn = self.transactions.allocate(MSG_PARAMETER, PARAM_WRITE)?;
         let frame = build_parameter_write(txn, id, value, NODE_ID_DEFAULT).map_err(|error| SessionError::Parameter(error.to_string()))?;
-        if let Err(error) = self.transport.send(&frame) { self.transactions.cancel(txn); return Err(error.into()); }
+        if let Err(error) = self.transport.send(&frame) {
+            self.transactions.cancel(txn);
+            self.io_failed = matches!(error, TransportError::Io(_) | TransportError::NotConnected);
+            return Err(error.into());
+        }
         let response = self.wait_response(txn, REQUEST_TIMEOUT)?;
         parse_parameter_write(&response, id).map_err(|error| SessionError::Parameter(error.to_string()))
     }
@@ -209,6 +222,7 @@ impl Worker {
         if let Err(error) = self.transport.send(&frame) {
             self.transactions.cancel(txn);
             self.actions.remove(handle);
+            self.io_failed = matches!(error, TransportError::Io(_) | TransportError::NotConnected);
             return Err(error.into());
         }
         let response = match self.wait_response(txn, REQUEST_TIMEOUT) {
@@ -226,7 +240,11 @@ impl Worker {
     fn plot_config(&mut self, group: u8, config_id: u8, parameters: &[u16]) -> Result<(), SessionError> {
         let txn = self.transactions.allocate(MSG_PLOT, PLOT_CONFIG)?;
         let frame = build_plot_config_default(txn, group, config_id, parameters).map_err(|error| SessionError::Plot(error.to_string()))?;
-        if let Err(error) = self.transport.send(&frame) { self.transactions.cancel(txn); return Err(error.into()); }
+        if let Err(error) = self.transport.send(&frame) {
+            self.transactions.cancel(txn);
+            self.io_failed = matches!(error, TransportError::Io(_) | TransportError::NotConnected);
+            return Err(error.into());
+        }
         let response = self.wait_response(txn, REQUEST_TIMEOUT)?;
         parse_plot_config_response(&response, group, config_id, parameters).map_err(|error| SessionError::Plot(error.to_string()))
     }
@@ -234,7 +252,11 @@ impl Worker {
     fn plot_start(&mut self, group_mask: u8) -> Result<(), SessionError> {
         let txn = self.transactions.allocate(MSG_PLOT, PLOT_START)?;
         let frame = build_plot_start_default(txn, group_mask).map_err(|error| SessionError::Plot(error.to_string()))?;
-        if let Err(error) = self.transport.send(&frame) { self.transactions.cancel(txn); return Err(error.into()); }
+        if let Err(error) = self.transport.send(&frame) {
+            self.transactions.cancel(txn);
+            self.io_failed = matches!(error, TransportError::Io(_) | TransportError::NotConnected);
+            return Err(error.into());
+        }
         let response = self.wait_response(txn, REQUEST_TIMEOUT)?;
         parse_plot_start_response(&response).map_err(|error| SessionError::Plot(error.to_string()))
     }
@@ -242,7 +264,11 @@ impl Worker {
     fn plot_stop(&mut self, group_mask: u8) -> Result<(), SessionError> {
         let txn = self.transactions.allocate(MSG_PLOT, PLOT_STOP)?;
         let frame = build_plot_stop_default(txn, group_mask).map_err(|error| SessionError::Plot(error.to_string()))?;
-        if let Err(error) = self.transport.send(&frame) { self.transactions.cancel(txn); return Err(error.into()); }
+        if let Err(error) = self.transport.send(&frame) {
+            self.transactions.cancel(txn);
+            self.io_failed = matches!(error, TransportError::Io(_) | TransportError::NotConnected);
+            return Err(error.into());
+        }
         let response = self.wait_response(txn, REQUEST_TIMEOUT)?;
         parse_plot_stop_response(&response).map_err(|error| SessionError::Plot(error.to_string()))
     }
@@ -250,7 +276,11 @@ impl Worker {
     fn plot_capabilities_page(&mut self, start: u8) -> Result<PlotCapabilitiesPage, SessionError> {
         let txn = self.transactions.allocate(MSG_PLOT, PLOT_CAPS)?;
         let frame = build_plot_caps_default(txn, start).map_err(|error| SessionError::Plot(error.to_string()))?;
-        if let Err(error) = self.transport.send(&frame) { self.transactions.cancel(txn); return Err(error.into()); }
+        if let Err(error) = self.transport.send(&frame) {
+            self.transactions.cancel(txn);
+            self.io_failed = matches!(error, TransportError::Io(_) | TransportError::NotConnected);
+            return Err(error.into());
+        }
         let response = self.wait_response(txn, REQUEST_TIMEOUT)?;
         parse_plot_caps_response(&response, start).map_err(|error| SessionError::Plot(error.to_string()))
     }
@@ -275,7 +305,11 @@ impl Worker {
                     }
                 }
                 Err(TransportError::Timeout) => { self.transactions.cancel(txn); return Err(SessionError::Timeout); }
-                Err(error) => { self.transactions.cancel(txn); return Err(error.into()); }
+                Err(error) => {
+                    self.transactions.cancel(txn);
+                    self.io_failed = matches!(error, TransportError::Io(_) | TransportError::NotConnected);
+                    return Err(error.into());
+                }
             }
         }
     }
