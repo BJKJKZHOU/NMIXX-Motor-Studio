@@ -4,7 +4,7 @@ use std::sync::{Arc, Mutex, RwLock};
 use serde::{Deserialize, Serialize};
 
 use crate::parameter_service::ParameterService;
-use crate::{ActionHandle, AxdrStatus, DeviceSession, HostSchema, MotorState, ParameterValue, PositionValue};
+use crate::{ActionHandle, DeviceSession, HostSchema, MotorState, ParameterValue, PositionValue};
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "kebab-case")]
@@ -64,12 +64,11 @@ pub struct MotionPreview {
 struct MotionRepeatRuntime {
     endpoint_a: Option<f64>,
     endpoint_b: Option<f64>,
-    next_is_b: bool,
     pending_target_is_b: Option<bool>,
 }
 impl Default for MotionRepeatRuntime {
     fn default() -> Self {
-        Self { endpoint_a: None, endpoint_b: None, next_is_b: true, pending_target_is_b: None }
+        Self { endpoint_a: None, endpoint_b: None, pending_target_is_b: None }
     }
 }
 
@@ -122,11 +121,11 @@ impl MotionService {
             }
             runtime.endpoint_a = Some(current_position_turn);
             runtime.endpoint_b = Some(target);
-            runtime.next_is_b = true;
             runtime.pending_target_is_b = None;
         }
 
-        let target_is_b = runtime.next_is_b;
+        // The Host chooses the opposite endpoint for the next manual Run.
+        let target_is_b = runtime.pending_target_is_b != Some(true);
         let target = (if target_is_b { runtime.endpoint_b } else { runtime.endpoint_a })
             .ok_or_else(|| "Repeat position endpoints are not initialized".to_owned())?;
         Ok(Some((target, target_is_b)))
@@ -144,14 +143,6 @@ impl MotionService {
 
     pub(crate) fn repeat_mark_started(&self, target_is_b: bool) -> Result<(), String> {
         self.repeat.lock().map_err(|_| "Motion repeat lock poisoned")?.pending_target_is_b = Some(target_is_b);
-        Ok(())
-    }
-
-    pub(crate) fn repeat_completed(&self, status: AxdrStatus) -> Result<(), String> {
-        let mut runtime = self.repeat.lock().map_err(|_| "Motion repeat lock poisoned")?;
-        if let Some(target_is_b) = runtime.pending_target_is_b.take() {
-            if status == AxdrStatus::Ok { runtime.next_is_b = !target_is_b; }
-        }
         Ok(())
     }
 
@@ -431,7 +422,7 @@ allowed_symbols = ["TORQUE", "SPEED", "POSITION", "SENSORLESS_SPEED"]
     }
 
     #[test]
-    fn repeat_advances_only_after_successful_leg() {
+    fn repeat_targets_are_selected_by_the_host_on_each_manual_run() {
         let service = MotionService::default();
         let mut config = service.get();
         config.repeat = true;
@@ -439,31 +430,19 @@ allowed_symbols = ["TORQUE", "SPEED", "POSITION", "SENSORLESS_SPEED"]
         config.incremental_delta_turn = 1.0;
         service.set(config).unwrap();
 
-        let (target, target_is_b) = service.repeat_target(2.0, None).unwrap().unwrap();
-        assert_eq!(target, 3.0);
-        assert!(target_is_b);
-        service.repeat_mark_started(target_is_b).unwrap();
+        assert_eq!(service.repeat_target(2.0, None).unwrap(), Some((3.0, true)));
+        service.repeat_mark_started(true).unwrap();
         assert_eq!(service.repeat_pending_target().unwrap(), Some(3.0));
-        service.repeat_completed(AxdrStatus::ErrState).unwrap();
+
+        // No Action completion is required. A rejected update does not advance.
+        assert_eq!(service.repeat_target(3.0, None).unwrap(), Some((2.0, false)));
+        assert_eq!(service.repeat_target(3.0, None).unwrap(), Some((2.0, false)));
+        service.repeat_mark_started(false).unwrap();
+        assert_eq!(service.repeat_target(2.0, None).unwrap(), Some((3.0, true)));
+
+        service.cancel_repeat_leg().unwrap();
         assert_eq!(service.repeat_pending_target().unwrap(), None);
-
-        let (target, target_is_b) = service.repeat_target(2.0, None).unwrap().unwrap();
-        assert_eq!(target, 3.0);
-        assert!(target_is_b);
-        service.repeat_mark_started(target_is_b).unwrap();
-        assert_eq!(service.repeat_pending_target().unwrap(), Some(3.0));
-        service.repeat_completed(AxdrStatus::Ok).unwrap();
-        assert_eq!(service.repeat_pending_target().unwrap(), None);
-
-        let (target, target_is_b) = service.repeat_target(3.0, None).unwrap().unwrap();
-        assert_eq!(target, 2.0);
-        assert!(!target_is_b);
-
         service.reset_runtime().unwrap();
-        assert!(service.get().repeat);
-        assert_eq!(service.get().incremental_delta_turn, 1.0);
-        let (target, target_is_b) = service.repeat_target(10.0, None).unwrap().unwrap();
-        assert_eq!(target, 11.0);
-        assert!(target_is_b);
+        assert_eq!(service.repeat_target(10.0, None).unwrap(), Some((11.0, true)));
     }
 }

@@ -480,10 +480,10 @@ impl ApplicationSession {
             .preview_with_parameters(&self.inner.parameters, None, current_position_turn)
             .map_err(ApplicationError::Motion)
     }
-    pub fn motion_run(&self) -> Result<ActionHandle, ApplicationError> {
+    pub fn motion_run(&self) -> Result<Option<ActionHandle>, ApplicationError> {
         self.motion_run_at(self.inner.motor_gate.ticket(), None)
     }
-    fn motion_run_at(&self, ticket: u64, experiment: Option<u64>) -> Result<ActionHandle, ApplicationError> {
+    fn motion_run_at(&self, ticket: u64, experiment: Option<u64>) -> Result<Option<ActionHandle>, ApplicationError> {
         let _workflow = self.workflow_permit()?;
         let _command = self.inner.motor_gate.start(ticket)
             .map_err(|message| ApplicationError::Motion(message.to_owned()))?;
@@ -499,40 +499,50 @@ impl ApplicationSession {
         }
         let config = self.inner.motion.get();
         let mode = self.read_motion_mode()?;
-        let repeat_target = if mode == MotionMode::Position && config.repeat {
-            if let Some(previous_target) = self.inner.motion.repeat_pending_target().map_err(ApplicationError::Motion)? {
-                // Normal Position Run has no ACTION_COMPLETE. Its trajectory reference
-                // snaps exactly to the target at the end of the firmware planner.
-                // Complete one manual leg only when the user requests the next one.
-                if self.read_motor_state()? != MotorState::Run {
-                    return Err(ApplicationError::Motion("Previous Repeat leg is no longer RUN; Stop or reset Repeat before retrying".into()));
-                }
+        let repeat = experiment.is_none() && mode == MotionMode::Position && config.repeat;
+        let motor_state = if repeat { Some(self.read_motor_state()?) } else { None };
+        let target = if repeat {
+            if motor_state == Some(MotorState::Run) {
+                // Ordinary Position Run has no ACTION_COMPLETE; the firmware
+                // trajectory reference reaches the selected endpoint at completion.
+                let previous = self.inner.motion.repeat_pending_target()
+                    .map_err(ApplicationError::Motion)?
+                    .ok_or_else(|| ApplicationError::Motion("Repeat has not been started here".into()))?;
                 let reference = self.read_position_turns("PARAM_REF_POSITION")?;
-                if (reference - previous_target).abs() > 8.0 * f32::EPSILON as f64 {
-                    return Err(ApplicationError::Motion("Previous Repeat trajectory has not reached its target".into()));
+                if (reference - previous).abs() > 1e-5 {
+                    return Err(ApplicationError::Motion("Previous Repeat trajectory is not complete".into()));
                 }
-                self.workflow_checkpoint(ticket)?;
-                self.motor_actions().stop()?;
-                self.wait_motor_stopped()?;
-                self.workflow_checkpoint(ticket)?;
-                self.inner.motion.repeat_completed(AxdrStatus::Ok).map_err(ApplicationError::Motion)?;
             }
             let current = self.read_position_turns("PARAM_RUN_POSITION")?;
-            let absolute_target = if config.position_command == PositionCommand::Absolute {
+            let absolute = if config.position_command == PositionCommand::Absolute {
                 Some(self.read_position_turns("PARAM_TARGET_POSITION")?)
-            } else {
-                None
-            };
-            self.inner.motion.repeat_target(current, absolute_target).map_err(ApplicationError::Motion)?
-        } else {
-            None
-        };
-        let handle = self.inner.motion.run_checked(&self.inner.parameters, &self.inner.session, repeat_target.map(|(target, _)| target), || self.workflow_checkpoint(ticket))
-            .map_err(ApplicationError::Motion)?;
-        if let Some((_, target_is_b)) = repeat_target {
-            self.inner.motion.repeat_mark_started(target_is_b).map_err(ApplicationError::Motion)?;
+            } else { None };
+            self.inner.motion.repeat_target(current, absolute).map_err(ApplicationError::Motion)?
+        } else { None };
+
+        if motor_state == Some(MotorState::Run) {
+            // A subsequent manual Run selects A/B on the Host. Firmware stays
+            // RUN and follows the newly written Position target.
+            let (next, is_b) = target.ok_or_else(|| ApplicationError::Motion("Missing Repeat target".into()))?;
+            self.workflow_checkpoint(ticket)?;
+            let meta = self.inner.schema.parameter_by_key("PARAM_TARGET_POSITION")
+                .ok_or_else(|| ApplicationError::Motion("Position target is not exposed".into()))?;
+            let position = crate::motion::turns_to_position(next).map_err(ApplicationError::Motion)?;
+            self.inner.parameters.write_readback(meta.id, ParameterValue::Position(position))?;
+            self.inner.motion.repeat_mark_started(is_b).map_err(ApplicationError::Motion)?;
+            return Ok(None);
         }
-        Ok(handle)
+
+        let handle = self.inner.motion.run_checked(
+            &self.inner.parameters,
+            &self.inner.session,
+            target.map(|(value, _)| value),
+            || self.workflow_checkpoint(ticket),
+        ).map_err(ApplicationError::Motion)?;
+        if let Some((_, is_b)) = target {
+            self.inner.motion.repeat_mark_started(is_b).map_err(ApplicationError::Motion)?;
+        }
+        Ok(Some(handle))
     }
     pub fn motion_stop(&self) -> Result<ActionHandle, ApplicationError> {
         self.inner.motion.cancel_repeat_leg().map_err(ApplicationError::Motion)?;

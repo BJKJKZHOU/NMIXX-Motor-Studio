@@ -130,11 +130,11 @@ The f32 Plot position must never overwrite the exact typed Position Parameter.
 Run is explicit and domain-local.
 
 - Run never implicitly Enables the motor.
-- The motor must already be ENABLED.
+- The first Run requires ENABLED. Subsequent manual Position Repeat clicks may update a target while the motor remains RUN.
 - The selected firmware mode and command Parameters must already be committed.
 - Any pending normal Parameter writes/host Motion-state updates are completed before
   Run is dispatched.
-- One Run interaction sends one semantic Motion Run request.
+- One click sends one Host operation: the initial Motor Run Action or, while Position Repeat is already RUN, a Position target write.
 - Device/runtime feedback remains authoritative for actual motion.
 
 Run acceptance is not universal proof that motion has finished. Normal Speed,
@@ -176,10 +176,11 @@ A continuously cycling A <-> B servo-test is a separate workflow with its own
 control/button and lifecycle. It must not be implemented by changing the meaning
 of Repeat.
 
-The current AxDr_L generic Motor Run does not emit an ACTION_COMPLETE event for
-normal Position motion. Therefore the existing completion-driven Repeat bookkeeping
-is not yet a valid end-to-end implementation: Application must use a valid
-successful-leg completion criterion before advancing the next manual Run target.
+The firmware does not emit ACTION_COMPLETE for ordinary Position Run. After the
+first Run, the firmware remains RUN and follows PARAM_TARGET_POSITION. On a later
+manual Run click, the Application checks that the prior trajectory reference has
+reached its selected endpoint and writes the opposite target. It does not send a
+second Motor Run Action or introduce a firmware Repeat mode.
 Stop, Disable, a failed Run or a fault must not advance Repeat direction.
 
 Repeat sequencing belongs in the Application Motion workflow and remains

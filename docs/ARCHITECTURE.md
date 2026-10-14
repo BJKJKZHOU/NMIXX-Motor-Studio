@@ -447,7 +447,8 @@ Incremental Position is intentionally different because the user enters a delta,
 
 Repeat is host command semantics, not a firmware Repeat mode and not an automatic loop.
 
-With Position Repeat enabled, the first manual Run establishes endpoints A and B. One Run executes only one leg. A successful Run completion changes which endpoint the **next manual Run** targets:
+With Position Repeat enabled, the first manual Run establishes endpoints A and B. One Run executes only one leg. When the prior trajectory reference reaches its endpoint, the **next manual Run**
+writes the opposite Position target (without another Motor Run Action while RUN):
 
 ```text
 Run #1: A -> B
@@ -467,7 +468,7 @@ The full Motion page and Control Tuning are therefore two workflow projections o
 
 Run, Stop and Disable remain distinct:
 
-- **Run** executes the already committed Motion command.
+- **Run** starts the ENABLED motor or switches the target of an already RUN Host-side Position Repeat.
 - **Stop** performs the normal controlled-stop operation exposed by the Application.
 - **Disable** removes motor enable and is not an alias for Stop.
 

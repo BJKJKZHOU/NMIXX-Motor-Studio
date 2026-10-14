@@ -82,7 +82,8 @@
     else if (event.key === "Escape") { event.preventDefault(); incrementalDraft = formatHostNumber($motionState.incrementalDeltaTurn); (event.currentTarget as HTMLInputElement).blur(); }
   }
   function canRun(): boolean {
-    return !!capabilities?.run && !$parameters.saving && writing.size === 0 && motorState === "ENABLED" && !!activeMode && modeSupported(activeMode);
+    return !!capabilities?.run && !$parameters.saving && writing.size === 0 && (motorState === "ENABLED" || (motorState === "RUN" && activeMode === "position" && $motionState.repeat))
+      && !!activeMode && modeSupported(activeMode);
   }
   function canStop(): boolean { return !!capabilities?.stop && !stopBusy; }
   async function run() {

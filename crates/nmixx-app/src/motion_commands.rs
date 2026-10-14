@@ -83,7 +83,7 @@ impl ApplicationSession {
         self.write_optional_motion_f32("PARAM_MOTION_WM_ACC", request.acceleration_rad_s2)?;
         self.write_optional_motion_f32("PARAM_MOTION_WM_DEC", request.deceleration_rad_s2)?;
 
-        self.motion_run()
+        self.motion_run()?.ok_or_else(|| ApplicationError::Motion("No new Run Action was issued".into()))
     }
 
     /// Write the position-command Parameters and start the already-enabled POSITION mode.
@@ -123,7 +123,7 @@ impl ApplicationSession {
             )?;
         }
 
-        self.motion_run()
+        self.motion_run()?.ok_or_else(|| ApplicationError::Motion("No new Run Action was issued".into()))
     }
 
     /// Read the small runtime set needed for headless sensored speed/position debugging.
