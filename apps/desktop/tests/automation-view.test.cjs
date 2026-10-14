@@ -64,3 +64,29 @@ test('a new task refresh is coalesced behind an older pending IPC response',asyn
   h.setRead(async()=>task(2,'COMPLETED'));release(task(1,'RUNNING'));await pending;await pause();await pause();
   assert.equal(h.s.taskState._get().taskId,2);assert.equal(h.s.taskState._get().state,'COMPLETED');
 });
+test('connection reset clears previous Automation task and permits the new initial poll',async()=>{
+  const h=setup();
+  h.s.taskState.set(task(5,'COMPLETED'));
+  h.s.logs.set([{sequence:1,text:'old output'}]);
+  h.s.taskError.set('old failure');
+  h.s.clearAutomationProjection();
+  assert.equal(h.s.taskState._get(),null);
+  assert.deepEqual(h.s.logs._get(),[]);
+  assert.equal(h.s.taskError._get(),'');
+  h.setRead(async()=>task(0,'IDLE'));
+  const stop=h.s.startAutomationTracking(()=>true);
+  h.tick();await pause();await pause();
+  assert.equal(h.s.taskState._get().taskId,0);
+  stop();
+});
+test('a delayed script-start response cannot restore the previous connection task',async()=>{
+  const h=setup();await h.s.ensureDocument();let release;
+  h.setRun(()=>new Promise(resolve=>{release=resolve}));
+  const pending=h.s.runSelected();await pause();
+  assert.equal(typeof release,'function');
+  h.s.clearAutomationProjection();h.state.set({epoch:2,connected:true});
+  release(task(7,'COMPLETED',[{sequence:1,kind:'config.saved',payload:[17]}]));
+  await assert.rejects(pending,/Device connection changed/);
+  assert.equal(h.s.taskState._get(),null);
+  assert.equal(h.saved.length,0);
+});

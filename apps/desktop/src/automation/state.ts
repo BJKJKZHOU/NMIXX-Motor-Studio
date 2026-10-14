@@ -26,7 +26,17 @@ export function isActive(state: TaskSnapshot["state"] | undefined): boolean {
   return state === "STARTING" || state === "RUNNING" || state === "CANCELLING";
 }
 export function clearAutomationProjection(): void {
+  // Discard the previous connection's task/log projection as well as effects.
+  // A completed task must not suppress the first poll on the next connection.
+  ++revision;
+  repoll = false;
+  lastId = 0;
+  lastSequence = 0;
+  launchedTask = 0;
   taskEpoch = -1;
+  taskState.set(null);
+  logs.set([]);
+  taskError.set("");
   effectSequences.clear();
   scopeOperation.set(undefined);
 }
@@ -94,6 +104,7 @@ export async function runSelected(): Promise<void> {
   await waitMotionUpdates(); // Wait for submitted writes; do not commit drafts.
   if (epoch !== get(parameterState).epoch) throw new Error("Device connection changed");
   const result = await api.runScript(settings.document, settings.program, settings.timeoutSeconds);
+  if (epoch !== get(parameterState).epoch) throw new Error("Device connection changed");
   ++revision;
   launchedTask = result.taskId;
   taskEpoch = epoch;
