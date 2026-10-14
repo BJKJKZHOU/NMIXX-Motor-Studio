@@ -162,3 +162,10 @@ test("Motion preview may use runtime Plot position while Run keeps exact Positio
   assert.match(motion, /current_position_turn_override/);
   assert.match(motion, /run_checked[\s\S]*read_position\(parameters, "PARAM_RUN_POSITION"\)/);
 });
+
+test("Motion run barrier preserves rejected Host Motion writes", () => {
+  const motion = source("motion/store.ts");
+  assert.match(motion, /lastWriteErrorEpoch === epoch/);
+  assert.match(motion, /await writeChain/);
+  assert.match(motion, /throw lastWriteError/);
+});

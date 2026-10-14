@@ -12,11 +12,15 @@ export const motionPreview = writable<MotionPreview | undefined>(undefined);
 export const motionPreviewError = writable<string | null>(null);
 let revision = 0;
 let writeChain: Promise<void> = Promise.resolve();
+let lastWriteError: unknown;
+let lastWriteErrorEpoch = -1;
 let previewRevision = 0;
 
 /** Mirror a completed Application operation; never submit a second write. */
 export function acceptMotionSnapshot(config: MotionState): void {
   ++revision;
+  lastWriteError = undefined;
+  lastWriteErrorEpoch = -1;
   motionState.set(config);
 }
 
@@ -36,12 +40,20 @@ export async function updateMotion<K extends keyof MotionState>(key: K, value: M
   const write = writeChain.then(async () => {
     if (get(parameterState).epoch !== epoch) throw new Error("Device connection changed.");
     const canonical = await setMotion(next);
-    if (currentRevision === revision && get(parameterState).epoch === epoch) motionState.set(canonical);
+    if (currentRevision === revision && get(parameterState).epoch === epoch) {
+      lastWriteError = undefined;
+      lastWriteErrorEpoch = -1;
+      motionState.set(canonical);
+    }
   });
   writeChain = write.catch(() => undefined);
   try { await write; }
   catch (error) {
-    if (currentRevision === revision && get(parameterState).epoch === epoch) motionState.set(previous);
+    if (currentRevision === revision && get(parameterState).epoch === epoch) {
+      lastWriteError = error;
+      lastWriteErrorEpoch = epoch;
+      motionState.set(previous);
+    }
     throw error;
   }
 }
@@ -100,6 +112,12 @@ export function observeMotionPreview(): () => void {
   return () => { disposed = true; pending = false; ++previewRevision; stopParameters(); stopMotion(); };
 }
 
-export async function waitMotionUpdates(): Promise<void> { await writeChain; await waitParameterWrites(); }
+export async function waitMotionUpdates(): Promise<void> {
+  const epoch = get(parameterState).epoch;
+  await writeChain;
+  if (get(parameterState).epoch !== epoch) throw new Error("Device connection changed.");
+  if (lastWriteErrorEpoch === epoch) throw lastWriteError;
+  await waitParameterWrites();
+}
 export async function executeMotion(): Promise<void> { await waitMotionUpdates(); await runMotion(); }
 export async function stopMotionExecution(): Promise<void> { await stopMotion(); }

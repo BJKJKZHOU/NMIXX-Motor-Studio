@@ -533,12 +533,22 @@ impl ApplicationSession {
             return Ok(None);
         }
 
-        let handle = self.inner.motion.run_checked(
+        let handle = match self.inner.motion.run_checked(
             &self.inner.parameters,
             &self.inner.session,
             target.map(|(value, _)| value),
             || self.workflow_checkpoint(ticket),
-        ).map_err(ApplicationError::Motion)?;
+        ) {
+            Ok(handle) => handle,
+            Err(error) => {
+                // The initial Run did not succeed. Do not retain A/B endpoints
+                // captured before its device writes and Action request.
+                if repeat {
+                    self.inner.motion.cancel_repeat_leg().map_err(ApplicationError::Motion)?;
+                }
+                return Err(ApplicationError::Motion(error));
+            }
+        };
         if let Some((_, is_b)) = target {
             self.inner.motion.repeat_mark_started(is_b).map_err(ApplicationError::Motion)?;
         }

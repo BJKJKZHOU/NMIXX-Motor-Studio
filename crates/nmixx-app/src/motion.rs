@@ -440,6 +440,7 @@ allowed_symbols = ["TORQUE", "SPEED", "POSITION", "SENSORLESS_SPEED"]
         service.repeat_mark_started(false).unwrap();
         assert_eq!(service.repeat_target(2.0, None).unwrap(), Some((3.0, true)));
 
+        // A rejected initial Run must not lock the next attempt to old endpoints.
         service.cancel_repeat_leg().unwrap();
         assert_eq!(service.repeat_pending_target().unwrap(), None);
         assert_eq!(service.repeat_target(8.0, None).unwrap(), Some((9.0, true)));
