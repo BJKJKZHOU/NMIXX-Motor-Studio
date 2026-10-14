@@ -147,8 +147,8 @@ impl MotionService {
     }
 
     pub(crate) fn cancel_repeat_leg(&self) -> Result<(), String> {
-        self.repeat.lock().map_err(|_| "Motion repeat lock poisoned")?.pending_target_is_b = None;
-        Ok(())
+        // A new Run after Stop starts its A/B endpoints from the current position.
+        self.reset_repeat()
     }
 
     pub(crate) fn reset_runtime(&self) -> Result<(), String> {
@@ -442,6 +442,7 @@ allowed_symbols = ["TORQUE", "SPEED", "POSITION", "SENSORLESS_SPEED"]
 
         service.cancel_repeat_leg().unwrap();
         assert_eq!(service.repeat_pending_target().unwrap(), None);
+        assert_eq!(service.repeat_target(8.0, None).unwrap(), Some((9.0, true)));
         service.reset_runtime().unwrap();
         assert_eq!(service.repeat_target(10.0, None).unwrap(), Some((11.0, true)));
     }
