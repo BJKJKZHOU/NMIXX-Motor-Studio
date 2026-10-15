@@ -264,7 +264,7 @@
       <section class="placeholder-page"><div class="placeholder-title">{translate(pageTitle(activePage), $uiLanguage)}</div><div class="placeholder-copy">{translate("ui.this.workflow.page.is.reserved.for.the.corresponding.application.domain", $uiLanguage)}</div></section>
     {/if}
     <div class:inactive={activePage !== "analysis"} class="scope-page-container"><ScopePage connection={readyConnection} active={activePage === "analysis"} onSummary={(summary) => scopeSummary = summary} onError={setError} /></div>
-    {#if errorText || $parameterState.error}<div class="error-text app-error">{localizeFeedback(errorText || $parameterState.error, $uiLanguage)}</div>{/if}
+    {#if errorText || $parameterState.error}<div class="error-text app-error">{localizeFeedback((errorText || $parameterState.error) ?? "", $uiLanguage)}</div>{/if}
   </main>
 </div>
 <footer class="statusbar"><button class="language-toggle" aria-label={languageSwitchTitle($uiLanguage)}
