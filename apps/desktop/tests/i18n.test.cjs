@@ -134,3 +134,36 @@ test("language registry adds future locales without changing statusbar button",(
   assert.equal(languageBadge("en"),"EN");
   assert.equal(languageSwitchTitle("zh-CN"),"English");
 });
+
+test("context-specific status words never reuse the Motor Active value label",()=>{
+  const {translate}=environment().exports;
+  assert.equal(translate("ui.active","zh-CN"),"当前值");
+  assert.equal(translate("events.problem.active","zh-CN"),"活动中");
+  assert.equal(translate("events.problem.resolved","zh-CN"),"已解决");
+  assert.equal(translate("events.problem.active","en"),"Active");
+  const event=source("events/EventsPage.svelte");
+  assert.match(event,/translate\(problem\.active \? "events\.problem\.active" : "events\.problem\.resolved", \$uiLanguage\)/);
+});
+
+test("translated enable approval and runtime reasons preserve technical symbols",()=>{
+  const {translateFormat,localizeFeedback}=environment().exports;
+  assert.match(translateFormat("motor.identification.enable.confirm","zh-CN",{kind:"Rs/Ls"}),/Rs\/Ls 辨识需要使能电机/);
+  assert.match(translateFormat("motor.identification.enable.confirm","en",{kind:"Flux"}),/Flux identification requires enabling/);
+  assert.equal(localizeFeedback("Reason 42","zh-CN"),"原因代码 42");
+  assert.equal(localizeFeedback("Reason 42","en"),"Reason 42");
+  assert.equal(localizeFeedback("ERR_STATE","zh-CN"),"ERR_STATE");
+  assert.equal(translateFormat("scope.channel.selection.exceeded","zh-CN",{limit:3,rate:"FAST"}),"Scope 最多支持 3 个 FAST 通道。");
+  assert.equal(translateFormat("scope.channel.selection.exceeded","en",{limit:3,rate:"FAST"}),"Scope supports at most 3 FAST channels.");
+});
+
+test("gain source selection is locale-free and phase/experiment placeholders use resource IDs",()=>{
+  for(const path of ["control/ControlPage.svelte","control/ControlTuningPage.svelte"]){
+    const content=source(path);
+    assert.match(content,/<option value="bandwidth">\{translate\("ui\.bandwidth", \$uiLanguage\)\}/);
+    assert.match(content,/<option value="manual">\{translate\("ui\.manual", \$uiLanguage\)\}/);
+    assert.match(content,/mode === "manual" \? "CTRL_TUNE_MANUAL" : "CTRL_TUNE_BANDWIDTH"/);
+  }
+  assert.match(source("control/ExperimentWaveform.svelte"),/translate\("tuning\.experiment\.empty", \$uiLanguage\)/);
+  assert.match(source("automation/AutomationHost.svelte"),/translate\("automation\.loading", \$uiLanguage\)/);
+  assert.match(source("analysis/scope/ScopeEchartsPage.svelte"),/translateFormat\("scope\.channel\.selection\.exceeded", \$uiLanguage, channelNotice\)/);
+});
