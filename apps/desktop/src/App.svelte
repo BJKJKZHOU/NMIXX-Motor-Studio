@@ -50,6 +50,7 @@
   let scopeSummary: ScopeSummary = { state: "STOPPED", selectedChannels: 0, lostFrames: 0 };
   let globalActionBusy = false;
   let globalStopBusy = false;
+  let motorActionNotice = "";
   let parameterSaveAvailable = false;
   let saveFeedback: "idle" | "saved" = "idle";
   let saveFeedbackTimer: ReturnType<typeof setTimeout> | undefined;
@@ -83,6 +84,7 @@
     clearRuntimeTelemetry();
     problemsOpen = false;
     connection = next;
+    motorActionNotice = "";
     connectionReady = false;
     connectionInitializing = !!next;
     errorText = ""; parameterSaveAvailable = false; saveFeedback = "idle";
@@ -137,13 +139,30 @@
   async function toggleMotorEnable() {
     if (!connectionReady || motorState === null || globalActionBusy) return;
     globalActionBusy = true;
-    try { if (motorState === "DISABLED") await enableMotor(); else await disableMotor(); }
-    catch (error) { setError(error); } finally { globalActionBusy = false; }
+    const enabling = motorState === "DISABLED";
+    motorActionNotice = enabling ? "Sending Enable…" : "Sending Disable…";
+    try {
+      if (enabling) await enableMotor(); else await disableMotor();
+      motorActionNotice = enabling
+        ? "Enable accepted; check device Motor State."
+        : "Disable accepted; check device Motor State.";
+    } catch (error) {
+      motorActionNotice = `Motor command feedback: ${String(error)}`;
+      setError(error);
+    } finally { globalActionBusy = false; }
   }
   async function stopCurrentMotorOperation() {
     if (!connection || globalStopBusy) return;
     globalStopBusy = true;
-    try { await stopMotor(); } catch (error) { setError(error); } finally { globalStopBusy = false; }
+    motorActionNotice = "Sending Stop…";
+    try {
+      await stopMotor();
+      // Stop ACK does not certify that controlled deceleration has finished.
+      motorActionNotice = "Stop accepted; monitor firmware Motor State.";
+    } catch (error) {
+      motorActionNotice = `Stop command feedback: ${String(error)}`;
+      setError(error);
+    } finally { globalStopBusy = false; }
   }
   async function savePersistentParameters() {
     if (!connectionReady || !parameterSaveAvailable || motorState !== "DISABLED" || globalActionBusy) return;
@@ -194,6 +213,7 @@
         <i class={`codicon ${saveFeedback === "saved" ? "codicon-check" : "codicon-save"}`}></i>{saveFeedback === "saved" ? "Saved" : "Save"}
       </button>
     </div>
+    {#if motorActionNotice}<span class="global-command-feedback" role="status" title={motorActionNotice}>{motorActionNotice} · Motor {motorState ?? "unknown"}</span>{/if}
   </div><div class="problems-host">
     <button class:problem-error={topProblem?.severity === "FAULT" || topProblem?.severity === "ERROR"}
       class:problem-warning={topProblem?.severity === "WARNING"} class:problem-info={topProblem?.severity === "INFO"}
@@ -253,6 +273,7 @@
   .global-toolbar-divider { width: 1px; height: 22px; flex: 0 0 auto; background: var(--vscode-panel-border, #303030); }
   .global-actions { display: flex; align-items: center; gap: 5px; min-width: 0; }
   .global-group-gap { width: 7px; }
+  .global-command-feedback { max-width: 300px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; color: var(--vscode-descriptionForeground); font-size: 11px; }
   .global-action { min-width: 72px; }
   .enable-action:not(:disabled) { color: #3fb950; }
   .disable-action:not(:disabled) { color: #f85149; }
