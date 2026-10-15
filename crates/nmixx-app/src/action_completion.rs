@@ -81,10 +81,18 @@ mod tests {
     use super::*;
     use std::sync::mpsc;
 
-    use nmixx_core::protocol::TransactionId;
+    use nmixx_core::protocol::TransactionTable;
 
-    fn handle(txn: u8, action_id: u16) -> ActionHandle {
-        ActionHandle { txn: TransactionId::from_raw(txn), action_id }
+    fn handle(number: u8, action_id: u16) -> ActionHandle {
+        // Production transaction IDs are allocated by the transaction table.
+        // Do not access nmixx-core's intentionally private from_raw helper.
+        assert!(number != 0);
+        let mut transactions = TransactionTable::default();
+        let mut txn = transactions.allocate(0, 0).unwrap();
+        for _ in 1..number {
+            txn = transactions.allocate(0, 0).unwrap();
+        }
+        ActionHandle { txn, action_id }
     }
 
     #[test]
