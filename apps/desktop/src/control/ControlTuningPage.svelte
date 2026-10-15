@@ -1,4 +1,5 @@
 <script lang="ts">
+  import { uiLanguage, localize, localizeFeedback } from "../i18n";
   import { onMount, untrack } from "svelte";
   import type { ConnectionInfo } from "../connection/types";
   import { subscribeRefresh } from "../refreshScheduler";
@@ -94,7 +95,7 @@
   });
 
   function formatHostNumber(value: number): string { return Number(value).toPrecision(9).replace(/(?:\.0+|(\.\d+?)0+)$/, "$1"); }
-  function label(symbol: string): string { return metadata[symbol]?.label ?? "Unavailable"; }
+  function label(symbol: string): string { return localize(metadata[symbol]?.label ?? "Unavailable", $uiLanguage); }
   function unit(symbol: string): string { return metadata[symbol]?.unit ?? ""; }
   function locked(symbol: string): boolean {
     return $parameters.loading || $parameters.saving || experimentActive() || motorState === "RUN" || writing.has(symbol) || !metadata[symbol]?.access.includes("w");
@@ -278,22 +279,22 @@
 </script>
 
 <div class="tuning-root">
-  <section class="page-toolbar"><div class="page-title">CONTROL TUNING</div>{#if hasDirtyDraft()}<div class="dirty-note">Uncommitted edits</div>{/if}</section>
+  <section class="page-toolbar"><div class="page-title">CONTROL TUNING</div>{#if hasDirtyDraft()}<div class="dirty-note">{localize("Uncommitted edits", $uiLanguage)}</div>{/if}</section>
   <section class="tuning-content">
-    {#if !connection}<div class="empty-state"><i class="codicon codicon-plug"></i><div>Connect a device to tune control loops.</div></div>
+    {#if !connection}<div class="empty-state"><i class="codicon codicon-plug"></i><div>{localize("Connect a device to tune control loops.", $uiLanguage)}</div></div>
     {:else}
       <div class="tuning-layout"><div class="experiment-column">
         <section class="waveform-panel">
-          <div class="waveform-heading"><div class="section-title">Experiment Waveform</div><div class="experiment-status" class:failed={experimentState === "FAILED"}>{experimentState}{#if experimentSnapshot}<span>· loss {experimentSnapshot.snapshot.lostFrames}</span>{/if}</div></div>
-          {#if experimentMessage}<div class="experiment-message">{experimentMessage}</div>{/if}
+          <div class="waveform-heading"><div class="section-title">{localize("Experiment Waveform", $uiLanguage)}</div><div class="experiment-status" class:failed={experimentState === "FAILED"}>{localize(experimentState, $uiLanguage)}{#if experimentSnapshot}<span>· loss {experimentSnapshot.snapshot.lostFrames}</span>{/if}</div></div>
+          {#if experimentMessage}<div class="experiment-message">{localizeFeedback(experimentMessage, $uiLanguage)}</div>{/if}
           <div class="waveform-tabs" role="tablist" aria-label="Experiment waveform views">
-            <button class:active={waveformTab === "waveform"} onclick={() => waveformTab = "waveform"}>Waveform</button>
+            <button class:active={waveformTab === "waveform"} onclick={() => waveformTab = "waveform"}>{localize("Waveform", $uiLanguage)}</button>
             <button class:active={waveformTab === "channels"} onclick={() => waveformTab = "channels"}>Channels {selectedTuningEntries().length}</button>
-            <button class:active={waveformTab === "scale"} onclick={() => waveformTab = "scale"}>Scale</button>
+            <button class:active={waveformTab === "scale"} onclick={() => waveformTab = "scale"}>{localize("Scale", $uiLanguage)}</button>
           </div>
           <div class="waveform-tab-content">
             {#if waveformTab === "waveform"}
-              <div class="waveform-tools"><span>Time/div</span><strong>{tuningTimePerDiv >= 1 ? `${tuningTimePerDiv.toFixed(2)} s` : tuningTimePerDiv >= 1e-3 ? `${(tuningTimePerDiv * 1e3).toFixed(tuningTimePerDiv < 10e-3 ? 2 : 1)} ms` : `${Math.round(tuningTimePerDiv * 1e6)} µs`}</strong></div>
+              <div class="waveform-tools"><span>{localize("Time/div", $uiLanguage)}</span><strong>{tuningTimePerDiv >= 1 ? `${tuningTimePerDiv.toFixed(2)} s` : tuningTimePerDiv >= 1e-3 ? `${(tuningTimePerDiv * 1e3).toFixed(tuningTimePerDiv < 10e-3 ? 2 : 1)} ms` : `${Math.round(tuningTimePerDiv * 1e6)} µs`}</strong></div>
               <ExperimentWaveform result={experimentSnapshot} multipliers={displayMultipliers} bind:timePerDiv={tuningTimePerDiv}
                 onViewRequest={(windowSeconds, endOffsetSeconds, maxPoints) => void requestExperimentWindow(windowSeconds, endOffsetSeconds, maxPoints)} />
             {:else if waveformTab === "channels"}
@@ -318,26 +319,26 @@
                     <input class="compact-input mono" type="number" min="0.000001" step="any" value={displayMultipliers[channel.id] ?? 1} onchange={(event) => setDisplayMultiplier(channel.id, Number(event.currentTarget.value))} />
                   </span></label>
                 {/each}
-                <div class="tuning-scale-actions"><button onclick={resetDisplayMultipliers}>Reset ×1</button></div>
+                <div class="tuning-scale-actions"><button onclick={resetDisplayMultipliers}>{localize("Reset ×1", $uiLanguage)}</button></div>
               </div>
             {/if}
           </div>
         </section>
-        <section class="motion-panel"><div class="section-title motion-title">Motion Command</div>
-          <div class="motion-toolbar"><label class="motion-mode"><span>Mode</span>
+        <section class="motion-panel"><div class="section-title motion-title">{localize("Motion Command", $uiLanguage)}</div>
+          <div class="motion-toolbar"><label class="motion-mode"><span>{localize("Mode", $uiLanguage)}</span>
             <select class="compact-select motion-mode-select" value={activeMotionMode() ?? ""}
               class:ramModified={!!metadata[MOTION_MODE] && $modifiedParameterIds.has(metadata[MOTION_MODE].id)}
               disabled={motionLocked() || motorState !== "DISABLED" || locked(MOTION_MODE)}
               title={motorState === "DISABLED" ? "Select motor mode" : "Disable the motor before changing mode"}
               onchange={(event) => void setMotionMode(event.currentTarget.value as MotionMode)}>
-              {#each Object.entries(motionModeLabels) as [value, labelText]}{#if motionModeSupported(value as MotionMode)}<option value={value}>{labelText}</option>{/if}{/each}
+              {#each Object.entries(motionModeLabels) as [value, labelText]}{#if motionModeSupported(value as MotionMode)}<option value={value}>{localize(labelText, $uiLanguage)}</option>{/if}{/each}
             </select>
           </label>
           {#if activeMotionMode() === "position"}
             <div class="position-mode-options" aria-label="Position command mode">
-              <label><input type="radio" name="tuning-position-command" checked={$motionState.positionCommand === "incremental"} disabled={motionLocked()} onchange={() => updateMotionField("positionCommand", "incremental")} />Incremental</label>
-              <label><input type="radio" name="tuning-position-command" checked={$motionState.positionCommand === "absolute"} disabled={motionLocked()} onchange={() => updateMotionField("positionCommand", "absolute")} />Absolute</label>
-              <label><input type="checkbox" checked={$motionState.repeat} disabled={motionLocked()} onchange={(event) => updateMotionField("repeat", event.currentTarget.checked)} />Repeat</label>
+              <label><input type="radio" name="tuning-position-command" checked={$motionState.positionCommand === "incremental"} disabled={motionLocked()} onchange={() => updateMotionField("positionCommand", "incremental")} />{localize("Incremental", $uiLanguage)}</label>
+              <label><input type="radio" name="tuning-position-command" checked={$motionState.positionCommand === "absolute"} disabled={motionLocked()} onchange={() => updateMotionField("positionCommand", "absolute")} />{localize("Absolute", $uiLanguage)}</label>
+              <label><input type="checkbox" checked={$motionState.repeat} disabled={motionLocked()} onchange={(event) => updateMotionField("repeat", event.currentTarget.checked)} />{localize("Repeat", $uiLanguage)}</label>
             </div>
           {/if}</div>
           {#if activeMotionMode() === "position"}
@@ -350,46 +351,46 @@
                     oninput={(event) => incrementalDraft = event.currentTarget.value} onkeydown={incrementalKeydown} onblur={() => incrementalDraft = formatHostNumber($motionState.incrementalDeltaTurn)} />
                 {/if}<span class="unit">turn</span>
               </span></label>
-<label><span>Max Speed</span><span class="motion-editor"><input class:ramModified={!!metadata[MOTION_MAX_SPEED] && $modifiedParameterIds.has(metadata[MOTION_MAX_SPEED].id)} class:dirty={dirty(MOTION_MAX_SPEED)} class="compact-input mono" value={drafts[MOTION_MAX_SPEED] ?? ""} disabled={motionLocked() || locked(MOTION_MAX_SPEED)} oninput={(event) => edits.edit(MOTION_MAX_SPEED, event.currentTarget.value)} onkeydown={(event) => motionParameterKeydown(event, MOTION_MAX_SPEED)} onblur={() => edits.discard(MOTION_MAX_SPEED)} /><span class="unit">rad/s</span></span></label>
-<label><span>Accel</span><span class="motion-editor"><input class:ramModified={!!metadata[MOTION_ACCEL] && $modifiedParameterIds.has(metadata[MOTION_ACCEL].id)} class:dirty={dirty(MOTION_ACCEL)} class="compact-input mono" value={drafts[MOTION_ACCEL] ?? ""} disabled={motionLocked() || locked(MOTION_ACCEL)} oninput={(event) => editAcceleration(event.currentTarget.value)} onkeydown={(event) => motionParameterKeydown(event, MOTION_ACCEL)} onblur={() => discardAcceleration()} /><span class="unit">rad/s²</span></span></label>
-<label><span>Decel</span><span class="motion-editor"><input class:ramModified={!!metadata[MOTION_DECEL] && $modifiedParameterIds.has(metadata[MOTION_DECEL].id)} class:dirty={dirty(MOTION_DECEL)} class="compact-input mono" value={drafts[MOTION_DECEL] ?? ""} disabled={motionLocked() || locked(MOTION_DECEL) || copyAccelToDecel} oninput={(event) => edits.edit(MOTION_DECEL, event.currentTarget.value)} onkeydown={(event) => motionParameterKeydown(event, MOTION_DECEL)} onblur={() => edits.discard(MOTION_DECEL)} /><span class="unit">rad/s²</span></span></label>
+<label><span>{localize("Max Speed", $uiLanguage)}</span><span class="motion-editor"><input class:ramModified={!!metadata[MOTION_MAX_SPEED] && $modifiedParameterIds.has(metadata[MOTION_MAX_SPEED].id)} class:dirty={dirty(MOTION_MAX_SPEED)} class="compact-input mono" value={drafts[MOTION_MAX_SPEED] ?? ""} disabled={motionLocked() || locked(MOTION_MAX_SPEED)} oninput={(event) => edits.edit(MOTION_MAX_SPEED, event.currentTarget.value)} onkeydown={(event) => motionParameterKeydown(event, MOTION_MAX_SPEED)} onblur={() => edits.discard(MOTION_MAX_SPEED)} /><span class="unit">rad/s</span></span></label>
+<label><span>{localize("Accel", $uiLanguage)}</span><span class="motion-editor"><input class:ramModified={!!metadata[MOTION_ACCEL] && $modifiedParameterIds.has(metadata[MOTION_ACCEL].id)} class:dirty={dirty(MOTION_ACCEL)} class="compact-input mono" value={drafts[MOTION_ACCEL] ?? ""} disabled={motionLocked() || locked(MOTION_ACCEL)} oninput={(event) => editAcceleration(event.currentTarget.value)} onkeydown={(event) => motionParameterKeydown(event, MOTION_ACCEL)} onblur={() => discardAcceleration()} /><span class="unit">rad/s²</span></span></label>
+<label><span>{localize("Decel", $uiLanguage)}</span><span class="motion-editor"><input class:ramModified={!!metadata[MOTION_DECEL] && $modifiedParameterIds.has(metadata[MOTION_DECEL].id)} class:dirty={dirty(MOTION_DECEL)} class="compact-input mono" value={drafts[MOTION_DECEL] ?? ""} disabled={motionLocked() || locked(MOTION_DECEL) || copyAccelToDecel} oninput={(event) => edits.edit(MOTION_DECEL, event.currentTarget.value)} onkeydown={(event) => motionParameterKeydown(event, MOTION_DECEL)} onblur={() => edits.discard(MOTION_DECEL)} /><span class="unit">rad/s²</span></span></label>
 
             </div>
           {:else if activeMotionMode() === "speed" || activeMotionMode() === "sensorless-speed"}
             <div class="motion-grid">
-<label><span>Target Speed</span><span class="motion-editor"><input class:ramModified={!!metadata[TARGET_SPEED] && $modifiedParameterIds.has(metadata[TARGET_SPEED].id)} class:dirty={dirty(TARGET_SPEED)} class="compact-input mono" value={drafts[TARGET_SPEED] ?? ""} disabled={motionLocked() || locked(TARGET_SPEED)} oninput={(event) => edits.edit(TARGET_SPEED, event.currentTarget.value)} onkeydown={(event) => motionParameterKeydown(event, TARGET_SPEED)} onblur={() => edits.discard(TARGET_SPEED)} /><span class="unit">rad/s</span></span></label>
+<label><span>{localize("Target Speed", $uiLanguage)}</span><span class="motion-editor"><input class:ramModified={!!metadata[TARGET_SPEED] && $modifiedParameterIds.has(metadata[TARGET_SPEED].id)} class:dirty={dirty(TARGET_SPEED)} class="compact-input mono" value={drafts[TARGET_SPEED] ?? ""} disabled={motionLocked() || locked(TARGET_SPEED)} oninput={(event) => edits.edit(TARGET_SPEED, event.currentTarget.value)} onkeydown={(event) => motionParameterKeydown(event, TARGET_SPEED)} onblur={() => edits.discard(TARGET_SPEED)} /><span class="unit">rad/s</span></span></label>
 <div></div>
-<label><span>Accel</span><span class="motion-editor"><input class:ramModified={!!metadata[MOTION_ACCEL] && $modifiedParameterIds.has(metadata[MOTION_ACCEL].id)} class:dirty={dirty(MOTION_ACCEL)} class="compact-input mono" value={drafts[MOTION_ACCEL] ?? ""} disabled={motionLocked() || locked(MOTION_ACCEL)} oninput={(event) => editAcceleration(event.currentTarget.value)} onkeydown={(event) => motionParameterKeydown(event, MOTION_ACCEL)} onblur={() => discardAcceleration()} /><span class="unit">rad/s²</span></span></label>
-<label><span>Decel</span><span class="motion-editor"><input class:ramModified={!!metadata[MOTION_DECEL] && $modifiedParameterIds.has(metadata[MOTION_DECEL].id)} class:dirty={dirty(MOTION_DECEL)} class="compact-input mono" value={drafts[MOTION_DECEL] ?? ""} disabled={motionLocked() || locked(MOTION_DECEL) || copyAccelToDecel} oninput={(event) => edits.edit(MOTION_DECEL, event.currentTarget.value)} onkeydown={(event) => motionParameterKeydown(event, MOTION_DECEL)} onblur={() => edits.discard(MOTION_DECEL)} /><span class="unit">rad/s²</span></span></label>
+<label><span>{localize("Accel", $uiLanguage)}</span><span class="motion-editor"><input class:ramModified={!!metadata[MOTION_ACCEL] && $modifiedParameterIds.has(metadata[MOTION_ACCEL].id)} class:dirty={dirty(MOTION_ACCEL)} class="compact-input mono" value={drafts[MOTION_ACCEL] ?? ""} disabled={motionLocked() || locked(MOTION_ACCEL)} oninput={(event) => editAcceleration(event.currentTarget.value)} onkeydown={(event) => motionParameterKeydown(event, MOTION_ACCEL)} onblur={() => discardAcceleration()} /><span class="unit">rad/s²</span></span></label>
+<label><span>{localize("Decel", $uiLanguage)}</span><span class="motion-editor"><input class:ramModified={!!metadata[MOTION_DECEL] && $modifiedParameterIds.has(metadata[MOTION_DECEL].id)} class:dirty={dirty(MOTION_DECEL)} class="compact-input mono" value={drafts[MOTION_DECEL] ?? ""} disabled={motionLocked() || locked(MOTION_DECEL) || copyAccelToDecel} oninput={(event) => edits.edit(MOTION_DECEL, event.currentTarget.value)} onkeydown={(event) => motionParameterKeydown(event, MOTION_DECEL)} onblur={() => edits.discard(MOTION_DECEL)} /><span class="unit">rad/s²</span></span></label>
 
             </div>
           {:else if activeMotionMode() === "torque"}
             <div class="motion-grid">
-<label><span>Torque</span><span class="motion-editor"><input class:ramModified={!!metadata[TARGET_TORQUE] && $modifiedParameterIds.has(metadata[TARGET_TORQUE].id)} class:dirty={dirty(TARGET_TORQUE)} class="compact-input mono" value={drafts[TARGET_TORQUE] ?? ""} disabled={motionLocked() || locked(TARGET_TORQUE)} oninput={(event) => edits.edit(TARGET_TORQUE, event.currentTarget.value)} onkeydown={(event) => motionParameterKeydown(event, TARGET_TORQUE)} onblur={() => edits.discard(TARGET_TORQUE)} /><span class="unit">N·m</span></span></label>
+<label><span>{localize("Torque", $uiLanguage)}</span><span class="motion-editor"><input class:ramModified={!!metadata[TARGET_TORQUE] && $modifiedParameterIds.has(metadata[TARGET_TORQUE].id)} class:dirty={dirty(TARGET_TORQUE)} class="compact-input mono" value={drafts[TARGET_TORQUE] ?? ""} disabled={motionLocked() || locked(TARGET_TORQUE)} oninput={(event) => edits.edit(TARGET_TORQUE, event.currentTarget.value)} onkeydown={(event) => motionParameterKeydown(event, TARGET_TORQUE)} onblur={() => edits.discard(TARGET_TORQUE)} /><span class="unit">N·m</span></span></label>
 {#if metadata[TORQUE_RAMP]}
-<label><span>Ramp</span><span class="motion-editor"><input class:ramModified={!!metadata[TORQUE_RAMP] && $modifiedParameterIds.has(metadata[TORQUE_RAMP].id)} class:dirty={dirty(TORQUE_RAMP)} class="compact-input mono" value={drafts[TORQUE_RAMP] ?? ""} disabled={motionLocked() || locked(TORQUE_RAMP)} oninput={(event) => edits.edit(TORQUE_RAMP, event.currentTarget.value)} onkeydown={(event) => motionParameterKeydown(event, TORQUE_RAMP)} onblur={() => edits.discard(TORQUE_RAMP)} /><span class="unit">N·m/s</span></span></label>
+<label><span>{localize("Ramp", $uiLanguage)}</span><span class="motion-editor"><input class:ramModified={!!metadata[TORQUE_RAMP] && $modifiedParameterIds.has(metadata[TORQUE_RAMP].id)} class:dirty={dirty(TORQUE_RAMP)} class="compact-input mono" value={drafts[TORQUE_RAMP] ?? ""} disabled={motionLocked() || locked(TORQUE_RAMP)} oninput={(event) => edits.edit(TORQUE_RAMP, event.currentTarget.value)} onkeydown={(event) => motionParameterKeydown(event, TORQUE_RAMP)} onblur={() => edits.discard(TORQUE_RAMP)} /><span class="unit">N·m/s</span></span></label>
 {/if}
             </div>
           {/if}
           <div class="motion-footer">
             {#if activeMotionMode() === "position" || activeMotionMode() === "speed" || activeMotionMode() === "sensorless-speed"}
-              <label class="copy-decel"><input type="checkbox" checked={copyAccelToDecel} disabled={motionLocked()} onchange={(event) => toggleCopyAccelToDecel(event.currentTarget.checked)} />Copy Accel to Decel</label>
+              <label class="copy-decel"><input type="checkbox" checked={copyAccelToDecel} disabled={motionLocked()} onchange={(event) => toggleCopyAccelToDecel(event.currentTarget.checked)} />{localize("Copy Accel to Decel", $uiLanguage)}</label>
             {:else}<span></span>{/if}
             {#if (activeMotionMode() === "position" || activeMotionMode() === "speed") && motionProfileOptions(metadata[MOTION_PROFILE]).length > 0}
-              <label class="motion-profile"><span>Profile</span>
+              <label class="motion-profile"><span>{localize("Profile", $uiLanguage)}</span>
                 <select class="compact-select" value={values[MOTION_PROFILE]?.type === "u8" ? values[MOTION_PROFILE]?.value : ""}
                   disabled={motionLocked() || locked(MOTION_PROFILE)}
                   onchange={(event) => void setMotionProfile(Number(event.currentTarget.value))}>
                   {#each motionProfileOptions(metadata[MOTION_PROFILE]) as option}
-                    <option value={option.value}>{option.label}</option>
+                    <option value={option.value}>{localize(option.label, $uiLanguage)}</option>
                   {/each}
                 </select>
               </label>
             {/if}
             <div class="motion-actions"><vscode-button disabled={!canRunMotion()}
-              title={hasDirtyDraft() ? "Commit or discard tuning edits first" : experimentActive() ? "Tuning experiment is already running" : motorState !== "ENABLED" ? "Enable motor first" : "Run tuning experiment"}
-              onclick={() => void runTuningMotion()}>Run</vscode-button>
-              <vscode-button secondary disabled={!canStopMotion()} title="Stop the active tuning experiment and retain its waveform" onclick={() => void stopTuningMotion()}>Stop</vscode-button>
+              title={localize(hasDirtyDraft() ? "Commit or discard tuning edits first" : experimentActive() ? "Tuning experiment is already running" : motorState !== "ENABLED" ? "Enable motor first" : "Run tuning experiment", $uiLanguage)}
+              onclick={() => void runTuningMotion()}>{localize("Run", $uiLanguage)}</vscode-button>
+              <vscode-button secondary disabled={!canStopMotion()} title={localize("Stop the active tuning experiment and retain its waveform", $uiLanguage)} onclick={() => void stopTuningMotion()}>{localize("Stop", $uiLanguage)}</vscode-button>
             </div>
           </div>
         </section>
@@ -400,9 +401,9 @@
             <div class="field-label">{label(spec.source)}</div>
             {#if metadata[spec.source]}
               <select class:ramModified={$modifiedParameterIds.has(metadata[spec.source].id)} class="compact-select" disabled={locked(spec.source)} value={sourceText(spec.source)} onchange={(event) => void setSource(spec.source, event.currentTarget.value)}>
-                <option value="Bandwidth">Bandwidth</option><option value="Manual">Manual</option>
+                <option value="Bandwidth">{localize("Bandwidth", $uiLanguage)}</option><option value="Manual">{localize("Manual", $uiLanguage)}</option>
               </select>
-            {:else}<span class="unavailable">Firmware unavailable</span>{/if}
+            {:else}<span class="unavailable">{localize("Firmware unavailable", $uiLanguage)}</span>{/if}
             <div class="field-label">{label(spec.bandwidth)}</div><div class="editor">
 <input class:ramModified={!!metadata[spec.bandwidth] && $modifiedParameterIds.has(metadata[spec.bandwidth].id)} class:dirty={dirty(spec.bandwidth)} class="compact-input mono" value={drafts[spec.bandwidth] ?? ""} disabled={locked(spec.bandwidth)} oninput={(event) => edits.edit(spec.bandwidth, event.currentTarget.value)} onkeydown={(event) => keydown(event, spec.bandwidth)} onblur={() => edits.discard(spec.bandwidth)} /><span class="unit">{unit(spec.bandwidth)}</span></div>
             {#each spec.gains as gain}
@@ -410,15 +411,15 @@
 <input class:ramModified={!!metadata[gain] && $modifiedParameterIds.has(metadata[gain].id)} class:dirty={dirty(gain)} class="compact-input mono" value={drafts[gain] ?? ""} disabled={locked(gain)} oninput={(event) => edits.edit(gain, event.currentTarget.value)} onkeydown={(event) => keydown(event, gain)} onblur={() => edits.discard(gain)} /><span class="unit">{unit(gain)}</span></div>
             {/each}
             {#if spec.source === SPEED_SOURCE}
-              {#if metadata[SPEED_EFFECTIVE_KP]}<div class="field-label">Effective Kp</div><div class="editor"><span class="mono">{effectiveText(SPEED_EFFECTIVE_KP)}</span></div>{/if}
-              {#if metadata[SPEED_EFFECTIVE_KI]}<div class="field-label">Effective Ki</div><div class="editor"><span class="mono">{effectiveText(SPEED_EFFECTIVE_KI)}</span></div>{/if}
+              {#if metadata[SPEED_EFFECTIVE_KP]}<div class="field-label">{localize("Effective Kp", $uiLanguage)}</div><div class="editor"><span class="mono">{effectiveText(SPEED_EFFECTIVE_KP)}</span></div>{/if}
+              {#if metadata[SPEED_EFFECTIVE_KI]}<div class="field-label">{localize("Effective Ki", $uiLanguage)}</div><div class="editor"><span class="mono">{effectiveText(SPEED_EFFECTIVE_KI)}</span></div>{/if}
             {/if}
           </div></section>
         {/each}
-        <section class="tuning-section"><div class="section-title">Position Loop</div><div class="field-grid"><div class="field-label">{label(POSITION_KP)}</div><div class="editor"><input class:ramModified={!!metadata[POSITION_KP] && $modifiedParameterIds.has(metadata[POSITION_KP].id)} class:dirty={dirty(POSITION_KP)} class="compact-input mono" value={drafts[POSITION_KP] ?? ""} disabled={locked(POSITION_KP)} oninput={(event) => edits.edit(POSITION_KP, event.currentTarget.value)} onkeydown={(event) => keydown(event, POSITION_KP)} onblur={() => edits.discard(POSITION_KP)} /><span class="unit">{unit(POSITION_KP)}</span></div></div></section>
-        <section class="tuning-section"><div class="section-title">Mechanical Observer</div><div class="field-grid"><div class="field-label">{label(ESO_BW)}</div><div class="editor"><input class:ramModified={!!metadata[ESO_BW] && $modifiedParameterIds.has(metadata[ESO_BW].id)} class:dirty={dirty(ESO_BW)} class="compact-input mono" value={drafts[ESO_BW] ?? ""} disabled={locked(ESO_BW)} oninput={(event) => edits.edit(ESO_BW, event.currentTarget.value)} onkeydown={(event) => keydown(event, ESO_BW)} onblur={() => edits.discard(ESO_BW)} /><span class="unit">{unit(ESO_BW)}</span></div></div></section>
-        {#if loading}<div class="loading-note"><i class="codicon codicon-loading codicon-modifier-spin"></i> Reading tuning parameters…</div>{/if}
-        {#if motorState === "RUN"}<div class="state-note">Tuning writes are locked while the motor is RUN.</div>{/if}
+        <section class="tuning-section"><div class="section-title">{localize("Position Loop", $uiLanguage)}</div><div class="field-grid"><div class="field-label">{label(POSITION_KP)}</div><div class="editor"><input class:ramModified={!!metadata[POSITION_KP] && $modifiedParameterIds.has(metadata[POSITION_KP].id)} class:dirty={dirty(POSITION_KP)} class="compact-input mono" value={drafts[POSITION_KP] ?? ""} disabled={locked(POSITION_KP)} oninput={(event) => edits.edit(POSITION_KP, event.currentTarget.value)} onkeydown={(event) => keydown(event, POSITION_KP)} onblur={() => edits.discard(POSITION_KP)} /><span class="unit">{unit(POSITION_KP)}</span></div></div></section>
+        <section class="tuning-section"><div class="section-title">{localize("Mechanical Observer", $uiLanguage)}</div><div class="field-grid"><div class="field-label">{label(ESO_BW)}</div><div class="editor"><input class:ramModified={!!metadata[ESO_BW] && $modifiedParameterIds.has(metadata[ESO_BW].id)} class:dirty={dirty(ESO_BW)} class="compact-input mono" value={drafts[ESO_BW] ?? ""} disabled={locked(ESO_BW)} oninput={(event) => edits.edit(ESO_BW, event.currentTarget.value)} onkeydown={(event) => keydown(event, ESO_BW)} onblur={() => edits.discard(ESO_BW)} /><span class="unit">{unit(ESO_BW)}</span></div></div></section>
+        {#if loading}<div class="loading-note"><i class="codicon codicon-loading codicon-modifier-spin"></i> {localize("Reading tuning parameters…", $uiLanguage)}</div>{/if}
+        {#if motorState === "RUN"}<div class="state-note">{localize("Tuning writes are locked while the motor is RUN.", $uiLanguage)}</div>{/if}
       </aside></div>
     {/if}
   </section>

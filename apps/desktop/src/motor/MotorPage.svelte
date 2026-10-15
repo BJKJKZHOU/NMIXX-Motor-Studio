@@ -1,4 +1,5 @@
 <script lang="ts">
+  import { uiLanguage, localize, localizeFeedback } from "../i18n";
   import { onMount, untrack } from "svelte";
   import type { ConnectionInfo } from "../connection/types";
   import type { MotorState } from "../motor/state";
@@ -104,7 +105,7 @@
     return parameterText(values[row.identifiedSymbol]) || "—";
   }
   function unitFor(symbol: string) { return metadata[symbol]?.unit ?? ""; }
-  function parameterLabel(symbol: string) { return metadata[symbol]?.label ?? "Unavailable"; }
+  function parameterLabel(symbol: string) { return localize(metadata[symbol]?.label ?? "Unavailable", $uiLanguage); }
   function defaultText(symbol: string) {
     const value = metadata[symbol]?.default;
     return value === null || value === undefined ? "—" : String(value);
@@ -253,20 +254,20 @@
 
   <section class="motor-content">
     {#if !connection}
-      <div class="empty-state"><i class="codicon codicon-plug"></i><div>Connect a device to configure motor parameters.</div></div>
+      <div class="empty-state"><i class="codicon codicon-plug"></i><div>{localize("Connect a device to configure motor parameters.", $uiLanguage)}</div></div>
     {:else}
       <div class="motor-sheet">
-        {#if motorState !== "DISABLED"}<div class="state-note">Disable the motor before editing its model, identification currents or commissioning limits.</div>{/if}
+        {#if motorState !== "DISABLED"}<div class="state-note">{localize("Disable the motor before editing its model, identification currents or commissioning limits.", $uiLanguage)}</div>{/if}
         <section class="motor-section">
-          <div class="section-title">Motor Parameters</div>
+          <div class="section-title">{localize("Motor Parameters", $uiLanguage)}</div>
 
           <div class="parameter-grid" role="table" aria-label="Motor parameters">
             <div class="grid-header" role="row">
-              <div role="columnheader">Parameter</div>
-              <div role="columnheader">Default</div>
-              <div role="columnheader">Active</div>
-              <div role="columnheader">Identified</div>
-              <div role="columnheader">Action</div>
+              <div role="columnheader">{localize("Parameter", $uiLanguage)}</div>
+              <div role="columnheader">{localize("Default", $uiLanguage)}</div>
+              <div role="columnheader">{localize("Active", $uiLanguage)}</div>
+              <div role="columnheader">{localize("Identified", $uiLanguage)}</div>
+              <div role="columnheader">{localize("Action", $uiLanguage)}</div>
             </div>
 
             {#each ROWS as row}
@@ -305,17 +306,17 @@
                     >{startLabel}</vscode-button>
 
                     {#if state.phase === "running"}
-                      <span class="action-status state-running"><i class="codicon codicon-loading codicon-modifier-spin"></i> Running</span>
+                      <span class="action-status state-running"><i class="codicon codicon-loading codicon-modifier-spin"></i> {localize("Running", $uiLanguage)}</span>
                     {:else if state.phase === "ready"}
                       <!-- svelte-ignore a11y_click_events_have_key_events a11y_no_static_element_interactions -->
-                      <vscode-button class="apply-button" disabled={!connection?.commissioning?.identificationApply} onclick={() => void applyIdentification(row.identKey!)} title="Apply the latest valid identification result to Active parameters">Apply</vscode-button>
+                      <vscode-button class="apply-button" disabled={!connection?.commissioning?.identificationApply} onclick={() => void applyIdentification(row.identKey!)} title="Apply the latest valid identification result to Active parameters">{localize("Apply", $uiLanguage)}</vscode-button>
                     {:else if state.phase === "applying"}
-                      <span class="action-status state-running"><i class="codicon codicon-loading codicon-modifier-spin"></i> Applying</span>
+                      <span class="action-status state-running"><i class="codicon codicon-loading codicon-modifier-spin"></i> {localize("Applying", $uiLanguage)}</span>
                     {:else if state.phase === "applied"}
-                      <span class="action-status state-success"><i class="codicon codicon-check"></i> Applied</span>
+                      <span class="action-status state-success"><i class="codicon codicon-check"></i> {localize("Applied", $uiLanguage)}</span>
                     {:else if state.phase === "failed"}
-                      <span class="action-status state-failed" title={state.message}><i class="codicon codicon-error"></i> Failed</span>
-                      {#if state.message}<span class="action-reason" role="alert">{state.message}</span>{/if}
+                      <span class="action-status state-failed" title={state.message}><i class="codicon codicon-error"></i> {localize("Failed", $uiLanguage)}</span>
+                      {#if state.message}<span class="action-reason" role="alert">{localizeFeedback(state.message, $uiLanguage)}</span>{/if}
                     {:else}
                       <span class="action-status muted">—</span>
                     {/if}
@@ -329,11 +330,11 @@
         </section>
 
         <section class="motor-section identification-settings">
-          <div class="section-title">Identification Settings</div>
+          <div class="section-title">{localize("Identification Settings", $uiLanguage)}</div>
           <div class="settings-grid" role="table" aria-label="Identification settings">
             <div class="settings-header" role="row">
-              <div role="columnheader">Parameter</div>
-              <div role="columnheader">Value</div>
+              <div role="columnheader">{localize("Parameter", $uiLanguage)}</div>
+              <div role="columnheader">{localize("Value", $uiLanguage)}</div>
             </div>
             {#each IDENTIFICATION_SETTING_SYMBOLS as settingSymbol}
               {#if metadata[settingSymbol]}

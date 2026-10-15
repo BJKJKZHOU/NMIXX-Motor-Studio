@@ -1,4 +1,5 @@
 <script lang="ts">
+  import { uiLanguage, localize } from "../i18n";
   import type { ConnectionInfo } from "../connection/types";
   import type { MotorState } from "../motor/state";
   import { canWriteInMotorState } from "../parameters/writeState";
@@ -34,7 +35,7 @@
 
   function displayText(symbol: string) { return parameterText(values[symbol]) || "—"; }
   function unitFor(symbol: string) { return metadata[symbol]?.unit ?? ""; }
-  function parameterLabel(symbol: string, fallback = "Unavailable") { return metadata[symbol]?.label ?? fallback; }
+  function parameterLabel(symbol: string, fallback = "Unavailable") { return localize(metadata[symbol]?.label ?? fallback, $uiLanguage); }
   function isWritable(symbol: string) { return !$parameters.loading && !$parameters.saving && canWriteInMotorState(metadata[symbol], motorState); }
   function numericValue(symbol: string): number | null {
     const value = values[symbol];
@@ -64,13 +65,13 @@
     {:else}
       <div class="limits-sheet">
         <section class="limits-section">
-          <div class="section-title">Operating Limits</div>
+          <div class="section-title">{localize("Operating Limits", $uiLanguage)}</div>
           <div class="operating-grid" role="table" aria-label="Operating limits">
             <div class="operating-header" role="row">
-              <div role="columnheader">Parameter</div>
-              <div role="columnheader">User Limit</div>
-              <div role="columnheader">Hardware Limit</div>
-              <div role="columnheader">Effective</div>
+              <div role="columnheader">{localize("Parameter", $uiLanguage)}</div>
+              <div role="columnheader">{localize("User Limit", $uiLanguage)}</div>
+              <div role="columnheader">{localize("Hardware Limit", $uiLanguage)}</div>
+              <div role="columnheader">{localize("Effective", $uiLanguage)}</div>
             </div>
 
             {#each OPERATING_LIMITS as row}
@@ -117,12 +118,12 @@
         </section>
 
         <section class="limits-section bus-section">
-          <div class="section-title">Bus Voltage</div>
+          <div class="section-title">{localize("Bus Voltage", $uiLanguage)}</div>
           <div class="bus-grid" role="table" aria-label="Bus voltage limits">
             <div class="bus-header" role="row">
-              <div role="columnheader">Minimum</div>
-              <div role="columnheader">Actual</div>
-              <div role="columnheader">Maximum</div>
+              <div role="columnheader">{localize("Minimum", $uiLanguage)}</div>
+              <div role="columnheader">{localize("Actual", $uiLanguage)}</div>
+              <div role="columnheader">{localize("Maximum", $uiLanguage)}</div>
             </div>
             <div class="bus-row" role="row">
               <div class="bus-cell" role="cell">
@@ -142,7 +143,7 @@
                 {:else}
                   <span class="muted">—</span>
                 {/if}
-                <span class="bus-caption">Undervoltage limit</span>
+                <span class="bus-caption">{localize("Undervoltage limit", $uiLanguage)}</span>
               </div>
 
               <div
@@ -159,7 +160,7 @@
                 {:else}
                   <span class="muted">—</span>
                 {/if}
-                <span class="bus-caption">DC bus voltage</span>
+                <span class="bus-caption">{localize("DC bus voltage", $uiLanguage)}</span>
               </div>
 
               <div class="bus-cell" role="cell">
@@ -179,7 +180,7 @@
                 {:else}
                   <span class="muted">—</span>
                 {/if}
-                <span class="bus-caption">Overvoltage limit</span>
+                <span class="bus-caption">{localize("Overvoltage limit", $uiLanguage)}</span>
               </div>
             </div>
           </div>
@@ -187,13 +188,13 @@
 
         <section class="limits-section position-section unavailable-section">
           <div class="section-heading">
-            <div class="section-title">Position Limits</div>
-            <div class="section-note">Firmware unavailable</div>
+            <div class="section-title">{localize("Position Limits", $uiLanguage)}</div>
+            <div class="section-note">{localize("Firmware unavailable", $uiLanguage)}</div>
           </div>
 
           <div class="position-grid" role="table" aria-label="Position limits">
             <div class="position-row" role="row">
-              <div class="parameter-name" role="cell">Zero reference</div>
+              <div class="parameter-name" role="cell">{localize("Zero reference", $uiLanguage)}</div>
               <div class="muted mono" role="cell">—</div>
             </div>
             <div class="position-row" role="row">
