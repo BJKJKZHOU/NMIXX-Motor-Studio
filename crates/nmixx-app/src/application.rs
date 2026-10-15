@@ -536,7 +536,7 @@ impl ApplicationSession {
             // A subsequent manual Run selects A/B on the Host. Firmware stays
             // RUN and follows the newly written Position target.
             let (next, is_b) = target.ok_or_else(|| ApplicationError::Motion("Missing Repeat target".into()))?;
-            self.workflow_checkpoint(ticket)?;
+            self.workflow_checkpoint(ticket).map_err(ApplicationError::Motion)?;
             let meta = self.inner.schema.parameter_by_key("PARAM_TARGET_POSITION")
                 .ok_or_else(|| ApplicationError::Motion("Position target is not exposed".into()))?;
             let position = crate::motion::turns_to_position(next).map_err(ApplicationError::Motion)?;

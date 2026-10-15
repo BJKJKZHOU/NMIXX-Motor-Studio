@@ -2,9 +2,10 @@ use thiserror::Error;
 use std::sync::Arc;
 
 use crate::parameter_service::ParameterService;
+use crate::preflight::PreflightService;
 use crate::{
     ActionHandle, DeviceSession, HostSchema, IdentificationKind,
-    ParameterServiceError, ParameterValue, PreflightError, PreflightIssue, PreflightService, SchemaError,
+    ParameterServiceError, ParameterValue, PreflightError, PreflightIssue, SchemaError,
     SessionError,
 };
 
