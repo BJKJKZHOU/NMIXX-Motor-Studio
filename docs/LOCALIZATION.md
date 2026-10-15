@@ -27,6 +27,19 @@ apps/desktop/src/
 
 需要增加/更改一个静态文案时，先在 `enMessages` 新增稳定键，然后在所有已有语言文件加入对应翻译，最后在页面引用 `translate("ui.xxx", $uiLanguage)`。不要从业务函数直接使用某一种语言的对象。
 
+## 按业务语义定义键
+
+新键必须表示**使用场景**，而不是将英文显示句子机械转成字符串：
+
+- `ui.active` 当前用于 Motor 参数表的“当前值”；Events 活动故障应使用 `events.problem.active`（“活动中”），已解决状态使用 `events.problem.resolved`。
+- 优先使用 `motor.identification.enable.confirm`、`scope.channel.selection.exceeded` 等带域名前缀的键；不要新增 `.2` 等碰撞序号。
+- 仅页面静态文案和可控制的用户提示使用 `translate(key, language)`，带有变量的提示使用 `translateFormat(key, language, { kind: "Rs/Ls" })`，变量占位符由资源文件定义。
+- 业务状态存储语言无关的 `running`、`failed`、原始 Reason 代码或结构化错误字段；不应提前将状态翻译成中文，否则界面切到英文时无法同步更新。
+- Control 的增益来源选项使用 `bandwidth`、`manual` 内部标识，经 HostSchema 枚举映射后写入固件；其显示文字由语言资源控制，绝不能用中文显示文字作为 select.value。
+- 对于外部设备提供的故障字符串，兼容层 `localizeFeedback` 只替换已知人类可读内容。未知报错及 `ERR_STATE` 等代码继续显示原文，不根据显示结果执行控制操作。
+
+新增语言文件必须同时提供全部 MessageKey；翻译中有插值的项应保持相同的占位符名称（如 `{kind}`、`{limit}`、`{rate}`）。
+
 ## 回归验证
 
 ```bash
