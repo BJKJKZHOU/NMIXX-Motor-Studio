@@ -315,6 +315,8 @@ test("new motor from USB connection through three identifications, phase search 
   await tuning.get("refreshExperiment()");
   assert.equal(tuning.get("experimentState"),"COMPLETED");
   assert.ok(tuning.get("experimentSnapshot"));
-  assert.equal(errors.length,0);
+  // The initial Phase Search before encoder configuration intentionally fails
+  // and must notify the operator. A later successful retry does not erase it.
+  assert.deepEqual(errors, ["Error: Encoder not ready"]);
   assert.deepEqual(device.commands.filter(c=>c[0]==="ACTION"&&c[1]==="ACTION_IDENT_APPLY").map(c=>c[2]),["rsLs","flux","jb"]);
 });
