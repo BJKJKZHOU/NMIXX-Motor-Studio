@@ -137,7 +137,7 @@ function createTuningHarness() {
     experimentState: "IDLE", experimentMessage: "", experimentSnapshot: undefined,
     waveformTab: "channels",
     $parameters: { saving: false }, writing: new Set(),
-    hasDirtyDraft: () => false, experimentActive: () => ["PREPARING","RUNNING","STOPPING"].includes(vm.runInContext("experimentState", context)),
+    $edits: { dirty: new Set() }, $motionState: { incrementalDeltaTurn: 1 }, incrementalDraft: "1",
     selectedTuningEntries: () => [{ id: 0x11, rate: "fast" }],
     selectionWithinLimits: () => true,
     activeMotionMode: () => "position", motionModeSupported: () => true,
@@ -147,7 +147,7 @@ function createTuningHarness() {
     refreshExperiment: async () => { events.push("refresh-status-and-waveform"); },
     onError: (error) => errors.push(String(error)),
   });
-  const handlers = ["canRunMotion","canStopMotion","runTuningMotion","stopTuningMotion"].map((name) => extract(page, name)).join("\n");
+  const handlers = ["formatHostNumber","hasDirtyDraft","experimentActive","canRunMotion","canStopMotion","runTuningMotion","stopTuningMotion"].map((name) => extract(page, name)).join("\n");
   vm.runInContext(compile(handlers), context);
   const get = (expr) => vm.runInContext(expr, context);
   return { events, errors, get, set: get, setStatus: (value) => status = value,
@@ -172,7 +172,8 @@ test("Tuning Run starts one captured experiment and UI follows PREPARING/RUNNING
 
 test("Tuning dirty input disables Run, no experiment or motor command is dispatched", async () => {
   const h = createTuningHarness();
-  h.set('hasDirtyDraft = () => true');
+  // Simulate a user editing the Delta field to 3 without pressing Enter.
+  h.set('incrementalDraft = "3"');
   assert.equal(h.get("canRunMotion()"), false);
   await h.run();
   assert.equal(h.events.length, 0);
