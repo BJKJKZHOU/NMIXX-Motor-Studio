@@ -96,7 +96,7 @@ test("status bar runtime values come from shared baseline telemetry", () => {
   assert.match(shell, /startRuntimeTelemetryTracking/);
   assert.match(shell, /Vbus/);
   assert.match(shell, /const GLOBAL_SYMBOLS = \["PARAM_MOTOR_STATE"\]/);
-  assert.match(shell, /const POLLED_SYMBOLS = \["PARAM_MOTOR_STATE"\]/);
+  assert.match(shell, /const POLLED_SYMBOLS = \["PARAM_MOTOR_STATE"/);
   assert.doesNotMatch(shell, /PARAM_RUN_POSITION"\] as const/);
 });
 
@@ -182,4 +182,19 @@ test("Control Architecture and Tuning distinguish saved manual speed gains from 
   }
   assert.match(control, /Manual Kp/);
   assert.match(control, /Manual Id Kp/);
+});
+
+
+test("Encoder health is checked through the shared Application problems service", () => {
+  const app = readFileSync(join(repo, "crates/nmixx-app/src/application.rs"), "utf8");
+  const problems = readFileSync(join(repo, "crates/nmixx-app/src/problems.rs"), "utf8");
+  const shell = source("App.svelte");
+  const events = source("events/EventsPage.svelte");
+  assert.match(app, /PARAM_ENCODER_FAULT/);
+  assert.match(problems, /update_encoder_health/);
+  assert.match(problems, /ENC_PROTOCOL_NONE/);
+  assert.match(shell, /PARAM_ENCODER_VALID/);
+  assert.match(shell, /onNavigate=\{\(page\) => activePage = page\}/);
+  assert.match(events, /Open Encoder/);
+  assert.match(events, /Inspect Limits/);
 });

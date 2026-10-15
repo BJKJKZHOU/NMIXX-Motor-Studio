@@ -207,7 +207,9 @@ impl ApplicationSession {
     pub fn parameter_metadata(&self) -> &[ParameterMetadata] { self.inner.parameters.parameters() }
     pub fn parameter_read(&self, id: u16) -> Result<ParameterValue, ApplicationError> { Ok(self.inner.parameters.read(id)?) }
     pub fn parameter_read_many(&self, ids: &[u16]) -> Result<Vec<(u16, Result<ParameterValue, ParameterServiceError>)>, ApplicationError> {
-        Ok(self.inner.parameters.read_many(ids)?)
+        let results = self.inner.parameters.read_many(ids)?;
+        self.inner.problems.sync_from_parameters(&self.inner.parameters, &self.inner.schema);
+        Ok(results)
     }
     pub fn parameter_cached(&self, id: u16) -> Result<Option<ParameterValue>, ApplicationError> { Ok(self.inner.parameters.cached(id)?) }
     pub fn parameter_cached_many(&self, ids: &[u16]) -> Result<Vec<(u16, Result<ParameterValue, ParameterServiceError>)>, ApplicationError> {
@@ -233,7 +235,7 @@ impl ApplicationSession {
     }
 
     pub fn problems_recheck(&self) -> Result<ProblemSnapshot, ApplicationError> {
-        let ids = protection_parameter_ids(&self.inner.schema);
+        let ids = problem_parameter_ids(&self.inner.schema);
         if !ids.is_empty() {
             let results = self.inner.parameters.read_many(&ids)?;
             self.require_refresh(results)?;
@@ -651,8 +653,9 @@ fn identification_result_valid(
     matches!(parameters.cached(metadata.id), Ok(Some(ParameterValue::U8(1))))
 }
 
-fn protection_parameter_ids(schema: &HostSchema) -> Vec<u16> {
-    ["PARAM_EVENT_REPORT", "PARAM_EVENT_WARNING", "PARAM_EVENT_ERROR", "PARAM_EVENT_TRIP"]
+fn problem_parameter_ids(schema: &HostSchema) -> Vec<u16> {
+    ["PARAM_EVENT_REPORT", "PARAM_EVENT_WARNING", "PARAM_EVENT_ERROR", "PARAM_EVENT_TRIP",
+     "PARAM_ENCODER_PROTOCOL", "PARAM_ENCODER_READY", "PARAM_ENCODER_VALID", "PARAM_ENCODER_FAULT"]
         .into_iter()
         .filter_map(|symbol| schema.parameter_by_symbol(symbol).map(|metadata| metadata.id))
         .collect()

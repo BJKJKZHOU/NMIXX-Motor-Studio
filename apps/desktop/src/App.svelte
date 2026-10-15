@@ -26,7 +26,7 @@
   const GLOBAL_SYMBOLS = ["PARAM_MOTOR_STATE"] as const;
   // Motor state is not a Plot signal; runtime Current/Speed/Position/Vbus come
   // from the connection-owned 1 kHz baseline acquisition instead.
-  const POLLED_SYMBOLS = ["PARAM_MOTOR_STATE"] as const;
+  const POLLED_SYMBOLS = ["PARAM_MOTOR_STATE", "PARAM_ENCODER_PROTOCOL", "PARAM_ENCODER_READY", "PARAM_ENCODER_VALID", "PARAM_ENCODER_FAULT"] as const;
   const DEFAULT_SCHEMA_PATH = "../../../AxDr_L_Motor/build/host/axdr-host-schema.toml";
   const SCHEMA_PATH_STORAGE_KEY = "nmixx.connection.hostSchemaPath";
   const globalParameters = selectParameters(GLOBAL_SYMBOLS);
@@ -216,7 +216,7 @@
     {:else if activePage === "tuning"}<div class="domain-page-container"><ControlTuningPage {connection} {motorState} onError={setError} /></div>
     {:else if activePage === "motion"}<div class="domain-page-container"><MotionPage capabilities={connection?.motion} {motorState} onError={setError} /></div>
     {:else if activePage === "parameters"}<div class="domain-page-container"><ParameterTablePage {connection} onError={setError} /></div>
-    {:else if activePage === "events"}<div class="domain-page-container"><EventsPage {connection} onError={setError} /></div>
+    {:else if activePage === "events"}<div class="domain-page-container"><EventsPage {connection} onNavigate={(page) => activePage = page} onError={setError} /></div>
     {:else if activePage === "automation"}<div class="domain-page-container"><AutomationHost connected={!!connection} /></div>
     {:else if activePage !== "analysis"}
       <section class="page-toolbar"><div class="page-title">{pageTitle(activePage).toUpperCase()}</div></section>
