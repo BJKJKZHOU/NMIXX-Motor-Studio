@@ -48,6 +48,14 @@ export function setUiLanguage(language: UiLanguage): void {
 export function translate(key: MessageKey, language: UiLanguage): string {
   return locales[language]?.[key] ?? enMessages[key];
 }
+/** Interpolation only affects user-visible copy, never a protocol request. */
+export function translateFormat(
+  key: MessageKey, language: UiLanguage, values: Record<string, string | number>,
+): string {
+  return translate(key, language).replace(/\{([a-zA-Z][a-zA-Z0-9]*)\}/g,
+    (placeholder, name: string) => name in values ? String(values[name]) : placeholder);
+}
+
 /** External HostSchema label compatibility: unknown labels remain unchanged. */
 export function localize(value: string, language: UiLanguage): string {
   const key = byEnglish.get(value);
