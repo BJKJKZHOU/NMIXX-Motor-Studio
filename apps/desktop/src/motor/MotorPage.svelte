@@ -315,6 +315,7 @@
                       <span class="action-status state-success"><i class="codicon codicon-check"></i> Applied</span>
                     {:else if state.phase === "failed"}
                       <span class="action-status state-failed" title={state.message}><i class="codicon codicon-error"></i> Failed</span>
+                      {#if state.message}<span class="action-reason" role="alert">{state.message}</span>{/if}
                     {:else}
                       <span class="action-status muted">—</span>
                     {/if}
@@ -458,9 +459,18 @@
 
   .action-cell {
     display: flex;
+    flex-wrap: wrap;
     align-items: center;
-    gap: 10px;
+    gap: 6px 10px;
     min-width: 0;
+  }
+
+  .action-reason {
+    flex-basis: 100%;
+    color: var(--nmixx-status-errorForeground);
+    font-size: 11px;
+    white-space: pre-line;
+    overflow-wrap: anywhere;
   }
 
   .action-status {

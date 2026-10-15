@@ -207,6 +207,7 @@
                   {:else if phaseState === "success"}<span class="action-status state-success"><i class="codicon codicon-check"></i> Success</span>
                   {:else if phaseState === "stopped"}<span class="action-status muted"><i class="codicon codicon-debug-stop"></i> Stopped</span>
                   {:else if phaseState === "failed"}<span class="action-status state-failed" title={phaseMessage}><i class="codicon codicon-error"></i> Failed</span>{/if}
+                  {#if phaseState === "failed" && phaseMessage}<span class="action-reason" role="alert">{phaseMessage}</span>{/if}
                 </div>
                 <div class="field-label">{parameterLabel(MOTOR_DIR_SYMBOL, "Motor direction")}</div>
                 <div>
@@ -237,6 +238,7 @@
               {:else if homingState === "success"}<div class="action-status state-success"><i class="codicon codicon-check"></i> Homed</div>
               {:else if homingState === "stopped"}<div class="action-status muted"><i class="codicon codicon-debug-stop"></i> Homing stopped</div>
               {:else if homingState === "failed"}<div class="action-status state-failed" title={homingMessage}><i class="codicon codicon-error"></i> Homing failed</div>{/if}
+              {#if homingState === "failed" && homingMessage}<div class="action-reason" role="alert">{homingMessage}</div>{/if}
               {#if !metadata[ZERO_VALID_SYMBOL] && !setZeroAvailable() && !homingAvailable()}<div class="future-note">Firmware unavailable</div>{/if}
             </section>
           </aside>
@@ -273,4 +275,10 @@
   .reference-actions { margin-top: 16px; display: flex; flex-wrap: wrap; gap: 8px; }
   .future-note { margin-top: 10px; color: var(--vscode-descriptionForeground); font-size: 11px; }
   @media (max-width: 760px) { .encoder-columns { grid-template-columns: 1fr; gap: 30px; } .reference-column { border-left: 0; padding-left: 0; } }
+  .action-reason {
+    color: var(--nmixx-status-errorForeground);
+    font-size: 11px;
+    white-space: pre-line;
+    overflow-wrap: anywhere;
+  }
 </style>

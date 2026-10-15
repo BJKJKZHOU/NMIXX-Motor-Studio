@@ -234,3 +234,13 @@ test("Motion and Control Tuning select the same firmware Profile Parameter", () 
   assert.match(app, /MOTION_S_PEAK/);
   assert.match(app, /position_preview\(distance_turn, max_speed, acc, dec, limit, profile\)/);
 });
+
+test("new motor identification and encoder preflight errors are visible, not only hover titles", () => {
+  const motor = source("motor/MotorPage.svelte");
+  const encoder = source("encoder/EncoderPage.svelte");
+  assert.match(motor, /role="alert">\{state\.message\}/);
+  assert.match(encoder, /role="alert">\{phaseMessage\}/);
+  assert.match(encoder, /role="alert">\{homingMessage\}/);
+  assert.match(motor, /PARAM_MOTOR_RL_I_PEAK/);
+  assert.match(motor, /PARAM_MOTOR_ALIGN_CURRENT/);
+});
