@@ -188,6 +188,18 @@ impl MotionService {
             ParameterValue::U8(value) => mode_from_wire_value(parameters.schema(), value)?,
             _ => return Err("Motor mode is not a synchronized u8 parameter".to_owned()),
         };
+        let profile = match parameters.schema().parameter_by_key("PARAM_MOTION_PROFILE") {
+            None => MotionTrajectory::Trapezoidal,
+            Some(meta) => match value("PARAM_MOTION_PROFILE")? {
+                ParameterValue::U8(raw) => match meta.enum_symbol_u8(raw) {
+                    Some("MOTION_TRAPEZOID") => MotionTrajectory::Trapezoidal,
+                    Some("MOTION_S_TIME") => MotionTrajectory::STime,
+                    Some("MOTION_S_PEAK") => MotionTrajectory::SPeak,
+                    _ => return Err("Unsupported firmware Motion Profile".to_owned()),
+                },
+                _ => return Err("Motion Profile is not a synchronized u8 Parameter".to_owned()),
+            },
+        };
         let limit = if let Some(limit) = effective_speed_limit {
             Some(limit)
         } else if parameters.schema().parameter_by_key("PARAM_LIMIT_WM_EFFECTIVE").is_some() {
@@ -199,7 +211,10 @@ impl MotionService {
             MotionMode::Position => {
                 let acc = number("PARAM_MOTION_WM_ACC")?;
                 let dec = number("PARAM_MOTION_WM_DEC")?;
-                let max_speed = number("PARAM_TARGET_SPEED")?;
+                let max_speed = number("PARAM_TARGET_SPEED")?.abs();
+                if max_speed <= 0.0 {
+                    return Err("Position Max Speed must be positive before Run".to_owned());
+                }
                 let distance_turn = match config.position_command {
                     PositionCommand::Incremental => config.incremental_delta_turn,
                     PositionCommand::Absolute => {
@@ -216,10 +231,11 @@ impl MotionService {
                         target - current
                     }
                 };
-                Ok(position_preview(distance_turn, max_speed, acc, dec, limit))
+                Ok(position_preview(distance_turn, max_speed, acc, dec, limit, profile))
             }
             MotionMode::Speed | MotionMode::SensorlessSpeed => {
-                Ok(speed_preview(number("PARAM_TARGET_SPEED")?, number("PARAM_MOTION_WM_ACC")?, limit))
+                let shape = if mode == MotionMode::SensorlessSpeed { MotionTrajectory::Trapezoidal } else { profile };
+                Ok(speed_preview(number("PARAM_TARGET_SPEED")?, number("PARAM_MOTION_WM_ACC")?, limit, shape))
             }
             MotionMode::Torque => Ok(torque_preview(number("PARAM_TARGET_TORQUE")?)),
         }
@@ -240,6 +256,11 @@ impl MotionService {
         if state != MotorState::Enabled { return Err(format!("motor must be ENABLED before Run; current state is {state}")); }
         let mode = mode_from_wire_value(parameters.schema(), read_u8(parameters, "PARAM_MOTOR_MODE")?)?;
         if mode == MotionMode::Position {
+            // Firmware uses abs(PARAM_TARGET_SPEED) as the Position trajectory cap.
+            let speed = parameters.read(parameter_id(parameters, "PARAM_TARGET_SPEED")?).map_err(|error| error.to_string())?;
+            if !matches!(speed, ParameterValue::F32(value) if value.is_finite() && value.abs() > 0.0) {
+                return Err("Position Max Speed must be positive before Run".to_owned());
+            }
             let target_turns = if let Some(target) = position_target_override {
                 Some(target)
             } else if config.position_command == PositionCommand::Incremental {
@@ -318,43 +339,79 @@ fn validate_host_config(config: &MotionConfig) -> Result<(), String> {
     if !config.incremental_delta_turn.is_finite() { return Err("Incremental position must be finite".to_owned()); }
     Ok(())
 }
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum MotionTrajectory { Trapezoidal, STime, SPeak }
+impl MotionTrajectory {
+    fn time_factor(self) -> f64 {
+        if self == Self::SPeak { 1.875 } else { 1.0 }
+    }
+    fn speed_fraction(self, u: f64) -> f64 {
+        if self == Self::Trapezoidal { u } else {
+            u * u * u * (10.0 + u * (-15.0 + 6.0 * u))
+        }
+    }
+    fn distance_fraction(self, u: f64) -> f64 {
+        if self == Self::Trapezoidal { 0.5 * u * u } else {
+            let u2 = u * u;
+            u2 * u2 * (2.5 + u * (-3.0 + u))
+        }
+    }
+}
+
 fn limited_speed(requested: f64, effective_speed_limit: Option<f64>) -> f64 {
     match effective_speed_limit { Some(limit) if limit.is_finite() && limit >= 0.0 => requested.min(limit), _ => requested }
 }
-fn position_preview(distance_turn: f64, requested_speed: f64, acceleration: f64, deceleration: f64, effective_speed_limit: Option<f64>) -> MotionPreview {
+fn position_preview(distance_turn: f64, requested_speed: f64, acceleration: f64, deceleration: f64,
+                    effective_speed_limit: Option<f64>, profile: MotionTrajectory) -> MotionPreview {
     let distance = distance_turn.abs() * std::f64::consts::TAU;
     if distance <= f64::EPSILON || acceleration <= 0.0 || deceleration <= 0.0 {
         return MotionPreview { times: vec![0.0, 1.0], primary: vec![0.0, distance_turn], secondary: vec![0.0, 0.0],
             primary_label: "Position", secondary_label: Some("Speed"), primary_unit: "turn", secondary_unit: Some("rad/s") };
     }
     let sign = distance_turn.signum();
-    let speed_limit = limited_speed(requested_speed.abs(), effective_speed_limit).max(1e-9);
-    let ramp_distance_at_limit = 0.5 * speed_limit * speed_limit * (1.0 / acceleration + 1.0 / deceleration);
-    let peak_speed = if ramp_distance_at_limit <= distance { speed_limit } else { (2.0 * distance / (1.0 / acceleration + 1.0 / deceleration)).sqrt() };
-    let t_acc = peak_speed / acceleration;
-    let t_dec = peak_speed / deceleration;
-    let ramp_distance = 0.5 * peak_speed * (t_acc + t_dec);
-    let t_cruise = ((distance - ramp_distance).max(0.0)) / peak_speed.max(1e-9);
+    let speed_limit = limited_speed(requested_speed.abs(), effective_speed_limit);
+    if speed_limit <= 0.0 {
+        return MotionPreview { times: vec![0.0, 1.0], primary: vec![0.0, 0.0], secondary: vec![0.0, 0.0],
+            primary_label: "Position", secondary_label: Some("Speed"), primary_unit: "turn", secondary_unit: Some("rad/s") };
+    }
+    // Matches the firmware's SCurve::Plan for a stationary initial reference:
+    // quintic velocity smoothstep; S_PEAK stretches acceleration time by 1.875.
+    let k = profile.time_factor();
+    let peak = speed_limit.min((2.0 * distance / (k * (1.0 / acceleration + 1.0 / deceleration))).sqrt());
+    let t_acc = k * peak / acceleration;
+    let t_dec = k * peak / deceleration;
+    let cruise_distance = (distance - 0.5 * peak * (t_acc + t_dec)).max(0.0);
+    let t_cruise = cruise_distance / peak;
     let total_duration = t_acc + t_cruise + t_dec;
     let samples = 801usize;
-    let dt = total_duration.max(1e-6) / (samples - 1) as f64;
     let mut times = Vec::with_capacity(samples);
     let mut position = Vec::with_capacity(samples);
-    let mut speed: Vec<f64> = Vec::with_capacity(samples);
-    let mut pos = 0.0;
+    let mut speed = Vec::with_capacity(samples);
     for i in 0..samples {
-        let t = i as f64 * dt;
-        let current_speed = if t < t_acc { acceleration * t } else if t < t_acc + t_cruise { peak_speed }
-            else { (peak_speed - deceleration * (t - t_acc - t_cruise)).max(0.0) };
-        if i > 0 { pos += 0.5 * (speed[i - 1].abs() + current_speed) * dt; }
-        times.push(t); speed.push(sign * current_speed); position.push(sign * pos / std::f64::consts::TAU);
+        let t = i as f64 * total_duration / (samples - 1) as f64;
+        let (distance_at_t, speed_at_t) = if t < t_acc {
+            let u = (t / t_acc).clamp(0.0, 1.0);
+            (peak * t_acc * profile.distance_fraction(u), peak * profile.speed_fraction(u))
+        } else if t < t_acc + t_cruise {
+            (0.5 * peak * t_acc + peak * (t - t_acc), peak)
+        } else {
+            let u = ((t - t_acc - t_cruise) / t_dec).clamp(0.0, 1.0);
+            (0.5 * peak * t_acc + cruise_distance + peak * t_dec * (u - profile.distance_fraction(u)),
+             peak * (1.0 - profile.speed_fraction(u)))
+        };
+        times.push(t);
+        speed.push(sign * speed_at_t);
+        position.push(sign * distance_at_t.min(distance) / std::f64::consts::TAU);
     }
-    MotionPreview { times, primary: position, secondary: speed, primary_label: "Position", secondary_label: Some("Speed"), primary_unit: "turn", secondary_unit: Some("rad/s") }
+    if let Some(last) = position.last_mut() { *last = distance_turn; }
+    if let Some(last) = speed.last_mut() { *last = 0.0; }
+    MotionPreview { times, primary: position, secondary: speed,
+        primary_label: "Position", secondary_label: Some("Speed"), primary_unit: "turn", secondary_unit: Some("rad/s") }
 }
-fn speed_preview(target: f64, acceleration: f64, effective_speed_limit: Option<f64>) -> MotionPreview {
+fn speed_preview(target: f64, acceleration: f64, effective_speed_limit: Option<f64>, profile: MotionTrajectory) -> MotionPreview {
     let magnitude = limited_speed(target.abs(), effective_speed_limit);
     let sign = target.signum();
-    let ramp = if acceleration > 0.0 { magnitude / acceleration } else { 0.0 };
+    let ramp = if acceleration > 0.0 { profile.time_factor() * magnitude / acceleration } else { 0.0 };
     let hold = 0.5_f64.max(ramp * 0.25);
     let total = ramp + hold;
     let samples = 301usize;
@@ -362,10 +419,16 @@ fn speed_preview(target: f64, acceleration: f64, effective_speed_limit: Option<f
     let mut speed = Vec::with_capacity(samples);
     for i in 0..samples {
         let t = i as f64 * total.max(1e-6) / (samples - 1) as f64;
-        let value = if ramp <= f64::EPSILON || t >= ramp { magnitude } else { magnitude * t / ramp };
-        times.push(t); speed.push(sign * value);
+        let value = if ramp <= f64::EPSILON || t >= ramp {
+            magnitude
+        } else {
+            magnitude * profile.speed_fraction((t / ramp).clamp(0.0, 1.0))
+        };
+        times.push(t);
+        speed.push(sign * value);
     }
-    MotionPreview { times, primary: speed, secondary: Vec::new(), primary_label: "Speed", secondary_label: None, primary_unit: "rad/s", secondary_unit: None }
+    MotionPreview { times, primary: speed, secondary: Vec::new(), primary_label: "Speed",
+        secondary_label: None, primary_unit: "rad/s", secondary_unit: None }
 }
 fn torque_preview(target: f64) -> MotionPreview {
     MotionPreview { times: vec![0.0, 0.5], primary: vec![target, target], secondary: Vec::new(),
@@ -390,9 +453,35 @@ mod tests {
     }
     #[test]
     fn speed_preview_respects_cached_effective_limit() {
-        let preview = speed_preview(-100.0, 20.0, Some(30.0));
+        let preview = speed_preview(-100.0, 20.0, Some(30.0), MotionTrajectory::Trapezoidal);
         assert!(preview.primary.iter().all(|value| *value >= -30.0 && *value <= 0.0));
         assert_eq!(preview.primary.last(), Some(&-30.0));
+    }
+
+    #[test]
+    fn firmware_s_curve_preview_reaches_exact_position_with_zero_end_speed() {
+        let cases = [MotionTrajectory::Trapezoidal, MotionTrajectory::STime, MotionTrajectory::SPeak];
+        let mut durations = Vec::new();
+        for shape in cases {
+            let preview = position_preview(-1.0, 10.0, 20.0, 20.0, None, shape);
+            assert_eq!(preview.primary.last(), Some(&-1.0));
+            assert_eq!(preview.secondary.last(), Some(&0.0));
+            assert!(preview.primary.windows(2).all(|samples| samples[1] <= samples[0]));
+            assert!(preview.secondary.iter().all(|speed| *speed >= -10.00001 && *speed <= 0.0));
+            durations.push(*preview.times.last().unwrap());
+        }
+        assert!(durations[2] > durations[1]);
+        assert!(durations[1] >= durations[0]);
+    }
+
+    #[test]
+    fn firmware_s_curve_speed_preview_starts_and_finishes_at_correct_speed() {
+        for shape in [MotionTrajectory::STime, MotionTrajectory::SPeak] {
+            let preview = speed_preview(20.0, 100.0, None, shape);
+            assert_eq!(preview.primary.first(), Some(&0.0));
+            assert_eq!(preview.primary.last(), Some(&20.0));
+            assert!(preview.primary.windows(2).all(|values| values[1] >= values[0]));
+        }
     }
 
     #[test]
