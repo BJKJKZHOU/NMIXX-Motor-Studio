@@ -763,9 +763,9 @@ happens to exist.
 - [x] **[DESIGN]** A successful leg changes only the endpoint selected by the next manual Run.
 - [x] **[DESIGN]** Repeat never starts an automatic reverse leg and is not the continuous A <-> B servo-test workflow.
 - [x] **[CODE]** Host repeat state is Application-owned rather than a firmware Parameter.
-- [x] **[CODE]** Existing endpoint logic advances direction only after a successful completion signal.
+- [x] **[CODE]** Ordinary Position Run has no ACTION_COMPLETE; on each later manual Run, the Host checks the previous reference endpoint before choosing the next target.
 - [x] **[CODE]** Stop clears the pending Repeat-leg marker.
-- [ ] **[IMPL]** Current normal Position Motor Run has no generic ACTION_COMPLETE event, so existing completion-driven A/B advancement is not yet a valid end-to-end implementation.
+- [x] **[CODE]** Control Tuning uses reference-position arrival and a settling interval, retaining A/B only after the planned finite-leg stop; independent Stop/Disable discards the sequence.
 - [ ] **[HW]** Verify Run #1 selects B, Run #2 selects A, Run #3 selects B, with no automatic second Run.
 - [ ] **[HW]** Verify Stop, Disable, failed Run and fault do not advance the next Repeat endpoint.
 

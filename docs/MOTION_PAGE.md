@@ -86,24 +86,21 @@ Incremental delta is not an uncommitted Parameter draft.
 The page shows only executable trajectory/profile behavior advertised by the
 connected firmware.
 
-Current AxDr_L Position/Speed motion uses the trapezoidal/T profile represented by
-`Wm_Max / Wm_Acc / Wm_Dec`. S-curve, filtered-profile or other controls must not
-be presented as normal executable choices merely because a preview implementation
-exists.
+AxDr_L exports `PARAM_MOTION_PROFILE` with `MOTION_TRAPEZOID`, `MOTION_S_TIME`
+and `MOTION_S_PEAK`, in addition to `PARAM_MOTION_WM_ACC/DEC`.
+Both Motion and Control Tuning select the same firmware Parameter from its
+HostSchema enum symbols. The selector is editable only when the motor is not RUN.
 
-When future firmware exposes another profile through stable Parameters/capability
-metadata, the page may add that option without creating a second Host-owned copy of
-those values.
+The S-curve preview uses the firmware's quintic velocity shape and its
+acceleration-time factors (1 for S_TIME; 1.875 for S_PEAK).
+It is an initial-plan prediction from rest, not a replacement for actual device
+feedback when commands or mechanical conditions change during movement.
+Sensorless Speed still uses its own firmware startup trajectory.
 
 Position's Max Speed input is a workflow label for the absolute value of
 `PARAM_TARGET_SPEED`, not a separate firmware `PARAM_MOTION_WM_MAX` Parameter.
 The same target-speed Parameter supplies the signed Speed-mode command, so both
 pages must use one shared committed value. Torque slew uses `PARAM_MOTION_TE_RATE`.
-
-The current firmware also exports `PARAM_MOTION_PROFILE` with two S-curve
-variants. The desktop can detect this capability, but the current Motion editor
-and theoretical preview have not yet implemented S-curve selection/shape; they
-must not claim the T-profile preview predicts an S-curve run.
 
 ## Preview semantics
 

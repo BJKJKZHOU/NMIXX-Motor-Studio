@@ -235,7 +235,7 @@ execute motion
 finish condition
         |
         +-- Position -> one manual Run executes one leg
-        |      -> trajectory time + settling -> controlled Stop
+        |      -> firmware reference reaches the target, then settling -> controlled Stop
         |      -> if Repeat is enabled and the leg succeeds, arm the opposite
         |         endpoint for the next manual Run only
         |
@@ -277,8 +277,8 @@ A capture is bounded by one tuning experiment rather than by a fixed duration fo
 The initial lifecycle uses:
 
 - pre-motion capture: 0.5 s;
-- Position: one page-local Run executes one Position leg, runs for the calculated trajectory duration, keeps a short settling interval, then issues the normal controlled Stop;
-- when Position Repeat is enabled, a successful leg only changes the endpoint selected by the next manual Run; it does not automatically start a reverse leg;
+- Position: one page-local Run executes one Position leg; the Application reads the exact firmware `PARAM_REF_POSITION` and committed target until the reference reaches that endpoint, holds a short settling interval, then requests controlled Stop. The preview duration is not used as a completion signal;
+- when Position Repeat is enabled, the successful finite leg keeps the Application-owned A/B endpoints for the **next manual** Tuning Run. Only its internal planned Stop preserves these endpoints; global/page-local Stop, Disable, a failed leg or a recording-limit early Stop reset them. The firmware never receives a Repeat mode;
 - Speed / Sensorless Speed / Torque: continue until the user presses local or global Stop;
 - post-stop capture: 0.75 s after the motor leaves RUN;
 - one finite non-overwriting raw capture for the complete experiment, bounded by a 128 MiB RAM protection budget;

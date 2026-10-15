@@ -211,3 +211,26 @@ test("Connection readiness hides unfinished sessions from business pages but ret
   assert.match(connection, /onRetry/);
   assert.match(shell, /stop-action" disabled=\{!connection \|\| globalStopBusy\}/);
 });
+
+
+test("Position Tuning is reference-completed, not preview-timer-completed", () => {
+  const tuning = readFileSync(join(repo, "crates/nmixx-app/src/tuning.rs"), "utf8");
+  const app = readFileSync(join(repo, "crates/nmixx-app/src/application.rs"), "utf8");
+  assert.match(tuning, /read_position_turns\("PARAM_REF_POSITION"\)/);
+  assert.match(tuning, /TUNING_POSITION_SETTLE/);
+  assert.match(tuning, /tuning_leg_stop\(\)/);
+  assert.doesNotMatch(tuning, /preview_duration/);
+  assert.match(app, /mode == MotionMode::Position && config\.repeat/);
+  assert.match(app, /pub\(crate\) fn tuning_leg_stop/);
+  assert.match(app, /pub fn motor_stop[\s\S]*?cancel_repeat_leg/);
+});
+test("Motion and Control Tuning select the same firmware Profile Parameter", () => {
+  const motion = source("motion/MotionPage.svelte");
+  const tuning = source("control/ControlTuningPage.svelte");
+  const app = readFileSync(join(repo, "crates/nmixx-app/src/motion.rs"), "utf8");
+  assert.match(motion, /motionProfileOptions\(metadata\[MOTION_PROFILE\]\)/);
+  assert.match(tuning, /motionProfileOptions\(metadata\[MOTION_PROFILE\]\)/);
+  assert.match(app, /MOTION_S_TIME/);
+  assert.match(app, /MOTION_S_PEAK/);
+  assert.match(app, /position_preview\(distance_turn, max_speed, acc, dec, limit, profile\)/);
+});
