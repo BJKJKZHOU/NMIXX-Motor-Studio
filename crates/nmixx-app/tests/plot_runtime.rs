@@ -217,8 +217,18 @@ fn scope_live_snapshot_pause_and_clear_follow_fast_samples() {
     assert_eq!(scope.status().unwrap().state, nmixx_app::StreamState::Paused);
     scope.clear().unwrap();
     assert_eq!(scope.status().unwrap().samples, 0);
-    let sent = state.sent.lock().unwrap();
-    assert_eq!(&sent[2].data()[..3], &[3, PLOT_STOP, PLOT_FAST_MASK]);
+    // Error publication and STOP dispatch happen on different worker steps.
+    // Wait for the actual wire frame rather than indexing a command that the
+    // worker may not have sent yet on a busy CI runner.
+    let stop_deadline = Instant::now() + Duration::from_secs(1);
+    let stop = loop {
+        if let Some(frame) = state.sent.lock().unwrap().get(2).cloned() {
+            break frame;
+        }
+        assert!(Instant::now() < stop_deadline, "runtime failure did not dispatch Plot Stop");
+        std::thread::yield_now();
+    };
+    assert_eq!(&stop.data()[..3], &[3, PLOT_STOP, PLOT_FAST_MASK]);
 }
 
 #[test]
