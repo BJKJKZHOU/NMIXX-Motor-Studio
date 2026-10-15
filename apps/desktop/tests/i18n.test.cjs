@@ -70,6 +70,15 @@ test("translation of device acknowledgements preserves English command data",()=
   assert.equal(localizeFeedback("Motor Run accepted by device; awaiting motor-state feedback.","zh-CN"),"设备已接受 Run 命令，等待电机状态反馈。");
   assert.equal(localizeFeedback("Rs/Ls injection peak must be below the configured current limit.","zh-CN"),"Rs/Ls 注入峰值必须低于配置电流限值。");
 });
+test("multi-line commissioning preflight reasons localize individually",()=>{
+  const {localizeFeedback}=environment().exports;
+  const english="Current limit must be configured before identification.\\nAlign current must not exceed the configured current limit.";
+  const result=localizeFeedback(english,"zh-CN");
+  assert.match(result,/辨识前需配置电流限值/);
+  assert.match(result,/Align 电流不得超过配置电流限值/);
+  assert.equal(result.split("\\n").length,2);
+});
+
 test("bottom-left language toggle is separate from Connection and cannot send motor commands",()=>{
   const app=source("App.svelte");
   assert.match(app,/<footer class="statusbar"><button class="language-toggle"/);

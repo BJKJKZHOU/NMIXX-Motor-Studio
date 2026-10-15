@@ -279,7 +279,7 @@
 </script>
 
 <div class="tuning-root">
-  <section class="page-toolbar"><div class="page-title">CONTROL TUNING</div>{#if hasDirtyDraft()}<div class="dirty-note">{localize("Uncommitted edits", $uiLanguage)}</div>{/if}</section>
+  <section class="page-toolbar"><div class="page-title">{localize("Control Tuning", $uiLanguage).toUpperCase()}</div>{#if hasDirtyDraft()}<div class="dirty-note">{localize("Uncommitted edits", $uiLanguage)}</div>{/if}</section>
   <section class="tuning-content">
     {#if !connection}<div class="empty-state"><i class="codicon codicon-plug"></i><div>{localize("Connect a device to tune control loops.", $uiLanguage)}</div></div>
     {:else}

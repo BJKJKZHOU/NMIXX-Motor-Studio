@@ -140,7 +140,7 @@
 </script>
 
 <div class="encoder-root">
-  <section class="page-toolbar"><div class="page-title">ENCODER</div></section>
+  <section class="page-toolbar"><div class="page-title">{localize("Encoder", $uiLanguage).toUpperCase()}</div></section>
   <section class="encoder-content">
     {#if !connection}
       <div class="empty-state"><i class="codicon codicon-plug"></i><div>{localize("Connect a device to configure encoder feedback.", $uiLanguage)}</div></div>

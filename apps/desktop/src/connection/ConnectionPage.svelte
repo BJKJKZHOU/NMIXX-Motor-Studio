@@ -65,7 +65,7 @@
   onMount(refreshPorts);
 </script>
 
-<section class="page-toolbar"><div class="page-title">CONNECTION</div></section>
+<section class="page-toolbar"><div class="page-title">{localize("Connection", $uiLanguage).toUpperCase()}</div></section>
 <section class="page-content connection-page">
   <div class="connection-card">
     <div class="connection-card-title">{localize("Transport", $uiLanguage)}</div>

@@ -249,7 +249,7 @@
 
 <div class="motor-root">
   <section class="page-toolbar">
-    <div class="page-title">MOTOR</div>
+    <div class="page-title">{localize("Motor", $uiLanguage).toUpperCase()}</div>
   </section>
 
   <section class="motor-content">

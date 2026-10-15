@@ -56,7 +56,7 @@
 
 <div class="limits-root">
   <section class="page-toolbar">
-    <div class="page-title">LIMITS / SAFETY</div>
+    <div class="page-title">{localize("Limits / Safety", $uiLanguage).toUpperCase()}</div>
   </section>
 
   <section class="limits-content">

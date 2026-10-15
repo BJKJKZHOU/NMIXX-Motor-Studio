@@ -335,6 +335,7 @@ export function localize(text: string, language: UiLanguage): string {
 /** Human-readable feedback; do not rewrite symbols, IDs or values on the wire. */
 export function localizeFeedback(text: string, language: UiLanguage): string {
   if (language === "en") return text;
+  if (text.includes("\n")) return text.split("\n").map((line) => localizeFeedback(line, language)).join("\n");
   if (zh[text]) return zh[text];
   const prefixes: Array<[string, string]> = [
     ["Encoder fault", "编码器故障"],
