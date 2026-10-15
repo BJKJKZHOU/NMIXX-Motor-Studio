@@ -74,7 +74,7 @@
 
 <div class="parameter-root">
   <section class="page-toolbar">
-    <div class="page-title">{translate("ui.parameters.2", $uiLanguage)}</div>
+    <div class="page-title">{translate("parameters.page.title", $uiLanguage)}</div>
     <div class="parameter-toolbar">
       <div class="parameter-search">
         <i class="codicon codicon-search"></i>
