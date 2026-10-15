@@ -1,5 +1,5 @@
 <script lang="ts">
-  import { uiLanguage, localize, localizeFeedback, translate } from "../i18n";
+  import { uiLanguage, localize, localizeFeedback, translate, type MessageKey } from "../i18n";
   import { onMount } from "svelte";
   import type { MotionCapabilities } from "../connection/types";
   import { selectParameters } from "../parameters/state";
@@ -21,8 +21,8 @@
   export let capabilities: MotionCapabilities | undefined;
   export let motorState: MotorState | null = null;
   export let onError: (error: unknown) => void = () => undefined;
-  const modeLabels: Record<MotionMode, string> = {
-    position: "Position", speed: "Speed", "sensorless-speed": "Sensorless Speed", torque: "Torque",
+  const modeLabels: Record<MotionMode, MessageKey> = {
+    position: "ui.position", speed: "ui.speed", "sensorless-speed": "ui.sensorless.speed", torque: "ui.torque",
   };
   const parameters = selectParameters(MOTION_PARAMETER_SYMBOLS);
   const edits = createParameterEditor(parameters, motionParameterCodec);
@@ -146,7 +146,7 @@
       class:ramModified={!!metadata[MOTION_MODE] && $modifiedParameterIds.has(metadata[MOTION_MODE].id)}
       title={motorState === "DISABLED" ? "Select motor mode" : "Disable the motor before changing mode"}
       onchange={(event) => void setMode(event.currentTarget.value as MotionMode)}>
-      {#each Object.entries(modeLabels) as [value, label]}{#if modeSupported(value as MotionMode)}<option value={value}>{localize(label, $uiLanguage)}</option>{/if}{/each}
+      {#each Object.entries(modeLabels) as [value, label]}{#if modeSupported(value as MotionMode)}<option value={value}>{translate(label, $uiLanguage)}</option>{/if}{/each}
     </select>
   </label></div>
   <div class="motion-simple-body">
@@ -182,7 +182,7 @@
         {/if}
       </div></section>
       {#if hasTrajectory}
-        <section class="motion-panel"><div class="motion-panel-title">Trajectory · {activeMode === "sensorless-speed" ? "Sensorless ramp" : selectedProfile}</div><div class="motion-panel-body motion-grid">
+        <section class="motion-panel"><div class="motion-panel-title">Trajectory · {activeMode === "sensorless-speed" ? translate("ui.sensorless.ramp", $uiLanguage) : localize(selectedProfile, $uiLanguage)}</div><div class="motion-panel-body motion-grid">
 <label class="motion-field"><span>{translate("ui.acceleration", $uiLanguage)}</span><div class="unit-field"><input class:ramModified={!!metadata[MOTION_ACCEL] && $modifiedParameterIds.has(metadata[MOTION_ACCEL].id)} class:dirty={dirty(MOTION_ACCEL)} value={drafts[MOTION_ACCEL] ?? ""} disabled={locked(MOTION_ACCEL)} oninput={(event) => edits.edit(MOTION_ACCEL, event.currentTarget.value)} onkeydown={(event) => parameterKeydown(event, MOTION_ACCEL)} onblur={() => resetDraft(MOTION_ACCEL)} /><em>rad/s²</em></div></label>
 {#if (activeMode === "position" || activeMode === "speed") && motionProfileOptions(metadata[MOTION_PROFILE]).length > 0}
 <label class="motion-field span-2"><span>{translate("ui.profile", $uiLanguage)}</span><select class:ramModified={!!metadata[MOTION_PROFILE] && $modifiedParameterIds.has(metadata[MOTION_PROFILE].id)}
@@ -204,7 +204,7 @@
       {#if motorState}<div class="motion-command-feedback">Device motor state: {motorState}</div>{/if}
     </div>
     <div class="motion-simple-right">
-      <div class="motion-plot-header"><div><strong>{activeMode ? modeLabels[activeMode] : "—"}</strong>{#if hasTrajectory}<span>{activeMode === "sensorless-speed" ? "Sensorless ramp" : selectedProfile}</span>{/if}</div><div class="preview-target">{previewLabel()}</div></div>
+      <div class="motion-plot-header"><div><strong>{activeMode ? translate(modeLabels[activeMode], $uiLanguage) : "—"}</strong>{#if hasTrajectory}<span>{activeMode === "sensorless-speed" ? "Sensorless ramp" : selectedProfile}</span>{/if}</div><div class="preview-target">{previewLabel()}</div></div>
       <div class="motion-plot-area">
         {#if $motionPreview && $motionPreview.times.length > 1}<MotionTrajectoryPlot preview={$motionPreview} />
         {:else}<div class="motion-plot-empty">{$motionPreviewError ?? "No trajectory preview for this command mode."}</div>{/if}

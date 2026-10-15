@@ -358,4 +358,5 @@ export const zhCNMessages = {
   "ui.sending.motion.command": "正在发送运动指令…",
   "ui.requesting.controlled.stop": "正在请求受控停止…",
   "ui.commit.or.discard.edited.motion.values.before.run.enter.to.write.esc.to.disc": "运行前请先提交或放弃修改（Enter 写入，Esc 放弃）。",
+  "ui.sensorless.speed": "无感转速",
 } satisfies Record<keyof typeof enMessages, string>;

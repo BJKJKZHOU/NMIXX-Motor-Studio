@@ -357,4 +357,5 @@ export const enMessages = {
   "ui.sending.motion.command": "Sending Motion command…",
   "ui.requesting.controlled.stop": "Requesting controlled Stop…",
   "ui.commit.or.discard.edited.motion.values.before.run.enter.to.write.esc.to.disc": "Commit or discard edited Motion values before Run (Enter to write, Esc to discard).",
+  "ui.sensorless.speed": "Sensorless Speed",
 } as const;

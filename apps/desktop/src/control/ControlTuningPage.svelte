@@ -1,5 +1,5 @@
 <script lang="ts">
-  import { uiLanguage, localize, localizeFeedback, translate } from "../i18n";
+  import { uiLanguage, localize, localizeFeedback, translate, type MessageKey } from "../i18n";
   import { onMount, untrack } from "svelte";
   import type { ConnectionInfo } from "../connection/types";
   import { subscribeRefresh } from "../refreshScheduler";
@@ -20,7 +20,7 @@
   import type { TuningExperimentSnapshot, TuningExperimentState, TuningExperimentSelection } from "./tuningExperiment";
 
   type Props = { connection: ConnectionInfo | undefined; motorState: MotorState | null; onError?: (error: unknown) => void };
-  type LoopSpec = { title: string; bandwidth: string; source: string; gains: string[] };
+  type LoopSpec = { titleKey: MessageKey; bandwidth: string; source: string; gains: string[] };
   const CURRENT_BW = "PARAM_CTRL_CURRENT_BW_HZ";
   const CURRENT_SOURCE = "PARAM_CTRL_CURRENT_SOURCE";
   const ID_KP = "PARAM_CTRL_ID_KP";
@@ -36,14 +36,14 @@
   const POSITION_KP = "PARAM_CTRL_POSITION_KP";
   const ESO_BW = "PARAM_CTRL_MECH_ESO_BW_HZ";
   const LOOP_SPECS: LoopSpec[] = [
-    { title: "Current Loop", bandwidth: CURRENT_BW, source: CURRENT_SOURCE, gains: [ID_KP, ID_KI, IQ_KP, IQ_KI] },
-    { title: "Speed Loop", bandwidth: SPEED_BW, source: SPEED_SOURCE, gains: [SPEED_KP, SPEED_KI] },
+    { titleKey: "ui.current.loop", bandwidth: CURRENT_BW, source: CURRENT_SOURCE, gains: [ID_KP, ID_KI, IQ_KP, IQ_KI] },
+    { titleKey: "ui.speed.loop", bandwidth: SPEED_BW, source: SPEED_SOURCE, gains: [SPEED_KP, SPEED_KI] },
   ];
   const SYMBOLS = [CURRENT_BW, CURRENT_SOURCE, ID_KP, ID_KI, IQ_KP, IQ_KI, SPEED_BW, SPEED_SOURCE,
     SPEED_KP, SPEED_KI, SPEED_EFFECTIVE_KP, SPEED_EFFECTIVE_KI, POSITION_KP, ESO_BW, MOTION_MODE, MOTION_MAX_SPEED, MOTION_ACCEL, MOTION_DECEL,
     TARGET_POSITION, TARGET_SPEED, TARGET_TORQUE, TORQUE_RAMP, MOTION_PROFILE];
-  const motionModeLabels: Record<MotionMode, string> = {
-    position: "Position", speed: "Speed", "sensorless-speed": "Sensorless Speed", torque: "Torque",
+  const motionModeLabels: Record<MotionMode, MessageKey> = {
+    position: "ui.position", speed: "ui.speed", "sensorless-speed": "ui.sensorless.speed", torque: "ui.torque",
   };
   let { connection, motorState, onError = () => undefined }: Props = $props();
   const parameters = selectParameters(SYMBOLS);
@@ -331,7 +331,7 @@
               disabled={motionLocked() || motorState !== "DISABLED" || locked(MOTION_MODE)}
               title={motorState === "DISABLED" ? "Select motor mode" : "Disable the motor before changing mode"}
               onchange={(event) => void setMotionMode(event.currentTarget.value as MotionMode)}>
-              {#each Object.entries(motionModeLabels) as [value, labelText]}{#if motionModeSupported(value as MotionMode)}<option value={value}>{localize(labelText, $uiLanguage)}</option>{/if}{/each}
+              {#each Object.entries(motionModeLabels) as [value, labelText]}{#if motionModeSupported(value as MotionMode)}<option value={value}>{translate(labelText, $uiLanguage)}</option>{/if}{/each}
             </select>
           </label>
           {#if activeMotionMode() === "position"}
@@ -397,7 +397,7 @@
       </div>
       <aside class="parameter-column">
         {#each LOOP_SPECS as spec}
-          <section class="tuning-section"><div class="section-title">{spec.title}</div><div class="field-grid">
+          <section class="tuning-section"><div class="section-title">{translate(spec.titleKey, $uiLanguage)}</div><div class="field-grid">
             <div class="field-label">{label(spec.source)}</div>
             {#if metadata[spec.source]}
               <select class:ramModified={$modifiedParameterIds.has(metadata[spec.source].id)} class="compact-select" disabled={locked(spec.source)} value={sourceText(spec.source)} onchange={(event) => void setSource(spec.source, event.currentTarget.value)}>
