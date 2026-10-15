@@ -1,5 +1,5 @@
 <script lang="ts">
-  import { uiLanguage, localize } from "../i18n";
+  import { uiLanguage, localize, translate } from "../i18n";
   import {
     FlexRender, columnFilteringFeature, createFilteredRowModel, createSortedRowModel,
     createTable, filterFn_includesString, globalFilteringFeature, rowSortingFeature, tableFeatures,
@@ -74,17 +74,17 @@
 
 <div class="parameter-root">
   <section class="page-toolbar">
-    <div class="page-title">{localize("PARAMETERS", $uiLanguage)}</div>
+    <div class="page-title">{translate("ui.parameters.2", $uiLanguage)}</div>
     <div class="parameter-toolbar">
       <div class="parameter-search">
         <i class="codicon codicon-search"></i>
-        <input class="compact-input" type="search" placeholder={localize("Search parameters", $uiLanguage)} value={search} disabled={!connection} oninput={handleSearch} />
+        <input class="compact-input" type="search" placeholder={translate("ui.search.parameters", $uiLanguage)} value={search} disabled={!connection} oninput={handleSearch} />
       </div>
       <span class="parameter-count">
         {#if !connection}
-          {localize("Not connected", $uiLanguage)}
+          {translate("ui.not.connected", $uiLanguage)}
         {:else if loadingRegistry}
-          {localize("Reading registry…", $uiLanguage)}
+          {translate("ui.reading.registry", $uiLanguage)}
         {:else}
           {table.getRowModel().rows.length} / {rows.length}
         {/if}
@@ -94,7 +94,7 @@
 
   <section class="parameter-content">
     {#if !connection}
-      <div class="empty-state"><i class="codicon codicon-plug"></i><div>{localize("Connect a device to inspect its Parameter registry.", $uiLanguage)}</div></div>
+      <div class="empty-state"><i class="codicon codicon-plug"></i><div>{translate("ui.connect.a.device.to.inspect.its.parameter.registry", $uiLanguage)}</div></div>
     {:else if rows.length === 0}
       <div class="empty-state"><i class="codicon codicon-loading codicon-modifier-spin"></i><div>{localize(loadingRegistry ? "Reading Parameter registry…" : "No parameters exposed by schema.", $uiLanguage)}</div></div>
     {:else}
@@ -160,7 +160,7 @@
                 {/each}
               </tr>
             {:else}
-              <tr><td colspan={columns.length} class="parameter-no-results">{localize("No parameters match", $uiLanguage)} “{search}”.</td></tr>
+              <tr><td colspan={columns.length} class="parameter-no-results">{translate("ui.no.parameters.match", $uiLanguage)} “{search}”.</td></tr>
             {/each}
           </tbody>
         </table>

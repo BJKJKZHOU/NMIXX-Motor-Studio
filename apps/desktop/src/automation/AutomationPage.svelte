@@ -1,5 +1,5 @@
 <script lang="ts">
-  import { uiLanguage, localize, localizeFeedback } from "../i18n";
+  import { uiLanguage, localize, localizeFeedback, translate } from "../i18n";
   import { onMount } from "svelte";
   import { cancelTask, exportLog } from "./api";
   import { ensureDocument, isActive, loadDocument, logs, refreshTask, runSelected, scriptSettings, selectBuiltin, taskError, taskState } from "./state";
@@ -28,20 +28,20 @@
 
 <div class="automation-page">
   <section class="page-toolbar">
-    <div class="page-title">{localize("AUTOMATION / APPLICATION WORKFLOWS", $uiLanguage)}</div>
+    <div class="page-title">{translate("ui.automation.application.workflows", $uiLanguage)}</div>
     <div class="toolbar-actions">
-      <button class="tool-button" disabled={!connected || busy || activeTask || !$scriptSettings.document} onclick={() => void perform(runSelected)}>{localize("Run script", $uiLanguage)}</button>
-      <button class="tool-button" disabled={!activeTask || busy} onclick={() => void perform(async () => { if ($taskState) await cancelTask($taskState.taskId); await refreshTask(); })}>{localize("Cancel script", $uiLanguage)}</button>
+      <button class="tool-button" disabled={!connected || busy || activeTask || !$scriptSettings.document} onclick={() => void perform(runSelected)}>{translate("ui.run.script", $uiLanguage)}</button>
+      <button class="tool-button" disabled={!activeTask || busy} onclick={() => void perform(async () => { if ($taskState) await cancelTask($taskState.taskId); await refreshTask(); })}>{translate("ui.cancel.script", $uiLanguage)}</button>
     </div>
   </section>
   <div class="automation-controls">
-    <label>{localize("Script path", $uiLanguage)} <input class="compact-input" bind:value={$scriptSettings.path} placeholder="/home/user/tests/diagnosis.py" disabled={busy || activeTask} /></label>
-    <button class="tool-button" disabled={busy || activeTask || !$scriptSettings.path.trim()} onclick={() => void perform(loadDocument)}>{localize("Open file", $uiLanguage)}</button>
-    <button class="tool-button" disabled={busy || activeTask} onclick={() => void perform(() => selectBuiltin("diagnosis"))}>{localize("Runtime diagnosis", $uiLanguage)}</button>
-    <button class="tool-button" disabled={busy || activeTask} onclick={() => void perform(() => selectBuiltin("encoder"))}>{localize("Encoder turn diagnosis", $uiLanguage)}</button>
-    <button class="tool-button" disabled={busy || activeTask} onclick={() => void perform(() => selectBuiltin("motion"))}>{localize("Motion example", $uiLanguage)}</button>
-    <label>{localize("Interpreter", $uiLanguage)} <input class="compact-input" bind:value={$scriptSettings.program} disabled={busy || activeTask} /></label>
-    <label>{localize("Timeout (s)", $uiLanguage)} <input class="compact-input timeout" type="number" min="1" max="3600" step="1" bind:value={$scriptSettings.timeoutSeconds} disabled={busy || activeTask} /></label>
+    <label>{translate("ui.script.path", $uiLanguage)} <input class="compact-input" bind:value={$scriptSettings.path} placeholder="/home/user/tests/diagnosis.py" disabled={busy || activeTask} /></label>
+    <button class="tool-button" disabled={busy || activeTask || !$scriptSettings.path.trim()} onclick={() => void perform(loadDocument)}>{translate("ui.open.file", $uiLanguage)}</button>
+    <button class="tool-button" disabled={busy || activeTask} onclick={() => void perform(() => selectBuiltin("diagnosis"))}>{translate("ui.runtime.diagnosis", $uiLanguage)}</button>
+    <button class="tool-button" disabled={busy || activeTask} onclick={() => void perform(() => selectBuiltin("encoder"))}>{translate("ui.encoder.turn.diagnosis", $uiLanguage)}</button>
+    <button class="tool-button" disabled={busy || activeTask} onclick={() => void perform(() => selectBuiltin("motion"))}>{translate("ui.motion.example", $uiLanguage)}</button>
+    <label>{translate("ui.interpreter", $uiLanguage)} <input class="compact-input" bind:value={$scriptSettings.program} disabled={busy || activeTask} /></label>
+    <label>{translate("ui.timeout.s", $uiLanguage)} <input class="compact-input timeout" type="number" min="1" max="3600" step="1" bind:value={$scriptSettings.timeoutSeconds} disabled={busy || activeTask} /></label>
   </div>
   <div class="automation-notice">
     {#if $uiLanguage === "zh-CN"}
@@ -56,7 +56,7 @@
   {#if error || $taskError}<div class="error-text" role="alert">{localizeFeedback(error || $taskError, $uiLanguage)}</div>{/if}
   <div class="automation-content">
     <section class="source-panel">
-      <div class="section-heading">{$scriptSettings.document?.name ?? localize("No script selected", $uiLanguage)} · {localize("source preview", $uiLanguage)}</div>
+      <div class="section-heading">{$scriptSettings.document?.name ?? translate("ui.no.script.selected", $uiLanguage)} · {translate("ui.source.preview", $uiLanguage)}</div>
       <pre aria-label="Read-only script source">{$scriptSettings.document?.source ?? ""}</pre>
     </section>
     <section class="log-panel">
@@ -66,13 +66,13 @@
         {#if $taskState?.exitCode !== null && $taskState?.exitCode !== undefined} · exit {$taskState.exitCode}{/if}
       </div>
       {#if $taskState?.message}<div class="automation-message">{$taskState.message}</div>{/if}
-      {#if ($taskState?.firstSequence ?? 1) > 1}<div class="automation-message">{localize("Old output was truncated by the bounded log buffer.", $uiLanguage)}</div>{/if}
-      <pre class="output" aria-label="Script output">{output || localize("No output yet.", $uiLanguage)}</pre>
+      {#if ($taskState?.firstSequence ?? 1) > 1}<div class="automation-message">{translate("ui.old.output.was.truncated.by.the.bounded.log.buffer", $uiLanguage)}</div>{/if}
+      <pre class="output" aria-label="Script output">{output || translate("ui.no.output.yet", $uiLanguage)}</pre>
     </section>
   </div>
   <div class="log-export">
     <input class="compact-input" bind:value={$scriptSettings.logPath} placeholder="/home/user/logs/diagnosis-001.log" aria-label="New log output file" />
-    <button class="tool-button" disabled={busy || activeTask || !$taskState?.taskId} onclick={() => void perform(saveLog)}>{localize("Save log", $uiLanguage)}</button>
+    <button class="tool-button" disabled={busy || activeTask || !$taskState?.taskId} onclick={() => void perform(saveLog)}>{translate("ui.save.log", $uiLanguage)}</button>
     {#if feedback}<span>{localizeFeedback(feedback, $uiLanguage)}</span>{/if}
   </div>
 </div>

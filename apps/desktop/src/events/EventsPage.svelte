@@ -1,5 +1,5 @@
 <script lang="ts">
-  import { uiLanguage, localize, localizeFeedback } from "../i18n";
+  import { uiLanguage, localize, localizeFeedback, translate } from "../i18n";
   import type { ConnectionInfo } from "../connection/types";
   import { clearProtection } from "../actions/api";
   import { clearProblemHistory, problemError, problemSnapshot, recheckProblems } from "../problems/state";
@@ -35,25 +35,25 @@
 
 <div class="events-root">
   <section class="page-toolbar">
-    <div class="page-title">{localize("EVENTS / PROBLEMS", $uiLanguage)}</div>
+    <div class="page-title">{translate("ui.events.problems", $uiLanguage)}</div>
     <div class="toolbar-actions">
-      <button class="tool-button" disabled={!connection || busy} onclick={() => void perform(recheckProblems)}><i class="codicon codicon-refresh"></i> {localize("Recheck", $uiLanguage)}</button>
+      <button class="tool-button" disabled={!connection || busy} onclick={() => void perform(recheckProblems)}><i class="codicon codicon-refresh"></i> {translate("ui.recheck", $uiLanguage)}</button>
       <button class="tool-button" disabled={!connection || busy || !connection?.commissioning.protectionClear || !hasClearableFault}
         title={localize(connection?.commissioning.protectionClear ? "Clear device protection faults; firmware requires DISABLED" : "Protection clear is not exposed by this firmware", $uiLanguage)}
-        onclick={() => void perform(clearFault)}>{localize("Clear Fault", $uiLanguage)}</button>
-      <button class="tool-button" disabled={!connection || busy || history.length === active.length} onclick={() => void perform(clearProblemHistory)}>{localize("Clear History", $uiLanguage)}</button>
+        onclick={() => void perform(clearFault)}>{translate("ui.clear.fault", $uiLanguage)}</button>
+      <button class="tool-button" disabled={!connection || busy || history.length === active.length} onclick={() => void perform(clearProblemHistory)}>{translate("ui.clear.history", $uiLanguage)}</button>
     </div>
   </section>
 
   <section class="events-content">
     {#if !connection}
-      <div class="empty-state"><i class="codicon codicon-plug"></i><div>{localize("Connect a device to inspect problems and event history.", $uiLanguage)}</div></div>
+      <div class="empty-state"><i class="codicon codicon-plug"></i><div>{translate("ui.connect.a.device.to.inspect.problems.and.event.history", $uiLanguage)}</div></div>
     {:else}
       {#if $problemError}<div class="error-text" role="alert">{$problemError}</div>{/if}
       <section class="events-section">
-        <div class="section-title">{localize("Active Problems", $uiLanguage)} <span>{active.length}</span></div>
+        <div class="section-title">{translate("ui.active.problems.2", $uiLanguage)} <span>{active.length}</span></div>
         {#if active.length === 0}
-          <div class="events-empty">{localize("No active problems.", $uiLanguage)}</div>
+          <div class="events-empty">{translate("ui.no.active.problems", $uiLanguage)}</div>
         {:else}
           <div class="problem-list">
             {#each active as problem (problem.id)}
@@ -71,9 +71,9 @@
       </section>
 
       <section class="events-section">
-        <div class="section-title">{localize("History", $uiLanguage)} <span>{history.length}</span></div>
+        <div class="section-title">{translate("ui.history", $uiLanguage)} <span>{history.length}</span></div>
         {#if history.length === 0}
-          <div class="events-empty">{localize("No retained problem history.", $uiLanguage)}</div>
+          <div class="events-empty">{translate("ui.no.retained.problem.history", $uiLanguage)}</div>
         {:else}
           <div class="history-list">
             {#each history as problem (problem.id)}
