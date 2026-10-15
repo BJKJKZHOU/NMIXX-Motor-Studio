@@ -198,3 +198,16 @@ test("Encoder health is checked through the shared Application problems service"
   assert.match(events, /Open Encoder/);
   assert.match(events, /Inspect Limits/);
 });
+
+
+test("Connection readiness hides unfinished sessions from business pages but retains Disconnect and Stop", () => {
+  const shell = source("App.svelte");
+  const connection = source("connection/ConnectionPage.svelte");
+  assert.match(shell, /connectionReady = true/);
+  assert.match(shell, /readyConnection = connectionReady \? connection : undefined/);
+  assert.match(shell, /<MotorPage connection=\{readyConnection\}/);
+  assert.match(shell, /<ScopePage connection=\{readyConnection\}/);
+  assert.match(connection, /Retry initialization/);
+  assert.match(connection, /onRetry/);
+  assert.match(shell, /stop-action" disabled=\{!connection \|\| globalStopBusy\}/);
+});

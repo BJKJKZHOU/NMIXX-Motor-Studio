@@ -43,6 +43,9 @@
   let connectionPort = "";
   let connectionSchemaPath = DEFAULT_SCHEMA_PATH;
   let connection: ConnectionInfo | undefined;
+  let connectionReady = false;
+  let connectionInitializing = false;
+  $: readyConnection = connectionReady ? connection : undefined;
   let errorText = "";
   let scopeSummary: ScopeSummary = { state: "STOPPED", selectedChannels: 0, lostFrames: 0 };
   let globalActionBusy = false;
@@ -80,6 +83,8 @@
     clearRuntimeTelemetry();
     problemsOpen = false;
     connection = next;
+    connectionReady = false;
+    connectionInitializing = !!next;
     errorText = ""; parameterSaveAvailable = false; saveFeedback = "idle";
     if (saveFeedbackTimer) clearTimeout(saveFeedbackTimer);
     saveFeedbackTimer = undefined;
@@ -89,14 +94,26 @@
       return;
     }
     try {
+      // Publish the device to business pages only after its canonical Parameter
+      // projection has initialized. Keep the backend connection for safe recovery.
       await connectParameters();
+      if (token !== connectionGeneration) return;
+      connectionReady = true;
       const available = await canSaveParameters();
+      if (token !== connectionGeneration) return;
+      parameterSaveAvailable = available;
+      await refreshRuntimeTelemetry();
+      if (token === connectionGeneration) await refreshProblems();
+    } catch (error) {
       if (token === connectionGeneration) {
-        parameterSaveAvailable = available;
-        await refreshRuntimeTelemetry();
-        await refreshProblems();
+        // A secondary status refresh failure does not undo a valid Parameter
+        // projection. Only a failed initialization keeps the pages unavailable.
+        if (!connectionReady) disconnectParameters();
+        setError(error);
       }
-    } catch (error) { if (token === connectionGeneration) setError(error); }
+    } finally {
+      if (token === connectionGeneration) connectionInitializing = false;
+    }
   }
   function pageTitle(page: Page): string { return [...workflowPages, ...toolPages].find((item) => item.id === page)?.title ?? page; }
   function runtimePosition(totalTurns: number | null): string {
@@ -108,7 +125,7 @@
     return `${turn} turn + ${theta.toFixed(3)} rad`;
   }
   async function refreshAllParameters() {
-    if (!connection || readingParameters) return;
+    if (!connectionReady || readingParameters) return;
     readingParameters = true;
     try { await refreshParameters(); } catch (error) { setError(error); } finally { readingParameters = false; }
   }
@@ -118,7 +135,7 @@
     saveFeedbackTimer = setTimeout(() => { saveFeedback = "idle"; saveFeedbackTimer = undefined; }, 1400);
   }
   async function toggleMotorEnable() {
-    if (!connection || motorState === null || globalActionBusy) return;
+    if (!connectionReady || motorState === null || globalActionBusy) return;
     globalActionBusy = true;
     try { if (motorState === "DISABLED") await enableMotor(); else await disableMotor(); }
     catch (error) { setError(error); } finally { globalActionBusy = false; }
@@ -129,7 +146,7 @@
     try { await stopMotor(); } catch (error) { setError(error); } finally { globalStopBusy = false; }
   }
   async function savePersistentParameters() {
-    if (!connection || !parameterSaveAvailable || motorState !== "DISABLED" || globalActionBusy) return;
+    if (!connectionReady || !parameterSaveAvailable || motorState !== "DISABLED" || globalActionBusy) return;
     globalActionBusy = true; saveFeedback = "idle";
     try { await saveParameterBaseline(saveParameters); showSavedFeedback(); }
     catch (error) { setError(error); } finally { globalActionBusy = false; }
@@ -140,9 +157,9 @@
       if (storedPath?.trim()) connectionSchemaPath = storedPath;
     } catch { /* Use the development default when storage is unavailable. */ }
     const stopStatus = pollParameters(POLLED_SYMBOLS, 500, setError);
-    const stopRuntime = startRuntimeTelemetryTracking(() => !!connection);
-    const stopAutomation = startAutomationTracking(() => !!connection);
-    const stopProblems = startProblemsTracking(() => !!connection);
+    const stopRuntime = startRuntimeTelemetryTracking(() => !!readyConnection);
+    const stopAutomation = startAutomationTracking(() => !!readyConnection);
+    const stopProblems = startProblemsTracking(() => !!readyConnection);
     return () => { stopStatus(); stopRuntime(); stopAutomation(); stopProblems(); };
   });
   onDestroy(() => {
@@ -164,15 +181,15 @@
     <div class="brand">NMIXX Motor Studio</div><div class="global-toolbar-divider" aria-hidden="true"></div>
     <div class="global-actions">
       <button class:enable-action={motorState === "DISABLED"} class:disable-action={motorState !== null && motorState !== "DISABLED"} class="tool-button global-action"
-        disabled={!connection || motorState === null || globalActionBusy} onclick={() => void toggleMotorEnable()} title={motorState === "DISABLED" ? "Enable motor" : "Disable motor"}>
+        disabled={!connectionReady || motorState === null || globalActionBusy} onclick={() => void toggleMotorEnable()} title={motorState === "DISABLED" ? "Enable motor" : "Disable motor"}>
         <i class={`codicon ${motorState === "DISABLED" ? "codicon-play" : "codicon-debug-disconnect"}`}></i>{motorState === "DISABLED" ? "Enable" : "Disable"}
       </button>
       <button class="tool-button global-action stop-action" disabled={!connection || globalStopBusy} onclick={() => void stopCurrentMotorOperation()} title="Stop current motor operation">
         <i class={`codicon ${globalStopBusy ? "codicon-loading codicon-modifier-spin" : "codicon-debug-stop"}`}></i> Stop
       </button>
       <span class="global-group-gap"></span>
-      <button class="tool-button global-action" disabled={!connection || readingParameters} onclick={() => void refreshAllParameters()} title="Read current RAM parameters from device"><i class={`codicon ${readingParameters ? "codicon-loading codicon-modifier-spin" : "codicon-refresh"}`}></i> Read</button>
-      <button class="tool-button global-action" disabled={!connection || !parameterSaveAvailable || motorState !== "DISABLED" || globalActionBusy} onclick={() => void savePersistentParameters()}
+      <button class="tool-button global-action" disabled={!connectionReady || readingParameters} onclick={() => void refreshAllParameters()} title="Read current RAM parameters from device"><i class={`codicon ${readingParameters ? "codicon-loading codicon-modifier-spin" : "codicon-refresh"}`}></i> Read</button>
+      <button class="tool-button global-action" disabled={!connectionReady || !parameterSaveAvailable || motorState !== "DISABLED" || globalActionBusy} onclick={() => void savePersistentParameters()}
         title={!parameterSaveAvailable ? "Parameter persistence is not exposed by this firmware" : motorState !== "DISABLED" ? "Disable the motor before saving persistent parameters" : "Save persistent RAM parameters to device storage"}>
         <i class={`codicon ${saveFeedback === "saved" ? "codicon-check" : "codicon-save"}`}></i>{saveFeedback === "saved" ? "Saved" : "Save"}
       </button>
@@ -180,12 +197,12 @@
   </div><div class="problems-host">
     <button class:problem-error={topProblem?.severity === "FAULT" || topProblem?.severity === "ERROR"}
       class:problem-warning={topProblem?.severity === "WARNING"} class:problem-info={topProblem?.severity === "INFO"}
-      class="problems-indicator" disabled={!connection}
-      title={connection ? "Active problems" : "Connect a device to inspect problems"}
+      class="problems-indicator" disabled={!connectionReady}
+      title={connectionReady ? "Active problems" : "Connect and initialize a device to inspect problems"}
       onclick={() => problemsOpen = !problemsOpen}>
       <i class={`codicon ${topProblem?.severity === "FAULT" || topProblem?.severity === "ERROR" ? "codicon-error" : topProblem?.severity === "WARNING" ? "codicon-warning" : "codicon-info"}`}></i><span>{activeProblems.length}</span>
     </button>
-    {#if problemsOpen && connection}
+    {#if problemsOpen && connectionReady}
       <div class="problems-popover">
         {#if topProblem}
           <button class="problem-summary" onclick={() => { activePage = "events"; problemsOpen = false; }}>
@@ -200,10 +217,10 @@
   </div></div>
   <main class="main-area">
     {#if activePage === "connection"}
-      <ConnectionPage {connection} bind:port={connectionPort} bind:schemaPath={connectionSchemaPath} onSchemaPathChanged={persistConnectionSchemaPath} onConnected={(next) => void setConnection(next)} onDisconnected={() => void setConnection(undefined)} onError={setError} />
-    {:else if activePage === "motor"}<div class="domain-page-container"><MotorPage {connection} onError={setError} /></div>
-    {:else if activePage === "encoder"}<div class="domain-page-container"><EncoderPage {connection} onError={setError} /></div>
-    {:else if activePage === "limits"}<div class="domain-page-container"><LimitsPage {connection} onError={setError} /></div>
+      <ConnectionPage {connection} ready={connectionReady} initializing={connectionInitializing} onRetry={() => void setConnection(connection)} bind:port={connectionPort} bind:schemaPath={connectionSchemaPath} onSchemaPathChanged={persistConnectionSchemaPath} onConnected={(next) => void setConnection(next)} onDisconnected={() => void setConnection(undefined)} onError={setError} />
+    {:else if activePage === "motor"}<div class="domain-page-container"><MotorPage connection={readyConnection} onError={setError} /></div>
+    {:else if activePage === "encoder"}<div class="domain-page-container"><EncoderPage connection={readyConnection} onError={setError} /></div>
+    {:else if activePage === "limits"}<div class="domain-page-container"><LimitsPage connection={readyConnection} onError={setError} /></div>
     {:else if activePage === "control"}
       <div class="control-domain-shell"><aside class="control-navigation" aria-label="Control Architecture pages">
         <button class="control-navigation-parent" onclick={() => controlArchitectureExpanded = !controlArchitectureExpanded} aria-expanded={controlArchitectureExpanded}><i class="codicon codicon-settings-gear"></i><span>Control Architecture</span><i class={`codicon ${controlArchitectureExpanded ? "codicon-chevron-down" : "codicon-chevron-right"} control-navigation-chevron`}></i></button>
@@ -212,21 +229,21 @@
           <button class:active={activeControlLoop === "speed"} onclick={() => activeControlLoop = "speed"}>Speed Loop</button>
           <button class:active={activeControlLoop === "position"} onclick={() => activeControlLoop = "position"}>Position Loop</button>
         </div>{/if}
-      </aside><div class="control-domain-page"><ControlPage {connection} {motorState} loop={activeControlLoop} onError={setError} /></div></div>
-    {:else if activePage === "tuning"}<div class="domain-page-container"><ControlTuningPage {connection} {motorState} onError={setError} /></div>
-    {:else if activePage === "motion"}<div class="domain-page-container"><MotionPage capabilities={connection?.motion} {motorState} onError={setError} /></div>
-    {:else if activePage === "parameters"}<div class="domain-page-container"><ParameterTablePage {connection} onError={setError} /></div>
-    {:else if activePage === "events"}<div class="domain-page-container"><EventsPage {connection} onNavigate={(page) => activePage = page} onError={setError} /></div>
-    {:else if activePage === "automation"}<div class="domain-page-container"><AutomationHost connected={!!connection} /></div>
+      </aside><div class="control-domain-page"><ControlPage connection={readyConnection} {motorState} loop={activeControlLoop} onError={setError} /></div></div>
+    {:else if activePage === "tuning"}<div class="domain-page-container"><ControlTuningPage connection={readyConnection} {motorState} onError={setError} /></div>
+    {:else if activePage === "motion"}<div class="domain-page-container"><MotionPage capabilities={readyConnection?.motion} {motorState} onError={setError} /></div>
+    {:else if activePage === "parameters"}<div class="domain-page-container"><ParameterTablePage connection={readyConnection} onError={setError} /></div>
+    {:else if activePage === "events"}<div class="domain-page-container"><EventsPage connection={readyConnection} onNavigate={(page) => activePage = page} onError={setError} /></div>
+    {:else if activePage === "automation"}<div class="domain-page-container"><AutomationHost connected={!!readyConnection} /></div>
     {:else if activePage !== "analysis"}
       <section class="page-toolbar"><div class="page-title">{pageTitle(activePage).toUpperCase()}</div></section>
       <section class="placeholder-page"><div class="placeholder-title">{pageTitle(activePage)}</div><div class="placeholder-copy">This workflow page is reserved for the corresponding application domain. Device behavior will be added through the shared Application API rather than implemented in the shell.</div></section>
     {/if}
-    <div class:inactive={activePage !== "analysis"} class="scope-page-container"><ScopePage {connection} active={activePage === "analysis"} onSummary={(summary) => scopeSummary = summary} onError={setError} /></div>
+    <div class:inactive={activePage !== "analysis"} class="scope-page-container"><ScopePage connection={readyConnection} active={activePage === "analysis"} onSummary={(summary) => scopeSummary = summary} onError={setError} /></div>
     {#if errorText || $parameterState.error}<div class="error-text app-error">{errorText || $parameterState.error}</div>{/if}
   </main>
 </div>
-<footer class="statusbar"><div class="connection-status"><span class:connected={!!connection} class="status-dot"></span>{connection ? "AxDr_L" : "Disconnected"}</div><div class="status-spacer"></div>
+<footer class="statusbar"><div class="connection-status"><span class:connected={!!connection} class="status-dot"></span>{connection ? connectionReady ? "AxDr_L" : connectionInitializing ? "Initializing…" : "Initialization incomplete" : "Disconnected"}</div><div class="status-spacer"></div>
   <div class="live-status"><span>Current {currentIq === null ? "—" : `${currentIq.toFixed(3)} A`}</span><span>Speed {speedWm === null ? "—" : `${speedWm.toFixed(3)} rad/s`}</span><span>Position {positionText}</span><span>Vbus {vbus === null ? "—" : `${vbus.toFixed(2)} V`}</span></div>
 </footer></div>
 
