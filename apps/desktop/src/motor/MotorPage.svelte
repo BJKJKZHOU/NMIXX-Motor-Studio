@@ -1,5 +1,5 @@
 <script lang="ts">
-  import { uiLanguage, localize, localizeFeedback, translate } from "../i18n";
+  import { uiLanguage, localize, localizeFeedback, translate, translateFormat } from "../i18n";
   import { onMount, untrack } from "svelte";
   import type { ConnectionInfo } from "../connection/types";
   import type { MotorState } from "../motor/state";
@@ -189,7 +189,7 @@
         setIdentState(identKey, "failed", result.issues.map((issue) => issue.reason).join("\n")); return;
       }
       if (result.status === "requires_enable") {
-        if (!window.confirm(`${config.label} identification requires enabling the motor.\n\nEnable motor and continue?`)) return;
+        if (!window.confirm(translateFormat("motor.identification.enable.confirm", $uiLanguage, { kind: config.label }))) return;
         result = await startIdentificationAction(identKey, true);
         if (token !== generation) return;
         if (result.status === "blocked") {
@@ -242,7 +242,7 @@
     }
     else {
       const reason = numericValue(values[failReasonSymbol]);
-      setIdentState(pending.identKey, "failed", reason ? `Reason ${reason}` : "No valid result");
+      setIdentState(pending.identKey, "failed", reason ? translateFormat("motor.identification.failure.reason", $uiLanguage, { code: reason }) : "No valid result");
     }
   }
 </script>
@@ -315,7 +315,7 @@
                     {:else if state.phase === "applied"}
                       <span class="action-status state-success"><i class="codicon codicon-check"></i> {translate("ui.applied", $uiLanguage)}</span>
                     {:else if state.phase === "failed"}
-                      <span class="action-status state-failed" title={state.message}><i class="codicon codicon-error"></i> {translate("ui.failed", $uiLanguage)}</span>
+                      <span class="action-status state-failed" title={localizeFeedback(state.message, $uiLanguage)}><i class="codicon codicon-error"></i> {translate("ui.failed", $uiLanguage)}</span>
                       {#if state.message}<span class="action-reason" role="alert">{localizeFeedback(state.message, $uiLanguage)}</span>{/if}
                     {:else}
                       <span class="action-status muted">—</span>
