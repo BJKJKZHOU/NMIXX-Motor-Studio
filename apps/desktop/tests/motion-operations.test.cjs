@@ -11,8 +11,13 @@ const ts = require("typescript");
 const desktop = join(__dirname, "..");
 function source(path) { return readFileSync(join(desktop, "src", path), "utf8"); }
 function extract(source, name) {
+  const beginning = source.match(new RegExp(`^  (?:async )?function ${name}\\([^\\n]*?\\)[^\\n]*`, "m"));
+  assert.ok(beginning, `Expected actual ${name} handler`);
+  // Simple guard methods have a complete one-line body. Do not swallow the
+  // following async handler when seeking a separate closing-brace line.
+  if (beginning[0].trimEnd().endsWith("}")) return beginning[0];
   const match = source.match(new RegExp(`^  (?:async )?function ${name}\\([^\\n]*?\\)\\s*(?::[^\\n{]+)?\\s*\\{[\\s\\S]*?^  \\}`, "m"));
-  assert.ok(match, `Expected actual ${name} handler`);
+  assert.ok(match, `Expected complete ${name} handler`);
   return match[0];
 }
 function compile(code) {
