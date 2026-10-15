@@ -272,6 +272,10 @@ A Stop should preserve a coherent experiment result/error state and retain the w
 
 This page does not use an endless scrolling Plot session.
 
+An unexpected DISABLED/fault state during the leg is an experiment failure even
+when a Stop command was already accepted. This clears any pending Repeat endpoint
+and retains the normal Stop/record cleanup path.
+
 A capture is bounded by one tuning experiment rather than by a fixed duration for every Motion mode.
 
 The initial lifecycle uses:

@@ -154,7 +154,7 @@
         {/if}
       </div></section>
       {#if hasTrajectory}
-        <section class="motion-panel"><div class="motion-panel-title">Trajectory · {selectedProfile}</div><div class="motion-panel-body motion-grid">
+        <section class="motion-panel"><div class="motion-panel-title">Trajectory · {activeMode === "sensorless-speed" ? "Sensorless ramp" : selectedProfile}</div><div class="motion-panel-body motion-grid">
 <label class="motion-field"><span>Acceleration</span><div class="unit-field"><input class:ramModified={!!metadata[MOTION_ACCEL] && $modifiedParameterIds.has(metadata[MOTION_ACCEL].id)} class:dirty={dirty(MOTION_ACCEL)} value={drafts[MOTION_ACCEL] ?? ""} disabled={locked(MOTION_ACCEL)} oninput={(event) => edits.edit(MOTION_ACCEL, event.currentTarget.value)} onkeydown={(event) => parameterKeydown(event, MOTION_ACCEL)} onblur={() => resetDraft(MOTION_ACCEL)} /><em>rad/s²</em></div></label>
 {#if (activeMode === "position" || activeMode === "speed") && motionProfileOptions(metadata[MOTION_PROFILE]).length > 0}
 <label class="motion-field span-2"><span>Profile</span><select class:ramModified={!!metadata[MOTION_PROFILE] && $modifiedParameterIds.has(metadata[MOTION_PROFILE].id)}
@@ -173,7 +173,7 @@
       </div>
     </div>
     <div class="motion-simple-right">
-      <div class="motion-plot-header"><div><strong>{activeMode ? modeLabels[activeMode] : "—"}</strong>{#if hasTrajectory}<span>{selectedProfile}</span>{/if}</div><div class="preview-target">{previewLabel()}</div></div>
+      <div class="motion-plot-header"><div><strong>{activeMode ? modeLabels[activeMode] : "—"}</strong>{#if hasTrajectory}<span>{activeMode === "sensorless-speed" ? "Sensorless ramp" : selectedProfile}</span>{/if}</div><div class="preview-target">{previewLabel()}</div></div>
       <div class="motion-plot-area">
         {#if $motionPreview && $motionPreview.times.length > 1}<MotionTrajectoryPlot preview={$motionPreview} />
         {:else}<div class="motion-plot-empty">{$motionPreviewError ?? "No trajectory preview for this command mode."}</div>{/if}

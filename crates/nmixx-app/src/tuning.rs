@@ -317,7 +317,9 @@ impl ApplicationSession {
                 Err(error) => { self.fail_tuning_experiment(generation, error); return; }
             };
             if motor_state != MotorState::Run {
-                if !stop_requested && !stop_sent {
+                // A fault/Disable during the finite leg is never a successful
+                // Repeat completion, even if its planned Stop was accepted.
+                if motor_state != MotorState::Enabled || (!stop_requested && !stop_sent) {
                     self.fail_tuning_experiment(generation, format!("Motor left RUN unexpectedly (state {motor_state}); check firmware faults"));
                     return;
                 }
