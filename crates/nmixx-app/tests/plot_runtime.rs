@@ -373,7 +373,17 @@ fn scope_surfaces_fast_ingest_failure_and_stops_plot() {
         Err(MixedScopeError::Runtime(_))
     ));
 
-    let sent = state.sent.lock().unwrap();
-    assert_eq!(&sent[2].data()[..3], &[3, PLOT_STOP, PLOT_FAST_MASK]);
+    // Status may expose the runtime failure slightly before the worker has
+    // dispatched its cleanup STOP. Wait for the actual frame, without holding
+    // the send mutex across the yield.
+    let stop_deadline = Instant::now() + Duration::from_secs(1);
+    let stop = loop {
+        if let Some(frame) = state.sent.lock().unwrap().get(2).cloned() {
+            break frame;
+        }
+        assert!(Instant::now() < stop_deadline, "runtime failure did not dispatch Plot Stop");
+        std::thread::yield_now();
+    };
+    assert_eq!(&stop.data()[..3], &[3, PLOT_STOP, PLOT_FAST_MASK]);
 }
 
