@@ -61,12 +61,12 @@
 
   <section class="limits-content">
     {#if !connection}
-      <div class="empty-state"><i class="codicon codicon-plug"></i><div>Connect a device to configure limits.</div></div>
+      <div class="empty-state"><i class="codicon codicon-plug"></i><div>{translate("limits.connect.required", $uiLanguage)}</div></div>
     {:else}
       <div class="limits-sheet">
         <section class="limits-section">
           <div class="section-title">{translate("ui.operating.limits", $uiLanguage)}</div>
-          <div class="operating-grid" role="table" aria-label="Operating limits">
+          <div class="operating-grid" role="table" aria-label={translate("limits.aria.operating", $uiLanguage)}>
             <div class="operating-header" role="row">
               <div role="columnheader">{translate("ui.parameter", $uiLanguage)}</div>
               <div role="columnheader">{translate("ui.user.limit", $uiLanguage)}</div>
@@ -104,7 +104,7 @@
                   {/if}
                 </div>
                 <div class:active-limit-cell={isConfigured(row.effectiveSymbol)} class="limit-cell hardware-value mono" role="cell"
-                  title="Actual limit currently used by firmware">
+                  title={translate("limits.tooltip.effective", $uiLanguage)}>
                   {#if metadata[row.effectiveSymbol]}
                     <span>{displayText(row.effectiveSymbol)}</span>
                     <span class="unit">{unitFor(row.effectiveSymbol)}</span>
@@ -119,7 +119,7 @@
 
         <section class="limits-section bus-section">
           <div class="section-title">{translate("ui.bus.voltage", $uiLanguage)}</div>
-          <div class="bus-grid" role="table" aria-label="Bus voltage limits">
+          <div class="bus-grid" role="table" aria-label={translate("limits.aria.bus", $uiLanguage)}>
             <div class="bus-header" role="row">
               <div role="columnheader">{translate("ui.minimum", $uiLanguage)}</div>
               <div role="columnheader">{translate("ui.actual", $uiLanguage)}</div>
@@ -192,17 +192,17 @@
             <div class="section-note">{translate("ui.firmware.unavailable", $uiLanguage)}</div>
           </div>
 
-          <div class="position-grid" role="table" aria-label="Position limits">
+          <div class="position-grid" role="table" aria-label={translate("limits.aria.position", $uiLanguage)}>
             <div class="position-row" role="row">
               <div class="parameter-name" role="cell">{translate("ui.zero.reference", $uiLanguage)}</div>
               <div class="muted mono" role="cell">—</div>
             </div>
             <div class="position-row" role="row">
-              <div class="parameter-name" role="cell">Enable</div>
-              <div role="cell"><button class="disabled-control" disabled>Off</button></div>
+              <div class="parameter-name" role="cell">{translate("limits.position.enable", $uiLanguage)}</div>
+              <div role="cell"><button class="disabled-control" disabled>{translate("limits.position.off", $uiLanguage)}</button></div>
             </div>
             <div class="position-row" role="row">
-              <div class="parameter-name" role="cell">Minimum position</div>
+              <div class="parameter-name" role="cell">{translate("limits.position.minimum", $uiLanguage)}</div>
               <div class="position-editor" role="cell">
                 <input class="compact-input mono" value="" placeholder="Turn" disabled />
                 <input class="compact-input mono" value="" placeholder="Theta" disabled />
@@ -210,7 +210,7 @@
               </div>
             </div>
             <div class="position-row" role="row">
-              <div class="parameter-name" role="cell">Maximum position</div>
+              <div class="parameter-name" role="cell">{translate("limits.position.maximum", $uiLanguage)}</div>
               <div class="position-editor" role="cell">
                 <input class="compact-input mono" value="" placeholder="Turn" disabled />
                 <input class="compact-input mono" value="" placeholder="Theta" disabled />
