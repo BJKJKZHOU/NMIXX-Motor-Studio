@@ -25,6 +25,9 @@ function scope() {
   let scopeHasRecord = false;
   const sandbox = {
     console, Map, Set, Number, Array, Math,
+    // The component also subscribes to Automation's canonical Scope
+    // projection; no Automation task is active in this test fixture.
+    $scopeOperation: undefined,
     onMount: (fn) => mounts.push(fn), onDestroy: () => {},
     subscribeRefresh: (_ms, fn) => { ticks.push(fn); return () => {}; },
     setTimeout: () => 1, clearTimeout: () => {},
