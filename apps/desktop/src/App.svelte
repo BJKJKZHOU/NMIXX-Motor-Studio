@@ -1,5 +1,6 @@
 <script lang="ts">
   import { onDestroy, onMount } from "svelte";
+  import { uiLanguage, restoreUiLanguage, setUiLanguage, localize, localizeFeedback } from "./i18n";
   import ConnectionPage from "./connection/ConnectionPage.svelte";
   import AutomationHost from "./automation/AutomationHost.svelte";
   import { startAutomationTracking, clearAutomationProjection } from "./automation/state";
@@ -172,6 +173,7 @@
     catch (error) { setError(error); } finally { globalActionBusy = false; }
   }
   onMount(() => {
+    restoreUiLanguage();
     try {
       const storedPath = localStorage.getItem(SCHEMA_PATH_STORAGE_KEY);
       if (storedPath?.trim()) connectionSchemaPath = storedPath;
@@ -192,9 +194,9 @@
 
 <div class="workbench"><div class="body">
   <nav class="activity-bar" aria-label="Commissioning workflow">
-    {#each workflowPages as page}<button class:active={activePage === page.id} class="activity" title={page.title} onclick={() => activePage = page.id}><i class={`codicon ${page.icon}`}></i></button>{/each}
+    {#each workflowPages as page}<button class:active={activePage === page.id} class="activity" title={localize(page.title, $uiLanguage)} onclick={() => activePage = page.id}><i class={`codicon ${page.icon}`}></i></button>{/each}
     <div class="workflow-separator"></div>
-    {#each toolPages as page}<button class:active={activePage === page.id} class="activity" title={page.title} onclick={() => activePage = page.id}><i class={`codicon ${page.icon}`}></i></button>{/each}
+    {#each toolPages as page}<button class:active={activePage === page.id} class="activity" title={localize(page.title, $uiLanguage)} onclick={() => activePage = page.id}><i class={`codicon ${page.icon}`}></i></button>{/each}
     <div class="activity-spacer"></div>
   </nav>
   <div class="global-toolbar"><div class="global-toolbar-left">
@@ -202,25 +204,25 @@
     <div class="global-actions">
       <button class:motor-disabled={enableStatus === "DISABLED"} class:motor-enabled={enableStatus === "ENABLED"} class="tool-button global-action"
         disabled={!connectionReady || motorState === null || globalActionBusy} onclick={() => void toggleMotorEnable()}
-        title={enableStatus === "DISABLED" ? "Motor DISABLED — click to Enable" : enableStatus === "ENABLED" ? "Motor ENABLED — click to Disable" : "Motor enable state unknown"}>
+        title={localize(enableStatus === "DISABLED" ? "Motor DISABLED — click to Enable" : enableStatus === "ENABLED" ? "Motor ENABLED — click to Disable" : "Motor enable state unknown", $uiLanguage)}>
         <i class="codicon codicon-power"></i> {enableStatus}
       </button>
-      <button class="tool-button global-action stop-action" disabled={!connection || globalStopBusy} onclick={() => void stopCurrentMotorOperation()} title="Stop current motor operation">
-        <i class={`codicon ${globalStopBusy ? "codicon-loading codicon-modifier-spin" : "codicon-debug-stop"}`}></i> Stop
+      <button class="tool-button global-action stop-action" disabled={!connection || globalStopBusy} onclick={() => void stopCurrentMotorOperation()} title={localize("Stop current motor operation", $uiLanguage)}>
+        <i class={`codicon ${globalStopBusy ? "codicon-loading codicon-modifier-spin" : "codicon-debug-stop"}`}></i> {localize("Stop", $uiLanguage)}
       </button>
       <span class="global-group-gap"></span>
-      <button class="tool-button global-action" disabled={!connectionReady || readingParameters} onclick={() => void refreshAllParameters()} title="Read current RAM parameters from device"><i class={`codicon ${readingParameters ? "codicon-loading codicon-modifier-spin" : "codicon-refresh"}`}></i> Read</button>
+      <button class="tool-button global-action" disabled={!connectionReady || readingParameters} onclick={() => void refreshAllParameters()} title={localize("Read current RAM parameters from device", $uiLanguage)}><i class={`codicon ${readingParameters ? "codicon-loading codicon-modifier-spin" : "codicon-refresh"}`}></i> {localize("Read", $uiLanguage)}</button>
       <button class="tool-button global-action" disabled={!connectionReady || !parameterSaveAvailable || motorState !== "DISABLED" || globalActionBusy} onclick={() => void savePersistentParameters()}
-        title={!parameterSaveAvailable ? "Parameter persistence is not exposed by this firmware" : motorState !== "DISABLED" ? "Disable the motor before saving persistent parameters" : "Save persistent RAM parameters to device storage"}>
-        <i class={`codicon ${saveFeedback === "saved" ? "codicon-check" : "codicon-save"}`}></i>{saveFeedback === "saved" ? "Saved" : "Save"}
+        title={localize(!parameterSaveAvailable ? "Parameter persistence is not exposed by this firmware" : motorState !== "DISABLED" ? "Disable the motor before saving persistent parameters" : "Save persistent RAM parameters to device storage", $uiLanguage)}>
+        <i class={`codicon ${saveFeedback === "saved" ? "codicon-check" : "codicon-save"}`}></i>{localize(saveFeedback === "saved" ? "Saved" : "Save", $uiLanguage)}
       </button>
     </div>
-    {#if motorActionNotice}<span class="global-command-feedback" role="status" title={motorActionNotice}>{motorActionNotice} · Motor {motorState ?? "unknown"}</span>{/if}
+    {#if motorActionNotice}<span class="global-command-feedback" role="status" title={localizeFeedback(motorActionNotice, $uiLanguage)}>{localizeFeedback(motorActionNotice, $uiLanguage)} · {localize("Motor", $uiLanguage)} {motorState ?? "unknown"}</span>{/if}
   </div><div class="problems-host">
     <button class:problem-error={topProblem?.severity === "FAULT" || topProblem?.severity === "ERROR"}
       class:problem-warning={topProblem?.severity === "WARNING"} class:problem-info={topProblem?.severity === "INFO"}
       class="problems-indicator" disabled={!connectionReady}
-      title={connectionReady ? "Active problems" : "Connect and initialize a device to inspect problems"}
+      title={localize(connectionReady ? "Active problems" : "Connect and initialize a device to inspect problems", $uiLanguage)}
       onclick={() => problemsOpen = !problemsOpen}>
       <i class={`codicon ${topProblem?.severity === "FAULT" || topProblem?.severity === "ERROR" ? "codicon-error" : topProblem?.severity === "WARNING" ? "codicon-warning" : "codicon-info"}`}></i><span>{activeProblems.length}</span>
     </button>
@@ -228,11 +230,11 @@
       <div class="problems-popover">
         {#if topProblem}
           <button class="problem-summary" onclick={() => { activePage = "events"; problemsOpen = false; }}>
-            <strong>{topProblem.summary}</strong>
-            <span>{topProblem.description}</span>
+            <strong>{localize(topProblem.summary, $uiLanguage)}</strong>
+            <span>{localizeFeedback(topProblem.description, $uiLanguage)}</span>
           </button>
         {:else}
-          <div class="problem-summary empty">No active problems.</div>
+          <div class="problem-summary empty">{localize("No active problems.", $uiLanguage)}</div>
         {/if}
       </div>
     {/if}
@@ -244,12 +246,12 @@
     {:else if activePage === "encoder"}<div class="domain-page-container"><EncoderPage connection={readyConnection} {motorState} onError={setError} /></div>
     {:else if activePage === "limits"}<div class="domain-page-container"><LimitsPage connection={readyConnection} {motorState} onError={setError} /></div>
     {:else if activePage === "control"}
-      <div class="control-domain-shell"><aside class="control-navigation" aria-label="Control Architecture pages">
-        <button class="control-navigation-parent" onclick={() => controlArchitectureExpanded = !controlArchitectureExpanded} aria-expanded={controlArchitectureExpanded}><i class="codicon codicon-settings-gear"></i><span>Control Architecture</span><i class={`codicon ${controlArchitectureExpanded ? "codicon-chevron-down" : "codicon-chevron-right"} control-navigation-chevron`}></i></button>
+      <div class="control-domain-shell"><aside class="control-navigation" aria-label={localize("Control Architecture", $uiLanguage)}>
+        <button class="control-navigation-parent" onclick={() => controlArchitectureExpanded = !controlArchitectureExpanded} aria-expanded={controlArchitectureExpanded}><i class="codicon codicon-settings-gear"></i><span>{localize("Control Architecture", $uiLanguage)}</span><i class={`codicon ${controlArchitectureExpanded ? "codicon-chevron-down" : "codicon-chevron-right"} control-navigation-chevron`}></i></button>
         {#if controlArchitectureExpanded}<div class="control-navigation-children">
-          <button class:active={activeControlLoop === "current"} onclick={() => activeControlLoop = "current"}>Current Loop</button>
-          <button class:active={activeControlLoop === "speed"} onclick={() => activeControlLoop = "speed"}>Speed Loop</button>
-          <button class:active={activeControlLoop === "position"} onclick={() => activeControlLoop = "position"}>Position Loop</button>
+          <button class:active={activeControlLoop === "current"} onclick={() => activeControlLoop = "current"}>{localize("Current Loop", $uiLanguage)}</button>
+          <button class:active={activeControlLoop === "speed"} onclick={() => activeControlLoop = "speed"}>{localize("Speed Loop", $uiLanguage)}</button>
+          <button class:active={activeControlLoop === "position"} onclick={() => activeControlLoop = "position"}>{localize("Position Loop", $uiLanguage)}</button>
         </div>{/if}
       </aside><div class="control-domain-page"><ControlPage connection={readyConnection} {motorState} loop={activeControlLoop} onError={setError} /></div></div>
     {:else if activePage === "tuning"}<div class="domain-page-container"><ControlTuningPage connection={readyConnection} {motorState} onError={setError} /></div>
@@ -258,18 +260,23 @@
     {:else if activePage === "events"}<div class="domain-page-container"><EventsPage connection={readyConnection} onNavigate={(page) => activePage = page} onError={setError} /></div>
     {:else if activePage === "automation"}<div class="domain-page-container"><AutomationHost connected={!!readyConnection} /></div>
     {:else if activePage !== "analysis"}
-      <section class="page-toolbar"><div class="page-title">{pageTitle(activePage).toUpperCase()}</div></section>
-      <section class="placeholder-page"><div class="placeholder-title">{pageTitle(activePage)}</div><div class="placeholder-copy">This workflow page is reserved for the corresponding application domain. Device behavior will be added through the shared Application API rather than implemented in the shell.</div></section>
+      <section class="page-toolbar"><div class="page-title">{localize(pageTitle(activePage), $uiLanguage).toUpperCase()}</div></section>
+      <section class="placeholder-page"><div class="placeholder-title">{localize(pageTitle(activePage), $uiLanguage)}</div><div class="placeholder-copy">{localize("This workflow page is reserved for the corresponding application domain.", $uiLanguage)}</div></section>
     {/if}
     <div class:inactive={activePage !== "analysis"} class="scope-page-container"><ScopePage connection={readyConnection} active={activePage === "analysis"} onSummary={(summary) => scopeSummary = summary} onError={setError} /></div>
     {#if errorText || $parameterState.error}<div class="error-text app-error">{errorText || $parameterState.error}</div>{/if}
   </main>
 </div>
-<footer class="statusbar"><div class="connection-status"><span class:connected={!!connection} class="status-dot"></span>{connection ? connectionReady ? "AxDr_L" : connectionInitializing ? "Initializing…" : "Initialization incomplete" : "Disconnected"}</div><div class="status-spacer"></div>
-  <div class="live-status"><span>Current {currentIq === null ? "—" : `${currentIq.toFixed(3)} A`}</span><span>Speed {speedWm === null ? "—" : `${speedWm.toFixed(3)} rad/s`}</span><span>Position {positionText}</span><span>Vbus {vbus === null ? "—" : `${vbus.toFixed(2)} V`}</span></div>
+<footer class="statusbar"><button class="language-toggle" aria-label={$uiLanguage === "zh-CN" ? "切换为 English" : "Switch to 简体中文"}
+  title={$uiLanguage === "zh-CN" ? "切换为 English" : "Switch to 简体中文"}
+  onclick={() => setUiLanguage($uiLanguage === "zh-CN" ? "en" : "zh-CN")}>{$uiLanguage === "zh-CN" ? "中" : "EN"}</button><div class="connection-status"><span class:connected={!!connection} class="status-dot"></span>{connection ? connectionReady ? "AxDr_L" : localize(connectionInitializing ? "Initializing…" : "Initialization incomplete", $uiLanguage) : localize("Disconnected", $uiLanguage)}</div><div class="status-spacer"></div>
+  <div class="live-status"><span>{localize("Current", $uiLanguage)} {currentIq === null ? "—" : `${currentIq.toFixed(3)} A`}</span><span>{localize("Speed", $uiLanguage)} {speedWm === null ? "—" : `${speedWm.toFixed(3)} rad/s`}</span><span>{localize("Position", $uiLanguage)} {positionText}</span><span>Vbus {vbus === null ? "—" : `${vbus.toFixed(2)} V`}</span></div>
 </footer></div>
 
 <style>
+  .language-toggle { flex: 0 0 auto; min-width: 26px; height: 19px; padding: 0 5px; border: 1px solid var(--vscode-panel-border); border-radius: 3px; background: transparent; color: var(--vscode-foreground); font: inherit; font-size: 10px; cursor: pointer; }
+  .language-toggle:hover { background: var(--vscode-list-hoverBackground); }
+  .language-toggle:focus-visible { outline: 1px solid var(--vscode-focusBorder); outline-offset: 1px; }
   .global-toolbar { grid-column: 1 / -1; grid-row: 1; min-width: 0; display: flex; align-items: center; justify-content: space-between; gap: 12px; padding: 0 10px 0 14px; background: #181818; border-bottom: 1px solid var(--vscode-panel-border, #2b2b2b); }
   .global-toolbar-left { min-width: 0; display: flex; align-items: center; gap: 12px; }
   .global-toolbar-divider { width: 1px; height: 22px; flex: 0 0 auto; background: var(--vscode-panel-border, #303030); }
