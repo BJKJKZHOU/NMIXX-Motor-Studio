@@ -30,6 +30,8 @@
   const SPEED_SOURCE = "PARAM_CTRL_SPEED_SOURCE";
   const SPEED_KP = "PARAM_CTRL_SPEED_KP";
   const SPEED_KI = "PARAM_CTRL_SPEED_KI";
+  const SPEED_EFFECTIVE_KP = "PARAM_CTRL_SPEED_KP_EFFECTIVE";
+  const SPEED_EFFECTIVE_KI = "PARAM_CTRL_SPEED_KI_EFFECTIVE";
   const POSITION_KP = "PARAM_CTRL_POSITION_KP";
   const ESO_BW = "PARAM_CTRL_MECH_ESO_BW_HZ";
   const LOOP_SPECS: LoopSpec[] = [
@@ -37,7 +39,7 @@
     { title: "Speed Loop", bandwidth: SPEED_BW, source: SPEED_SOURCE, gains: [SPEED_KP, SPEED_KI] },
   ];
   const SYMBOLS = [CURRENT_BW, CURRENT_SOURCE, ID_KP, ID_KI, IQ_KP, IQ_KI, SPEED_BW, SPEED_SOURCE,
-    SPEED_KP, SPEED_KI, POSITION_KP, ESO_BW, MOTION_MODE, MOTION_MAX_SPEED, MOTION_ACCEL, MOTION_DECEL,
+    SPEED_KP, SPEED_KI, SPEED_EFFECTIVE_KP, SPEED_EFFECTIVE_KI, POSITION_KP, ESO_BW, MOTION_MODE, MOTION_MAX_SPEED, MOTION_ACCEL, MOTION_DECEL,
     TARGET_POSITION, TARGET_SPEED, TARGET_TORQUE, TORQUE_RAMP];
   const motionModeLabels: Record<MotionMode, string> = {
     position: "Position", speed: "Speed", "sensorless-speed": "Sensorless Speed", torque: "Torque",
@@ -386,6 +388,10 @@
               <div class="field-label">{label(gain)}</div><div class="editor">
 <input class:ramModified={!!metadata[gain] && $modifiedParameterIds.has(metadata[gain].id)} class:dirty={dirty(gain)} class="compact-input mono" value={drafts[gain] ?? ""} disabled={locked(gain)} oninput={(event) => edits.edit(gain, event.currentTarget.value)} onkeydown={(event) => keydown(event, gain)} onblur={() => edits.discard(gain)} /><span class="unit">{unit(gain)}</span></div>
             {/each}
+            {#if spec.source === SPEED_SOURCE}
+              {#if metadata[SPEED_EFFECTIVE_KP]}<div class="field-label">Effective Kp</div><div class="editor"><span class="mono">{values[SPEED_EFFECTIVE_KP]?.type === "f32" ? values[SPEED_EFFECTIVE_KP]?.value : "—"}</span></div>{/if}
+              {#if metadata[SPEED_EFFECTIVE_KI]}<div class="field-label">Effective Ki</div><div class="editor"><span class="mono">{values[SPEED_EFFECTIVE_KI]?.type === "f32" ? values[SPEED_EFFECTIVE_KI]?.value : "—"}</span></div>{/if}
+            {/if}
           </div></section>
         {/each}
         <section class="tuning-section"><div class="section-title">Position Loop</div><div class="field-grid"><div class="field-label">{label(POSITION_KP)}</div><div class="editor"><input class:ramModified={!!metadata[POSITION_KP] && $modifiedParameterIds.has(metadata[POSITION_KP].id)} class:dirty={dirty(POSITION_KP)} class="compact-input mono" value={drafts[POSITION_KP] ?? ""} disabled={locked(POSITION_KP)} oninput={(event) => edits.edit(POSITION_KP, event.currentTarget.value)} onkeydown={(event) => keydown(event, POSITION_KP)} onblur={() => edits.discard(POSITION_KP)} /><span class="unit">{unit(POSITION_KP)}</span></div></div></section>

@@ -169,3 +169,17 @@ test("Motion run barrier preserves rejected Host Motion writes", () => {
   assert.match(motion, /await writeChain/);
   assert.match(motion, /throw lastWriteError/);
 });
+
+
+test("Control Architecture and Tuning distinguish saved manual speed gains from effective gains", () => {
+  const control = source("control/ControlPage.svelte");
+  const tuning = source("control/ControlTuningPage.svelte");
+  for (const page of [control, tuning]) {
+    assert.match(page, /PARAM_CTRL_SPEED_KP_EFFECTIVE/);
+    assert.match(page, /PARAM_CTRL_SPEED_KI_EFFECTIVE/);
+    assert.match(page, /Effective Kp/);
+    assert.match(page, /Effective Ki/);
+  }
+  assert.match(control, /Manual Kp/);
+  assert.match(control, /Manual Id Kp/);
+});
