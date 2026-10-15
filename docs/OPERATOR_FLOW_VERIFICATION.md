@@ -19,7 +19,7 @@
 | Motion 第一次 Position Run（Incremental） | 后端从精确 `PARAM_RUN_POSITION` 生成目标 → `PARAM_TARGET_POSITION` WRITE → `ACTION_MOTOR_RUN` | Tauri 返回 `runAccepted`，显示命令已接受；后续 `Motor State` 仍由设备状态决定 | 拒绝 Action 时显示 `Run failed`，不得显示完成 | HANDLER-SIM、WIRE-TEST-ADDED、HW-PENDING |
 | Motion Repeat 第二次 Run（电机保持 RUN） | 上位机先确认上一段参考到达目标，仅 WRITE 反向 `PARAM_TARGET_POSITION`；不发送第二个 Run Action | Tauri 返回 `targetUpdated`，显示已更新目标，**不宣称运动已完成** | 尚未到达目标或 WRITE 失败时不得推进 A/B | HANDLER-SIM、WIRE-TEST-ADDED、HW-PENDING |
 | Motion Stop / 全局 Stop | `ACTION_MOTOR_STOP`；固件按原减速逻辑回到 ENABLED | 显示 Stop 已接受 + 最新 Motor State；`RUN` 仍可能持续一段时间 | ERR_STATE 或读回失败须分别报告；Stop ACK 不等于已停稳 | HANDLER-SIM、NODE-TEST-ADDED、CODE-TRACED、HW-PENDING |
-| 全局 Enable / Disable | `ACTION_MOTOR_ENABLE` / `ACTION_MOTOR_DISABLE` | 分别显示设备命令接受及 Motor State，按钮文案随设备状态变化 | 失败不假称状态已改变 | NODE-TEST-ADDED、HW-PENDING |
+| 全局 Enable / Disable | `DISABLED` 时点击发送 `ACTION_MOTOR_ENABLE`，`ENABLED` 或 `RUN` 时点击发送 `ACTION_MOTOR_DISABLE` | 按钮常态只显示固件当前状态：红色 `DISABLED` 或绿色 `ENABLED`（RUN 仍为使能）；Tooltip 标识点击动作，ACK 后等真实 Motor State 更新 | 设备拒绝或读回失败时不预先切换按钮状态；状态未知时显示中性 UNKNOWN | NODE-TEST-ADDED、HW-PENDING |
 | Motor Rs/Ls 等辨识 Start | 应用预检；需使能时先征求确认；被允许后设置 IDENT 模式、Enable、发相应 `ACTION_IDENT_*_START` | 页面进入 Running；收到**匹配的有限 Action**完成事件与有效结果后显示 Apply | 预检 Blocked 显示原因；取消使能不发命令；Action 失败显示 Failed | HANDLER-SIM、NODE-TEST-ADDED、CODE-TRACED、HW-PENDING |
 | Motor Apply | `ACTION_IDENT_APPLY` 同步完成，依当前 Session 的候选辨识类型执行 | 后端刷新真实参数，再显示 Applied | 若候选失效或被拒绝，不显示 Applied | HANDLER-SIM、NODE-TEST-ADDED、HW-PENDING |
 | Encoder Phase Search | 应用预检与模式/使能编排 → `ACTION_MOTOR_RUN`（PHASE_SEARCH） | GUI 显示 Running；有限 Action 完成后为 Success | 启动拒绝或完成失败显示 Failed；全局 Stop 为 Stopped | HANDLER-SIM、NODE-TEST-ADDED、CODE-TRACED、HW-PENDING |

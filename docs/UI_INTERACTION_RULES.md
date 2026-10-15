@@ -49,17 +49,19 @@ If expected metadata is unavailable, normal business UI should show an unavailab
 `Enable / Disable` and `Stop` are separate persistent motor controls in the top toolbar.
 
 ```text
-DISABLED   [ Enable ]   [ Stop ]
-ENABLED    [ Disable ]  [ Stop ]
-RUN        [ Disable ]  [ Stop ]
+DISABLED   [ DISABLED (red) ]   [ Stop ]
+ENABLED    [ ENABLED (green) ] [ Stop ]
+RUN        [ ENABLED (green) ] [ Stop ]
 ```
 
-The `Enable / Disable` control is one stable stateful button, not two separate buttons. Its label, icon and color show the action that will occur when it is pressed:
+The global motor Enable/Disable control is one stable **current-state** button, not two separate actions. Its uppercase label and color reflect the authoritative firmware Motor State, not the action pressing it will issue:
 
-- when the motor is disabled, the button presents `Enable` with the enable visual treatment;
-- when the motor is enabled or running, the same button presents `Disable` with the disable visual treatment.
+- `DISABLED`: red `DISABLED`, press to send `ACTION_MOTOR_ENABLE`;
+- `ENABLED`: green `ENABLED`, press to send `ACTION_MOTOR_DISABLE`;
+- `RUN`: green `ENABLED` (power stage still enabled), press to send `ACTION_MOTOR_DISABLE`;
+- disconnected/unknown state: neutral `UNKNOWN`, no Enable/Disable command available.
 
-The control must not rely on color alone. Text, icon and color change together so its action remains unambiguous across themes and for users who do not distinguish the colors reliably.
+The tooltip names the **next action** explicitly; the visible text/icon/color report **current state**. An Action acknowledgement must not optimistically reverse the state before canonical `PARAM_MOTOR_STATE` readback. If the Action is rejected, the displayed state remains unchanged. Colors remain paired with literal state text; they are not the sole status signal.
 
 `Stop` remains a separate button because stopping motion and changing motor enable state are different operations. The host must not decide that Stop is unavailable merely because the current motor state is DISABLED or ENABLED. While a device is connected, pressing Stop immediately invokes the shared Application motor-stop semantic; the control is disabled only when the session is unavailable or a Stop request is already being issued.
 
@@ -149,7 +151,7 @@ Enable <-> Disable
 Record <-> Stop recording
 ```
 
-Use this pattern only when the domain itself owns both transitions of that resource and only one side is meaningful at a time. The button always describes the action that pressing it will perform.
+Use this pattern only when the domain itself owns both transitions of that resource and only one side is meaningful at a time. Most action buttons describe what pressing them will perform. **The global motor Enable/Disable button is explicitly different:** it displays the actual device enable state (`DISABLED`/`ENABLED`), with the next action explained by its tooltip.
 
 Motor operations are the important exception. Identification, Phase Search, Motion and Control Tuning share the workbench-level motor `Stop` semantic. Their page-level Start/Run controls must not invent an independent Abort/Stop path merely to form a visual pair. A domain page may expose a local Stop convenience control, but it must call the exact same Application motor-stop operation as the global Stop control.
 
@@ -308,8 +310,8 @@ Color reinforces state/action meaning but never carries it alone.
 
 Initial product convention:
 
-- `Enable`: green enable treatment;
-- `Disable`: red disable treatment;
+- global motor `DISABLED` state: red state treatment;
+- global motor `ENABLED` state, including firmware `RUN`: green state treatment;
 - `Stop`: visually distinct stop treatment with a stop-square symbol;
 - problem severity: distinct Info / Warning / Error-or-Fault treatment while always retaining icon semantics.
 

@@ -18,7 +18,7 @@
   import { clearProblemsProjection, problemSnapshot, refreshProblems, startProblemsTracking } from "./problems/state";
   import { canSaveParameters, disableMotor, enableMotor, saveParameters, stopMotor } from "./actions/api";
   import { connectParameters, disconnectParameters, parameterState, pollParameters, refreshParameters, saveParameterBaseline, selectParameters } from "./parameters/state";
-  import { motorStateFromParameter } from "./motor/state";
+  import { motorEnableStatus, motorStateFromParameter } from "./motor/state";
   import { clearRuntimeTelemetry, refreshRuntimeTelemetry, runtimeTelemetry, startRuntimeTelemetryTracking } from "./runtime/state";
 
   type Page = "connection" | "motor" | "encoder" | "limits" | "control" | "tuning" | "motion" | "analysis" | "parameters" | "events" | "automation";
@@ -44,6 +44,7 @@
   let connectionSchemaPath = DEFAULT_SCHEMA_PATH;
   let connection: ConnectionInfo | undefined;
   let connectionReady = false;
+  $: enableStatus = motorEnableStatus(motorState, connectionReady);
   let connectionInitializing = false;
   $: readyConnection = connectionReady ? connection : undefined;
   let errorText = "";
@@ -199,9 +200,10 @@
   <div class="global-toolbar"><div class="global-toolbar-left">
     <div class="brand">NMIXX Motor Studio</div><div class="global-toolbar-divider" aria-hidden="true"></div>
     <div class="global-actions">
-      <button class:enable-action={motorState === "DISABLED"} class:disable-action={motorState !== null && motorState !== "DISABLED"} class="tool-button global-action"
-        disabled={!connectionReady || motorState === null || globalActionBusy} onclick={() => void toggleMotorEnable()} title={motorState === "DISABLED" ? "Enable motor" : "Disable motor"}>
-        <i class={`codicon ${motorState === "DISABLED" ? "codicon-play" : "codicon-debug-disconnect"}`}></i>{motorState === "DISABLED" ? "Enable" : "Disable"}
+      <button class:motor-disabled={enableStatus === "DISABLED"} class:motor-enabled={enableStatus === "ENABLED"} class="tool-button global-action"
+        disabled={!connectionReady || motorState === null || globalActionBusy} onclick={() => void toggleMotorEnable()}
+        title={enableStatus === "DISABLED" ? "Motor DISABLED — click to Enable" : enableStatus === "ENABLED" ? "Motor ENABLED — click to Disable" : "Motor enable state unknown"}>
+        <i class="codicon codicon-power"></i> {enableStatus}
       </button>
       <button class="tool-button global-action stop-action" disabled={!connection || globalStopBusy} onclick={() => void stopCurrentMotorOperation()} title="Stop current motor operation">
         <i class={`codicon ${globalStopBusy ? "codicon-loading codicon-modifier-spin" : "codicon-debug-stop"}`}></i> Stop
@@ -275,8 +277,9 @@
   .global-group-gap { width: 7px; }
   .global-command-feedback { max-width: 300px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; color: var(--vscode-descriptionForeground); font-size: 11px; }
   .global-action { min-width: 72px; }
-  .enable-action:not(:disabled) { color: #3fb950; }
-  .disable-action:not(:disabled) { color: #f85149; }
+  /* This button reports device state, including while an Action is pending. */
+  .motor-disabled { color: #f85149; }
+  .motor-enabled { color: #3fb950; }
   .stop-action:not(:disabled) { font-weight: 600; }
   .problems-host { position: relative; flex: 0 0 auto; }
   .problems-indicator { display: inline-flex; align-items: center; gap: 5px; border: 0; background: transparent; color: inherit; padding: 4px 7px; }

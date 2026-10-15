@@ -57,3 +57,44 @@ test("device Stop rejection appears as an error and does not claim success",asyn
   assert.match(h.read("motorActionNotice"),/Stop command feedback.*ERR_STATE/);
   assert.equal(h.errors.length,1);
 });
+
+test("global power button shows firmware enable state, not the next Action", () => {
+  const ts = require("typescript");
+  const motorStateSource = readFileSync(join(__dirname, "../src/motor/state.ts"), "utf8");
+  const module = { exports: {} };
+  const code = ts.transpileModule(motorStateSource, {
+    compilerOptions: { target: ts.ScriptTarget.ES2022, module: ts.ModuleKind.CommonJS }
+  }).outputText;
+  vm.runInNewContext(code, {
+    module, exports: module.exports,
+    require: () => ({ parameterEnumSymbol: () => undefined }),
+  });
+  const label = module.exports.motorEnableStatus;
+  assert.equal(label("DISABLED", true), "DISABLED");
+  assert.equal(label("ENABLED", true), "ENABLED");
+  assert.equal(label("RUN", true), "ENABLED");
+  assert.equal(label(null, true), "UNKNOWN");
+  assert.equal(label("ENABLED", false), "UNKNOWN");
+  assert.match(source, /class:motor-disabled=\{enableStatus === "DISABLED"\}/);
+  assert.match(source, /class:motor-enabled=\{enableStatus === "ENABLED"\}/);
+  assert.match(source, /<i class="codicon codicon-power"><\/i> \{enableStatus\}/);
+  assert.match(source, /\.motor-disabled \{ color: #f85149; \}/);
+  assert.match(source, /\.motor-enabled \{ color: #3fb950; \}/);
+  assert.match(source, /title=\{enableStatus === "DISABLED" \? "Motor DISABLED — click to Enable"/);
+});
+
+test("global power button changes only after device Motor State readback", async () => {
+  const h = harness();
+  const label = (state) => state === "DISABLED" ? "DISABLED" : "ENABLED";
+  assert.equal(label(h.read("motorState")), "DISABLED");
+  await h.enable();
+  assert.deepEqual(h.operations, ["ACTION_MOTOR_ENABLE"]);
+  // Action acceptance alone must not update the device-owned Motor State.
+  assert.equal(label(h.read("motorState")), "DISABLED");
+  h.write('motorState = "ENABLED"'); // next authoritative Parameter update
+  assert.equal(label(h.read("motorState")), "ENABLED");
+  h.write('motorState = "RUN"');
+  assert.equal(label(h.read("motorState")), "ENABLED");
+  await h.enable();
+  assert.deepEqual(h.operations, ["ACTION_MOTOR_ENABLE", "ACTION_MOTOR_DISABLE"]);
+});
