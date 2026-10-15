@@ -1,5 +1,5 @@
 <script lang="ts">
-  import { uiLanguage, localize, localizeFeedback } from "../i18n";
+  import { uiLanguage, localize, localizeFeedback, translate } from "../i18n";
   import { onMount } from "svelte";
   import type { ConnectionInfo } from "../connection/types";
   import type { MotorState } from "../motor/state";
@@ -140,16 +140,16 @@
 </script>
 
 <div class="encoder-root">
-  <section class="page-toolbar"><div class="page-title">{localize("Encoder", $uiLanguage).toUpperCase()}</div></section>
+  <section class="page-toolbar"><div class="page-title">{translate("ui.encoder", $uiLanguage).toUpperCase()}</div></section>
   <section class="encoder-content">
     {#if !connection}
-      <div class="empty-state"><i class="codicon codicon-plug"></i><div>{localize("Connect a device to configure encoder feedback.", $uiLanguage)}</div></div>
+      <div class="empty-state"><i class="codicon codicon-plug"></i><div>{translate("ui.connect.a.device.to.configure.encoder.feedback", $uiLanguage)}</div></div>
     {:else}
       <div class="encoder-sheet">
         <div class="encoder-columns">
           <div class="primary-column">
             <section class="encoder-section">
-              <div class="section-title">{localize("Feedback Protocol", $uiLanguage)}</div>
+              <div class="section-title">{translate("ui.feedback.protocol", $uiLanguage)}</div>
               <div class="setup-grid" aria-label="Encoder feedback protocol">
                 <div class="field-label">{parameterLabel(ENCODER_PROTOCOL_SYMBOL, "Protocol")}</div>
                 <div>
@@ -159,7 +159,7 @@
                       value={encoderProtocolValue ?? ""} onchange={(event) => void setU8(ENCODER_PROTOCOL_SYMBOL, Number(event.currentTarget.value))}>
                       {#each enumOptions(ENCODER_PROTOCOL_SYMBOL) as option}<option value={option.value}>{option.label}</option>{/each}
                     </select>
-                  {:else}<span class="muted">{localize("Firmware unavailable", $uiLanguage)}</span>{/if}
+                  {:else}<span class="muted">{translate("ui.firmware.unavailable", $uiLanguage)}</span>{/if}
                 </div>
                 {#if isSpiProtocol()}
                   <div class="field-label">{parameterLabel(ENCODER_SPI_TYPE_SYMBOL, "SPI Encoder")}</div>
@@ -170,7 +170,7 @@
                         value={encoderSpiTypeValue ?? ""} onchange={(event) => void setU8(ENCODER_SPI_TYPE_SYMBOL, Number(event.currentTarget.value))}>
                         {#each enumOptions(ENCODER_SPI_TYPE_SYMBOL) as option}<option value={option.value}>{option.label}</option>{/each}
                       </select>
-                    {:else}<span class="muted">{localize("Firmware unavailable", $uiLanguage)}</span>{/if}
+                    {:else}<span class="muted">{translate("ui.firmware.unavailable", $uiLanguage)}</span>{/if}
                   </div>
                 {/if}
                 {#if isAbzProtocol() && metadata[ABZ_PPR_SYMBOL]}
@@ -185,7 +185,7 @@
               </div>
             </section>
             <section class="encoder-section">
-              <div class="section-title">{localize("Phase Alignment", $uiLanguage)}</div>
+              <div class="section-title">{translate("ui.phase.alignment", $uiLanguage)}</div>
               <div class="setup-grid">
                 <div class="field-label">{parameterLabel(PHASE_CURRENT_SYMBOL, "Search current")}</div>
                 <div>
@@ -198,16 +198,16 @@
                     </span>
                   {:else}<span class="muted">—</span>{/if}
                 </div>
-                <div class="field-label">{localize("Phase search", $uiLanguage)}</div>
+                <div class="field-label">{translate("ui.phase.search", $uiLanguage)}</div>
                 <div class="action-line">
                   <!-- svelte-ignore a11y_click_events_have_key_events a11y_no_static_element_interactions -->
                   <vscode-button secondary disabled={!phaseSearchAvailable() || phaseState === "running"}
                     title={phaseSearchAvailable() ? "Start phase search" : "Required phase-search capabilities are not exposed by this firmware"}
-                    onclick={() => void startPhaseSearch()}>{localize("Start", $uiLanguage)}</vscode-button>
-                  {#if phaseState === "running"}<span class="action-status state-running"><i class="codicon codicon-loading codicon-modifier-spin"></i> {localize("Running", $uiLanguage)}</span>
-                  {:else if phaseState === "success"}<span class="action-status state-success"><i class="codicon codicon-check"></i> {localize("Success", $uiLanguage)}</span>
-                  {:else if phaseState === "stopped"}<span class="action-status muted"><i class="codicon codicon-debug-stop"></i> {localize("Stopped", $uiLanguage)}</span>
-                  {:else if phaseState === "failed"}<span class="action-status state-failed" title={phaseMessage}><i class="codicon codicon-error"></i> {localize("Failed", $uiLanguage)}</span>{/if}
+                    onclick={() => void startPhaseSearch()}>{translate("ui.start", $uiLanguage)}</vscode-button>
+                  {#if phaseState === "running"}<span class="action-status state-running"><i class="codicon codicon-loading codicon-modifier-spin"></i> {translate("ui.running", $uiLanguage)}</span>
+                  {:else if phaseState === "success"}<span class="action-status state-success"><i class="codicon codicon-check"></i> {translate("ui.success", $uiLanguage)}</span>
+                  {:else if phaseState === "stopped"}<span class="action-status muted"><i class="codicon codicon-debug-stop"></i> {translate("ui.stopped", $uiLanguage)}</span>
+                  {:else if phaseState === "failed"}<span class="action-status state-failed" title={phaseMessage}><i class="codicon codicon-error"></i> {translate("ui.failed", $uiLanguage)}</span>{/if}
                   {#if phaseState === "failed" && phaseMessage}<span class="action-reason" role="alert">{localizeFeedback(phaseMessage, $uiLanguage)}</span>{/if}
                 </div>
                 <div class="field-label">{parameterLabel(MOTOR_DIR_SYMBOL, "Motor direction")}</div>
@@ -216,7 +216,7 @@
                     <select class:ramModified={$modifiedParameterIds.has(metadata[MOTOR_DIR_SYMBOL].id)} class="compact-select"
                       disabled={!isWritable(MOTOR_DIR_SYMBOL) || writing.has(MOTOR_DIR_SYMBOL) || phaseState === "running"}
                       value={motorDirectionValue} onchange={(event) => void setMotorDirection(event.currentTarget.value as "normal" | "reversed")}>
-                      <option value="normal">{localize("Normal", $uiLanguage)}</option><option value="reversed">{localize("Reversed", $uiLanguage)}</option>
+                      <option value="normal">{translate("ui.normal", $uiLanguage)}</option><option value="reversed">{translate("ui.reversed", $uiLanguage)}</option>
                     </select>
                   {:else}<span class="muted">—</span>{/if}
                 </div>
@@ -225,22 +225,22 @@
           </div>
           <aside class="reference-column">
             <section class="encoder-section">
-              <div class="section-title">{localize("Mechanical Reference", $uiLanguage)}</div>
+              <div class="section-title">{translate("ui.mechanical.reference", $uiLanguage)}</div>
               <div class="reference-row"><span class="field-label">{parameterLabel(ZERO_VALID_SYMBOL, "Zero reference")}</span><span class="readonly-value">{localize(zeroReferenceText(), $uiLanguage)}</span></div>
               <div class="reference-actions">
                 <vscode-button secondary disabled={!setZeroAvailable() || zeroActionBusy}
                   title={setZeroAvailable() ? "Set current position as mechanical zero" : "Position-zero operation is not exposed by this firmware"}
-                  onclick={() => void setCurrentAsZero()}>{localize("Set Current as Zero", $uiLanguage)}</vscode-button>
+                  onclick={() => void setCurrentAsZero()}>{translate("ui.set.current.as.zero", $uiLanguage)}</vscode-button>
                 <vscode-button secondary disabled={!homingAvailable() || homingState === "running"}
                   title={homingAvailable() ? "Start software homing" : "Homing operation is not exposed by this firmware"}
-                  onclick={() => void startHoming()}>{localize("Software Homing", $uiLanguage)}</vscode-button>
+                  onclick={() => void startHoming()}>{translate("ui.software.homing", $uiLanguage)}</vscode-button>
               </div>
-              {#if homingState === "running"}<div class="action-status state-running"><i class="codicon codicon-loading codicon-modifier-spin"></i> {localize("Homing", $uiLanguage)}</div>
-              {:else if homingState === "success"}<div class="action-status state-success"><i class="codicon codicon-check"></i> {localize("Homed", $uiLanguage)}</div>
-              {:else if homingState === "stopped"}<div class="action-status muted"><i class="codicon codicon-debug-stop"></i> {localize("Homing stopped", $uiLanguage)}</div>
-              {:else if homingState === "failed"}<div class="action-status state-failed" title={homingMessage}><i class="codicon codicon-error"></i> {localize("Homing failed", $uiLanguage)}</div>{/if}
+              {#if homingState === "running"}<div class="action-status state-running"><i class="codicon codicon-loading codicon-modifier-spin"></i> {translate("ui.homing", $uiLanguage)}</div>
+              {:else if homingState === "success"}<div class="action-status state-success"><i class="codicon codicon-check"></i> {translate("ui.homed", $uiLanguage)}</div>
+              {:else if homingState === "stopped"}<div class="action-status muted"><i class="codicon codicon-debug-stop"></i> {translate("ui.homing.stopped", $uiLanguage)}</div>
+              {:else if homingState === "failed"}<div class="action-status state-failed" title={homingMessage}><i class="codicon codicon-error"></i> {translate("ui.homing.failed", $uiLanguage)}</div>{/if}
               {#if homingState === "failed" && homingMessage}<div class="action-reason" role="alert">{localizeFeedback(homingMessage, $uiLanguage)}</div>{/if}
-              {#if !metadata[ZERO_VALID_SYMBOL] && !setZeroAvailable() && !homingAvailable()}<div class="future-note">{localize("Firmware unavailable", $uiLanguage)}</div>{/if}
+              {#if !metadata[ZERO_VALID_SYMBOL] && !setZeroAvailable() && !homingAvailable()}<div class="future-note">{translate("ui.firmware.unavailable", $uiLanguage)}</div>{/if}
             </section>
           </aside>
         </div>
