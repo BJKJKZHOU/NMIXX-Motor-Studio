@@ -1,4 +1,5 @@
 <script lang="ts">
+  import { uiLanguage, localize } from "../i18n";
   import {
     FlexRender, columnFilteringFeature, createFilteredRowModel, createSortedRowModel,
     createTable, filterFn_includesString, globalFilteringFeature, rowSortingFeature, tableFeatures,
@@ -73,17 +74,17 @@
 
 <div class="parameter-root">
   <section class="page-toolbar">
-    <div class="page-title">PARAMETERS</div>
+    <div class="page-title">{localize("PARAMETERS", $uiLanguage)}</div>
     <div class="parameter-toolbar">
       <div class="parameter-search">
         <i class="codicon codicon-search"></i>
-        <input class="compact-input" type="search" placeholder="Search parameters" value={search} disabled={!connection} oninput={handleSearch} />
+        <input class="compact-input" type="search" placeholder={localize("Search parameters", $uiLanguage)} value={search} disabled={!connection} oninput={handleSearch} />
       </div>
       <span class="parameter-count">
         {#if !connection}
-          Not connected
+          {localize("Not connected", $uiLanguage)}
         {:else if loadingRegistry}
-          Reading registry…
+          {localize("Reading registry…", $uiLanguage)}
         {:else}
           {table.getRowModel().rows.length} / {rows.length}
         {/if}
@@ -93,9 +94,9 @@
 
   <section class="parameter-content">
     {#if !connection}
-      <div class="empty-state"><i class="codicon codicon-plug"></i><div>Connect a device to inspect its Parameter registry.</div></div>
+      <div class="empty-state"><i class="codicon codicon-plug"></i><div>{localize("Connect a device to inspect its Parameter registry.", $uiLanguage)}</div></div>
     {:else if rows.length === 0}
-      <div class="empty-state"><i class="codicon codicon-loading codicon-modifier-spin"></i><div>{loadingRegistry ? "Reading Parameter registry…" : "No parameters exposed by schema."}</div></div>
+      <div class="empty-state"><i class="codicon codicon-loading codicon-modifier-spin"></i><div>{localize(loadingRegistry ? "Reading Parameter registry…" : "No parameters exposed by schema.", $uiLanguage)}</div></div>
     {:else}
       <div class="parameter-table-shell">
         <table class="parameter-table">
@@ -106,7 +107,7 @@
                   <th class:parameter-value-column={header.column.id === "value"}>
                     {#if !header.isPlaceholder}
                       <button class="table-header-button" disabled={!header.column.getCanSort()} onclick={header.column.getToggleSortingHandler()}>
-                        <FlexRender {header} />
+                        {#if typeof header.column.columnDef.header === "string"}{localize(header.column.columnDef.header, $uiLanguage)}{:else}<FlexRender {header} />{/if}
                         {#if header.column.getIsSorted() === "asc"}<i class="codicon codicon-arrow-up"></i>{:else if header.column.getIsSorted() === "desc"}<i class="codicon codicon-arrow-down"></i>{/if}
                       </button>
                     {/if}
@@ -126,7 +127,7 @@
                     {:else if cell.column.id === "symbol"}
                       <span class="mono parameter-symbol">{row.meta.symbol}</span>
                     {:else if cell.column.id === "label"}
-                      <span>{row.meta.label}</span>
+                      <span>{localize(row.meta.label, $uiLanguage)}</span>
                     {:else if cell.column.id === "value"}
                       {#if row.pending}
                         <span class="pending-value"><i class="codicon codicon-loading codicon-modifier-spin"></i></span>
@@ -159,7 +160,7 @@
                 {/each}
               </tr>
             {:else}
-              <tr><td colspan={columns.length} class="parameter-no-results">No parameters match “{search}”.</td></tr>
+              <tr><td colspan={columns.length} class="parameter-no-results">{localize("No parameters match", $uiLanguage)} “{search}”.</td></tr>
             {/each}
           </tbody>
         </table>

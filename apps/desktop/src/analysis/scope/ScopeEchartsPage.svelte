@@ -1,4 +1,5 @@
 <script lang="ts">
+  import { uiLanguage, localize, localizeFeedback } from "../../i18n";
   import { onDestroy, onMount } from "svelte";
   import ScopeEchartsView from "./ScopeEchartsView.svelte";
   import { scopeOperation, type ScopeOperation } from "../../automation/operations";
@@ -408,7 +409,7 @@
 </script>
 
 <section class="page-toolbar">
-  <div class="page-title">ANALYSIS / SCOPE</div>
+  <div class="page-title">{localize("ANALYSIS / SCOPE", $uiLanguage)}</div>
   <div class="toolbar-actions">
     <!-- svelte-ignore a11y_click_events_have_key_events a11y_no_static_element_interactions -->
     <vscode-button
@@ -417,15 +418,15 @@
       onclick={() => void toggleRun()}
     >
       <i class={`codicon ${stopping ? "codicon-loading codicon-modifier-spin" : running ? "codicon-debug-stop" : "codicon-play"}`}></i>
-      {stopping ? "Stopping…" : running ? "Stop" : "Run"}
+      {localize(stopping ? "Stopping…" : running ? "Stop" : "Run", $uiLanguage)}
     </vscode-button>
   </div>
 </section>
 
 <div class="scope-spike-shell">
   <aside class="scope-spike-sidebar">
-    <div class="section-heading">CHANNELS</div>
-    {#if channelNotice}<div class="scope-channel-notice">{channelNotice}</div>{/if}
+    <div class="section-heading">{localize("CHANNELS", $uiLanguage)}</div>
+    {#if channelNotice}<div class="scope-channel-notice">{localizeFeedback(channelNotice, $uiLanguage)}</div>{/if}
     {#each channels as channel}
       <div class:active-channel={activeChannelId === channel.id} class="channel-block">
         <div class="scope-spike-channel">
@@ -456,7 +457,7 @@
         {#if selectedIds.has(channel.id) && activeChannelId === channel.id}
           <div class="channel-y-controls">
             <label>
-              <span>Scale/div</span>
+              <span>{localize("Scale/div", $uiLanguage)}</span>
               <input
                 type="number"
                 min="0.000001"
@@ -467,7 +468,7 @@
               <em>{channel.unit ?? ""}/div</em>
             </label>
             <label>
-              <span>Y Pos</span>
+              <span>{localize("Y Pos", $uiLanguage)}</span>
               <input
                 type="number"
                 step="any"
@@ -476,23 +477,23 @@
               />
               <em>{channel.unit ?? ""}</em>
             </label>
-            <button class="auto-button" onclick={() => autoVertical(channel.id)}>Auto</button>
+            <button class="auto-button" onclick={() => autoVertical(channel.id)}>{localize("Auto", $uiLanguage)}</button>
           </div>
         {/if}
       </div>
     {/each}
     <div class="scope-spike-note">
-      Click a channel name to make its Y axis active. Scale/div and Y Pos control each trace independently.
-      Horizontal zoom and pan are continuous ECharts dataZoom interactions; double-click returns the current span to Latest.
+      {localize("Click a channel name to make its Y axis active. Scale/div and Y Pos control each trace independently.", $uiLanguage)}
+      {localize("Horizontal zoom and pan are continuous ECharts dataZoom interactions; double-click returns the current span to Latest.", $uiLanguage)}
     </div>
   </aside>
 
   <section class="scope-spike-workspace">
     <div class="scope-spike-meta">
-      <span>{followingLatest ? `latest ${viewSpan(viewRange).toFixed(3)} s` : `history ${viewSpan(viewRange).toFixed(3)} s`}</span>
-      {#if !followingLatest}<button class="latest-button" onclick={returnToLatest}>Latest</button>{/if}
-      <span>{snapshot?.preview ? "baseline preview" : (snapshot?.recordedSeconds?.toFixed(3) ?? "0.000") + " s recorded"}</span>
-      <span>loss {snapshot?.lostFrames ?? 0}</span>
+      <span>{localize(followingLatest ? "latest" : "history", $uiLanguage)} {viewSpan(viewRange).toFixed(3)} s</span>
+      {#if !followingLatest}<button class="latest-button" onclick={returnToLatest}>{localize("Latest", $uiLanguage)}</button>{/if}
+      <span>{snapshot?.preview ? localize("baseline preview", $uiLanguage) : (snapshot?.recordedSeconds?.toFixed(3) ?? "0.000") + " s " + localize("recorded", $uiLanguage)}</span>
+      <span>{localize("loss", $uiLanguage)} {snapshot?.lostFrames ?? 0}</span>
     </div>
     <div class="scope-spike-plot">
       <ScopeEchartsView

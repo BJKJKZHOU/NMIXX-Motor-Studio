@@ -1,4 +1,5 @@
 <script lang="ts">
+  import { uiLanguage, localize, localizeFeedback } from "../i18n";
   import { onMount } from "svelte";
   import { cancelTask, exportLog } from "./api";
   import { ensureDocument, isActive, loadDocument, logs, refreshTask, runSelected, scriptSettings, selectBuiltin, taskError, taskState } from "./state";
@@ -27,47 +28,52 @@
 
 <div class="automation-page">
   <section class="page-toolbar">
-    <div class="page-title">AUTOMATION / APPLICATION WORKFLOWS</div>
+    <div class="page-title">{localize("AUTOMATION / APPLICATION WORKFLOWS", $uiLanguage)}</div>
     <div class="toolbar-actions">
-      <button class="tool-button" disabled={!connected || busy || activeTask || !$scriptSettings.document} onclick={() => void perform(runSelected)}>Run script</button>
-      <button class="tool-button" disabled={!activeTask || busy} onclick={() => void perform(async () => { if ($taskState) await cancelTask($taskState.taskId); await refreshTask(); })}>Cancel script</button>
+      <button class="tool-button" disabled={!connected || busy || activeTask || !$scriptSettings.document} onclick={() => void perform(runSelected)}>{localize("Run script", $uiLanguage)}</button>
+      <button class="tool-button" disabled={!activeTask || busy} onclick={() => void perform(async () => { if ($taskState) await cancelTask($taskState.taskId); await refreshTask(); })}>{localize("Cancel script", $uiLanguage)}</button>
     </div>
   </section>
   <div class="automation-controls">
-    <label>Script path <input class="compact-input" bind:value={$scriptSettings.path} placeholder="/home/user/tests/diagnosis.py" disabled={busy || activeTask} /></label>
-    <button class="tool-button" disabled={busy || activeTask || !$scriptSettings.path.trim()} onclick={() => void perform(loadDocument)}>Open file</button>
-    <button class="tool-button" disabled={busy || activeTask} onclick={() => void perform(() => selectBuiltin("diagnosis"))}>Runtime diagnosis</button>
-    <button class="tool-button" disabled={busy || activeTask} onclick={() => void perform(() => selectBuiltin("encoder"))}>Encoder turn diagnosis</button>
-    <button class="tool-button" disabled={busy || activeTask} onclick={() => void perform(() => selectBuiltin("motion"))}>Motion example</button>
-    <label>Interpreter <input class="compact-input" bind:value={$scriptSettings.program} disabled={busy || activeTask} /></label>
-    <label>Timeout (s) <input class="compact-input timeout" type="number" min="1" max="3600" step="1" bind:value={$scriptSettings.timeoutSeconds} disabled={busy || activeTask} /></label>
+    <label>{localize("Script path", $uiLanguage)} <input class="compact-input" bind:value={$scriptSettings.path} placeholder="/home/user/tests/diagnosis.py" disabled={busy || activeTask} /></label>
+    <button class="tool-button" disabled={busy || activeTask || !$scriptSettings.path.trim()} onclick={() => void perform(loadDocument)}>{localize("Open file", $uiLanguage)}</button>
+    <button class="tool-button" disabled={busy || activeTask} onclick={() => void perform(() => selectBuiltin("diagnosis"))}>{localize("Runtime diagnosis", $uiLanguage)}</button>
+    <button class="tool-button" disabled={busy || activeTask} onclick={() => void perform(() => selectBuiltin("encoder"))}>{localize("Encoder turn diagnosis", $uiLanguage)}</button>
+    <button class="tool-button" disabled={busy || activeTask} onclick={() => void perform(() => selectBuiltin("motion"))}>{localize("Motion example", $uiLanguage)}</button>
+    <label>{localize("Interpreter", $uiLanguage)} <input class="compact-input" bind:value={$scriptSettings.program} disabled={busy || activeTask} /></label>
+    <label>{localize("Timeout (s)", $uiLanguage)} <input class="compact-input timeout" type="number" min="1" max="3600" step="1" bind:value={$scriptSettings.timeoutSeconds} disabled={busy || activeTask} /></label>
   </div>
   <div class="automation-notice">
-    Uses the same Application API and connection as GUI actions, not CLI. Scripts can write parameters and operate the motor and Scope.
-    The Motion example uses your current committed target and requires manual Enable first.
-    Scripts run with your OS user permissions, not in a sandbox. Run only trusted files.
+    {#if $uiLanguage === "zh-CN"}
+      脚本与界面共用 Application API 和设备连接，可修改参数并操作电机及 Scope。
+      Motion 示例使用当前已提交的目标，运行前需要手动使能。脚本使用当前操作系统用户权限执行，并非沙盒；仅运行可信文件。
+    {:else}
+      Uses the same Application API and connection as GUI actions, not CLI. Scripts can write parameters and operate the motor and Scope.
+      The Motion example uses your current committed target and requires manual Enable first.
+      Scripts run with your OS user permissions, not in a sandbox. Run only trusted files.
+    {/if}
   </div>
-  {#if error || $taskError}<div class="error-text" role="alert">{error || $taskError}</div>{/if}
+  {#if error || $taskError}<div class="error-text" role="alert">{localizeFeedback(error || $taskError, $uiLanguage)}</div>{/if}
   <div class="automation-content">
     <section class="source-panel">
-      <div class="section-heading">{$scriptSettings.document?.name ?? "No script selected"} · source preview</div>
+      <div class="section-heading">{$scriptSettings.document?.name ?? localize("No script selected", $uiLanguage)} · {localize("source preview", $uiLanguage)}</div>
       <pre aria-label="Read-only script source">{$scriptSettings.document?.source ?? ""}</pre>
     </section>
     <section class="log-panel">
       <div class="section-heading">
-        {$taskState?.state ?? "IDLE"}
+        {localize($taskState?.state ?? "IDLE", $uiLanguage)}
         {#if $taskState?.taskId} · {$taskState.name} · task {$taskState.taskId}{/if}
         {#if $taskState?.exitCode !== null && $taskState?.exitCode !== undefined} · exit {$taskState.exitCode}{/if}
       </div>
       {#if $taskState?.message}<div class="automation-message">{$taskState.message}</div>{/if}
-      {#if ($taskState?.firstSequence ?? 1) > 1}<div class="automation-message">Old output was truncated by the bounded log buffer.</div>{/if}
-      <pre class="output" aria-label="Script output">{output || "No output yet."}</pre>
+      {#if ($taskState?.firstSequence ?? 1) > 1}<div class="automation-message">{localize("Old output was truncated by the bounded log buffer.", $uiLanguage)}</div>{/if}
+      <pre class="output" aria-label="Script output">{output || localize("No output yet.", $uiLanguage)}</pre>
     </section>
   </div>
   <div class="log-export">
     <input class="compact-input" bind:value={$scriptSettings.logPath} placeholder="/home/user/logs/diagnosis-001.log" aria-label="New log output file" />
-    <button class="tool-button" disabled={busy || activeTask || !$taskState?.taskId} onclick={() => void perform(saveLog)}>Save log</button>
-    {#if feedback}<span>{feedback}</span>{/if}
+    <button class="tool-button" disabled={busy || activeTask || !$taskState?.taskId} onclick={() => void perform(saveLog)}>{localize("Save log", $uiLanguage)}</button>
+    {#if feedback}<span>{localizeFeedback(feedback, $uiLanguage)}</span>{/if}
   </div>
 </div>
 <style>
