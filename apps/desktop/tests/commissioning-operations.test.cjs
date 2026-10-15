@@ -129,3 +129,19 @@ test("Encoder phase-search Action rejection and completion failure remain visibl
   assert.match(h.get("phaseMessage"),/Motor already RUN/);
   assert.equal(h.actions.length,1);
 });
+
+test("accepted Motor Stop with failed Parameter refresh reports ambiguous UI state, not rejected command",async()=>{
+  const calls=[];
+  const ctx=vm.createContext({
+    exports:{},
+    require(name){
+      if(name==="@tauri-apps/api/core")return {invoke:async(name)=>{calls.push(name);return {txn:1,actionId:0x1003};}};
+      if(name==="@tauri-apps/api/event")return {listen:async()=>()=>{}};
+      if(name==="../parameters/state")return {synchronizeParameters:async()=>{throw new Error("cable unavailable");}};
+      throw new Error(name);
+    },
+  });
+  vm.runInContext(compile(source("actions/api.ts")),ctx);
+  await assert.rejects(ctx.exports.stopMotor(),/Device accepted the command, but Parameter readback failed/);
+  assert.deepEqual(calls,["motor_stop"]);
+});
