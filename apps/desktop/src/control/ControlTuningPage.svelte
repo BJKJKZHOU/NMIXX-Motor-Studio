@@ -115,12 +115,13 @@
     const parameter = values[symbol];
     if (!parameter || parameter.type === "position") return "—";
     const value = Number(parameter.value);
-    if (value === enumValue(symbol, "CTRL_TUNE_BANDWIDTH")) return "Bandwidth";
-    if (value === enumValue(symbol, "CTRL_TUNE_MANUAL")) return "Manual";
+    if (value === enumValue(symbol, "CTRL_TUNE_BANDWIDTH")) return "bandwidth";
+    if (value === enumValue(symbol, "CTRL_TUNE_MANUAL")) return "manual";
     return String(value);
   }
-  async function setSource(symbol: string, mode: string) {
-    const value = enumValue(symbol, mode === "Manual" ? "CTRL_TUNE_MANUAL" : "CTRL_TUNE_BANDWIDTH");
+  async function setSource(symbol: string, mode: "bandwidth" | "manual") {
+    if (mode !== "manual" && mode !== "bandwidth") return;
+    const value = enumValue(symbol, mode === "manual" ? "CTRL_TUNE_MANUAL" : "CTRL_TUNE_BANDWIDTH");
     if (value === null || locked(symbol)) return;
     try { await edits.select(symbol, { type: "u8", value }); } catch (error) { onError(error); }
   }
@@ -400,8 +401,8 @@
           <section class="tuning-section"><div class="section-title">{translate(spec.titleKey, $uiLanguage)}</div><div class="field-grid">
             <div class="field-label">{label(spec.source)}</div>
             {#if metadata[spec.source]}
-              <select class:ramModified={$modifiedParameterIds.has(metadata[spec.source].id)} class="compact-select" disabled={locked(spec.source)} value={sourceText(spec.source)} onchange={(event) => void setSource(spec.source, event.currentTarget.value)}>
-                <option value="Bandwidth">{translate("ui.bandwidth", $uiLanguage)}</option><option value="Manual">{translate("ui.manual", $uiLanguage)}</option>
+              <select class:ramModified={$modifiedParameterIds.has(metadata[spec.source].id)} class="compact-select" disabled={locked(spec.source)} value={sourceText(spec.source)} onchange={(event) => void setSource(spec.source, event.currentTarget.value as "bandwidth" | "manual")}>
+                <option value="bandwidth">{translate("ui.bandwidth", $uiLanguage)}</option><option value="manual">{translate("ui.manual", $uiLanguage)}</option>
               </select>
             {:else}<span class="unavailable">{translate("ui.firmware.unavailable", $uiLanguage)}</span>{/if}
             <div class="field-label">{label(spec.bandwidth)}</div><div class="editor">

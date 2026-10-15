@@ -49,12 +49,13 @@
   function sourceText(symbol: string): string {
     const value = numeric(values[symbol]);
     if (value === null) return "—";
-    if (value === enumValue(symbol, "CTRL_TUNE_BANDWIDTH")) return "Bandwidth";
-    if (value === enumValue(symbol, "CTRL_TUNE_MANUAL")) return "Manual";
+    if (value === enumValue(symbol, "CTRL_TUNE_BANDWIDTH")) return "bandwidth";
+    if (value === enumValue(symbol, "CTRL_TUNE_MANUAL")) return "manual";
     return String(value);
   }
-  async function setSource(symbol: string, mode: "Bandwidth" | "Manual") {
-    const value = enumValue(symbol, mode === "Manual" ? "CTRL_TUNE_MANUAL" : "CTRL_TUNE_BANDWIDTH");
+  async function setSource(symbol: string, mode: "bandwidth" | "manual") {
+    if (mode !== "manual" && mode !== "bandwidth") return;
+    const value = enumValue(symbol, mode === "manual" ? "CTRL_TUNE_MANUAL" : "CTRL_TUNE_BANDWIDTH");
     if (value === null || locked(symbol)) return;
     try { await edits.select(symbol, { type: "u8", value }); } catch (error) { onError(error); }
   }
@@ -63,7 +64,7 @@
 
 <div class="control-root">
   <section class="page-toolbar">
-    <div class="page-title">{translate("ui.control.architecture", $uiLanguage).toUpperCase()} · {localize(loop === "current" ? "Current Loop" : loop === "speed" ? "Speed Loop" : "Position Loop", $uiLanguage).toUpperCase()}</div>
+    <div class="page-title">{translate("ui.control.architecture", $uiLanguage).toUpperCase()} · {translate(loop === "current" ? "ui.current.loop" : loop === "speed" ? "ui.speed.loop" : "ui.position.loop", $uiLanguage).toUpperCase()}</div>
     {#if loading}<div class="toolbar-note"><i class="codicon codicon-loading codicon-modifier-spin"></i> {translate("ui.reading.control.parameters", $uiLanguage)}</div>{/if}
   </section>
   <section class="control-content">
@@ -77,7 +78,7 @@
           <div class="diagram current-diagram">
             <div class="signal-chip">{translate("ui.id.iq.ref", $uiLanguage)}</div><div class="arrow">→</div><div class="sum-node">Σ</div><div class="arrow">→</div>
             <div class="control-block wide-block"><div class="block-title">{translate("ui.pi.current.controller", $uiLanguage)}</div>
-{#if metadata[CURRENT_SOURCE]}<div class="block-field"><span>{label(CURRENT_SOURCE, "Gain Source")}</span><select class:ramModified={$modifiedParameterIds.has(metadata[CURRENT_SOURCE].id)} class="compact-select" disabled={locked(CURRENT_SOURCE)} value={sourceText(CURRENT_SOURCE)} onchange={(event) => void setSource(CURRENT_SOURCE, event.currentTarget.value as "Bandwidth" | "Manual")}><option value="Bandwidth">{translate("ui.bandwidth", $uiLanguage)}</option><option value="Manual">{translate("ui.manual", $uiLanguage)}</option></select></div>{/if}
+{#if metadata[CURRENT_SOURCE]}<div class="block-field"><span>{label(CURRENT_SOURCE, "Gain Source")}</span><select class:ramModified={$modifiedParameterIds.has(metadata[CURRENT_SOURCE].id)} class="compact-select" disabled={locked(CURRENT_SOURCE)} value={sourceText(CURRENT_SOURCE)} onchange={(event) => void setSource(CURRENT_SOURCE, event.currentTarget.value as "bandwidth" | "manual")}><option value="bandwidth">{translate("ui.bandwidth", $uiLanguage)}</option><option value="manual">{translate("ui.manual", $uiLanguage)}</option></select></div>{/if}
 {#if metadata[CURRENT_BW]}<div class="block-field"><span>{label(CURRENT_BW, "Bandwidth")}</span><span class="editor"><input class:ramModified={$modifiedParameterIds.has(metadata[CURRENT_BW].id)} class:dirty={dirty(CURRENT_BW)} class="compact-input mono" value={drafts[CURRENT_BW] ?? ""} disabled={locked(CURRENT_BW)} oninput={(event) => edits.edit(CURRENT_BW, event.currentTarget.value)} onkeydown={(event) => keydown(event, CURRENT_BW)} onblur={() => edits.discard(CURRENT_BW)} /><span class="unit">{unit(CURRENT_BW)}</span></span></div>{/if}
 <div class="gain-grid">
 {#if metadata[ID_KP]}<div><span>{translate("ui.manual.id.kp", $uiLanguage)}</span><input class:ramModified={$modifiedParameterIds.has(metadata[ID_KP].id)} class:dirty={dirty(ID_KP)} class="compact-input mono gain-input" value={drafts[ID_KP] ?? ""} disabled={locked(ID_KP)} oninput={(event) => edits.edit(ID_KP, event.currentTarget.value)} onkeydown={(event) => keydown(event, ID_KP)} onblur={() => edits.discard(ID_KP)} /></div>{/if}
@@ -95,7 +96,7 @@
           <div class="diagram speed-diagram">
             <div class="signal-chip">{translate("ui.ωm.ref", $uiLanguage)}</div><div class="arrow">→</div><div class="sum-node">Σ</div><div class="arrow">→</div>
             <div class="control-block"><div class="block-title">{translate("ui.pi.speed.controller", $uiLanguage)}</div>
-{#if metadata[SPEED_SOURCE]}<div class="block-field"><span>{label(SPEED_SOURCE, "Gain Source")}</span><select class:ramModified={$modifiedParameterIds.has(metadata[SPEED_SOURCE].id)} class="compact-select" disabled={locked(SPEED_SOURCE)} value={sourceText(SPEED_SOURCE)} onchange={(event) => void setSource(SPEED_SOURCE, event.currentTarget.value as "Bandwidth" | "Manual")}><option value="Bandwidth">{translate("ui.bandwidth", $uiLanguage)}</option><option value="Manual">{translate("ui.manual", $uiLanguage)}</option></select></div>{/if}
+{#if metadata[SPEED_SOURCE]}<div class="block-field"><span>{label(SPEED_SOURCE, "Gain Source")}</span><select class:ramModified={$modifiedParameterIds.has(metadata[SPEED_SOURCE].id)} class="compact-select" disabled={locked(SPEED_SOURCE)} value={sourceText(SPEED_SOURCE)} onchange={(event) => void setSource(SPEED_SOURCE, event.currentTarget.value as "bandwidth" | "manual")}><option value="bandwidth">{translate("ui.bandwidth", $uiLanguage)}</option><option value="manual">{translate("ui.manual", $uiLanguage)}</option></select></div>{/if}
 {#if metadata[SPEED_BW]}<div class="block-field"><span>{label(SPEED_BW, "Bandwidth")}</span><span class="editor"><input class:ramModified={$modifiedParameterIds.has(metadata[SPEED_BW].id)} class:dirty={dirty(SPEED_BW)} class="compact-input mono" value={drafts[SPEED_BW] ?? ""} disabled={locked(SPEED_BW)} oninput={(event) => edits.edit(SPEED_BW, event.currentTarget.value)} onkeydown={(event) => keydown(event, SPEED_BW)} onblur={() => edits.discard(SPEED_BW)} /><span class="unit">{unit(SPEED_BW)}</span></span></div>{/if}
 <div class="gain-grid two">
 {#if metadata[SPEED_KP]}<div><span>{translate("ui.manual.kp", $uiLanguage)}</span><input class:ramModified={$modifiedParameterIds.has(metadata[SPEED_KP].id)} class:dirty={dirty(SPEED_KP)} class="compact-input mono gain-input" value={drafts[SPEED_KP] ?? ""} disabled={locked(SPEED_KP)} oninput={(event) => edits.edit(SPEED_KP, event.currentTarget.value)} onkeydown={(event) => keydown(event, SPEED_KP)} onblur={() => edits.discard(SPEED_KP)} /></div>{/if}
