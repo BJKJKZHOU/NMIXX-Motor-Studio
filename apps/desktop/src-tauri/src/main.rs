@@ -68,6 +68,12 @@ enum IdentificationStartDto { Blocked { issues: Vec<PreflightIssueDto> }, Requir
 #[derive(Debug, Clone, Serialize)]
 #[serde(rename_all = "camelCase")]
 struct ActionHandleDto { txn: u8, action_id: u16 }
+#[derive(Debug, Serialize)]
+#[serde(tag = "kind", rename_all = "camelCase")]
+enum MotionRunDto {
+    RunAccepted { handle: ActionHandleDto },
+    TargetUpdated,
+}
 #[derive(Debug, Clone, Serialize)]
 #[serde(rename_all = "camelCase")]
 struct ActionCompletionDto { txn: u8, action_id: u16, operation: String, status: String, ok: bool }
@@ -424,7 +430,12 @@ fn motion_set(state: State<'_, Mutex<DesktopState>>, config: MotionConfig) -> Re
 #[tauri::command]
 async fn motion_preview(state: State<'_, Mutex<DesktopState>>) -> Result<MotionPreview, String> { application(&state)?.motion_preview().map_err(|error| error.to_string()) }
 #[tauri::command]
-async fn motion_run(state: State<'_, Mutex<DesktopState>>) -> Result<(), String> { application(&state)?.motion_run().map(|_| ()).map_err(|error| error.to_string()) }
+async fn motion_run(state: State<'_, Mutex<DesktopState>>) -> Result<MotionRunDto, String> {
+    match application(&state)?.motion_run().map_err(|error| error.to_string())? {
+        Some(handle) => Ok(MotionRunDto::RunAccepted { handle: action_handle_dto(handle) }),
+        None => Ok(MotionRunDto::TargetUpdated),
+    }
+}
 #[tauri::command]
 async fn motion_stop(app_handle: tauri::AppHandle, state: State<'_, Mutex<DesktopState>>) -> Result<(), String> {
     application(&state)?.motion_stop().map_err(|error| error.to_string())?;

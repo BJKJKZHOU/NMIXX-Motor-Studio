@@ -34,7 +34,9 @@
   $: selectedProfile = motionProfileLabel(metadata[MOTION_PROFILE], values[MOTION_PROFILE]);
   let actionBusy = false;
   let stopBusy = false;
+  let runFeedback = "";
   let incrementalDraft = "1";
+  $: uncommittedMotion = $edits.dirty.size > 0 || incrementalDraft !== formatHostNumber($motionState.incrementalDeltaTurn);
   onMount(() => {
     let disposed = false;
     void initializeMotion().then(() => {
@@ -87,19 +89,44 @@
     try { await edits.select(MOTION_PROFILE, { type: "u8", value }); } catch (error) { onError(error); }
   }
   function canRun(): boolean {
-    return !!capabilities?.run && !$parameters.saving && writing.size === 0 && (motorState === "ENABLED" || (motorState === "RUN" && activeMode === "position" && $motionState.repeat))
+    return !!capabilities?.run && !uncommittedMotion && !$parameters.saving && writing.size === 0 && (motorState === "ENABLED" || (motorState === "RUN" && activeMode === "position" && $motionState.repeat))
       && !!activeMode && modeSupported(activeMode);
   }
   function canStop(): boolean { return !!capabilities?.stop && !stopBusy; }
   async function run() {
+    // Programmatic submissions are checked too; disabled controls are not the
+    // only line of defense against dispatching stale committed Parameters.
+    if (uncommittedMotion) {
+      const error = new Error("Commit or discard edited Motion values before Run (Enter to write, Esc to discard).");
+      runFeedback = error.message;
+      onError(error);
+      return;
+    }
     if (!canRun() || actionBusy) return;
     actionBusy = true;
-    try { await executeMotion(); } catch (error) { onError(error); } finally { actionBusy = false; }
+    runFeedback = "Sending Motion command…";
+    try {
+      const result = await executeMotion();
+      // An accepted Action is not evidence that the motor reached its target.
+      runFeedback = result.kind === "targetUpdated"
+        ? "Position target updated on device; motion remains under firmware control."
+        : "Motor Run accepted by device; awaiting motor-state feedback.";
+    } catch (error) {
+      runFeedback = `Run failed: ${String(error)}`;
+      onError(error);
+    } finally { actionBusy = false; }
   }
   async function stop() {
     if (!canStop()) return;
     stopBusy = true;
-    try { await stopMotionExecution(); } catch (error) { onError(error); } finally { stopBusy = false; }
+    runFeedback = "Requesting controlled Stop…";
+    try {
+      await stopMotionExecution();
+      runFeedback = "Stop accepted; waiting for firmware to leave RUN.";
+    } catch (error) {
+      runFeedback = `Stop failed: ${String(error)}`;
+      onError(error);
+    } finally { stopBusy = false; }
   }
   function previewLabel(): string {
     if (activeMode === "position") return $motionState.positionCommand === "incremental"
@@ -168,9 +195,12 @@
         </div></section>
       {/if}
       <div class="motion-runbar">
-        <button class="motion-run" disabled={!canRun() || actionBusy} title="Run motion" onclick={run}><i class="codicon codicon-debug-start"></i> Run</button>
+        <button class="motion-run" disabled={!canRun() || actionBusy} title={uncommittedMotion ? "Commit or discard Motion edits first" : "Run motion"} onclick={run}><i class="codicon codicon-debug-start"></i> Run</button>
         <button disabled={!canStop()} title="Stop motor motion" onclick={stop}><i class={`codicon ${stopBusy ? "codicon-loading codicon-modifier-spin" : "codicon-debug-stop"}`}></i> Stop</button>
       </div>
+      {#if uncommittedMotion}<div role="status" class="motion-command-feedback">Uncommitted Motion edits: Enter to write or Esc to discard before Run.</div>{/if}
+      {#if runFeedback}<div role="status" class="motion-command-feedback">{runFeedback}</div>{/if}
+      {#if motorState}<div class="motion-command-feedback">Device motor state: {motorState}</div>{/if}
     </div>
     <div class="motion-simple-right">
       <div class="motion-plot-header"><div><strong>{activeMode ? modeLabels[activeMode] : "—"}</strong>{#if hasTrajectory}<span>{activeMode === "sensorless-speed" ? "Sensorless ramp" : selectedProfile}</span>{/if}</div><div class="preview-target">{previewLabel()}</div></div>

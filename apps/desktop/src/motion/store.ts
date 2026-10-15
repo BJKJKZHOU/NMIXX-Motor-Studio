@@ -3,7 +3,7 @@ import { getMotion, getMotionPreview, runMotion, setMotion, stopMotion } from ".
 import { parameterState, selectParameters, waitParameterWrites } from "../parameters/state";
 import { equalParameterValue } from "../parameters/codec";
 import { MOTION_PARAMETER_SYMBOLS } from "./parameters";
-import type { MotionPreview, MotionState } from "./types";
+import type { MotionPreview, MotionRunResult, MotionState } from "./types";
 import type { ParameterValue } from "../parameters/types";
 
 const defaultMotion: MotionState = { positionCommand: "incremental", incrementalDeltaTurn: 1, repeat: false };
@@ -119,5 +119,5 @@ export async function waitMotionUpdates(): Promise<void> {
   if (lastWriteErrorEpoch === epoch) throw lastWriteError;
   await waitParameterWrites();
 }
-export async function executeMotion(): Promise<void> { await waitMotionUpdates(); await runMotion(); }
+export async function executeMotion(): Promise<MotionRunResult> { await waitMotionUpdates(); return runMotion(); }
 export async function stopMotionExecution(): Promise<void> { await stopMotion(); }
