@@ -104,6 +104,12 @@
   function enumValue(symbol: string, enumSymbol: string): number | null {
     return parameterEnumValue(metadata[symbol], enumSymbol) ?? null;
   }
+  function effectiveText(symbol: string): string {
+    const value = values[symbol];
+    return value?.type === "f32" && Number.isFinite(value.value)
+      ? Number(value.value).toPrecision(7)
+      : "—";
+  }
   function sourceText(symbol: string): string {
     const parameter = values[symbol];
     if (!parameter || parameter.type === "position") return "—";
@@ -404,8 +410,8 @@
 <input class:ramModified={!!metadata[gain] && $modifiedParameterIds.has(metadata[gain].id)} class:dirty={dirty(gain)} class="compact-input mono" value={drafts[gain] ?? ""} disabled={locked(gain)} oninput={(event) => edits.edit(gain, event.currentTarget.value)} onkeydown={(event) => keydown(event, gain)} onblur={() => edits.discard(gain)} /><span class="unit">{unit(gain)}</span></div>
             {/each}
             {#if spec.source === SPEED_SOURCE}
-              {#if metadata[SPEED_EFFECTIVE_KP]}<div class="field-label">Effective Kp</div><div class="editor"><span class="mono">{values[SPEED_EFFECTIVE_KP]?.type === "f32" ? values[SPEED_EFFECTIVE_KP]?.value : "—"}</span></div>{/if}
-              {#if metadata[SPEED_EFFECTIVE_KI]}<div class="field-label">Effective Ki</div><div class="editor"><span class="mono">{values[SPEED_EFFECTIVE_KI]?.type === "f32" ? values[SPEED_EFFECTIVE_KI]?.value : "—"}</span></div>{/if}
+              {#if metadata[SPEED_EFFECTIVE_KP]}<div class="field-label">Effective Kp</div><div class="editor"><span class="mono">{effectiveText(SPEED_EFFECTIVE_KP)}</span></div>{/if}
+              {#if metadata[SPEED_EFFECTIVE_KI]}<div class="field-label">Effective Ki</div><div class="editor"><span class="mono">{effectiveText(SPEED_EFFECTIVE_KI)}</span></div>{/if}
             {/if}
           </div></section>
         {/each}

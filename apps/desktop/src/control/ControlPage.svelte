@@ -39,6 +39,12 @@
   function enumValue(symbol: string, enumSymbol: string): number | null {
     return parameterEnumValue(metadata[symbol], enumSymbol) ?? null;
   }
+  function effectiveText(symbol: string): string {
+    const value = values[symbol];
+    return value?.type === "f32" && Number.isFinite(value.value)
+      ? Number(value.value).toPrecision(7)
+      : "—";
+  }
   function sourceText(symbol: string): string {
     const value = numeric(values[symbol]);
     if (value === null) return "—";
@@ -93,8 +99,8 @@
 <div class="gain-grid two">
 {#if metadata[SPEED_KP]}<div><span>Manual Kp</span><input class:ramModified={$modifiedParameterIds.has(metadata[SPEED_KP].id)} class:dirty={dirty(SPEED_KP)} class="compact-input mono gain-input" value={drafts[SPEED_KP] ?? ""} disabled={locked(SPEED_KP)} oninput={(event) => edits.edit(SPEED_KP, event.currentTarget.value)} onkeydown={(event) => keydown(event, SPEED_KP)} onblur={() => edits.discard(SPEED_KP)} /></div>{/if}
 {#if metadata[SPEED_KI]}<div><span>Manual Ki</span><input class:ramModified={$modifiedParameterIds.has(metadata[SPEED_KI].id)} class:dirty={dirty(SPEED_KI)} class="compact-input mono gain-input" value={drafts[SPEED_KI] ?? ""} disabled={locked(SPEED_KI)} oninput={(event) => edits.edit(SPEED_KI, event.currentTarget.value)} onkeydown={(event) => keydown(event, SPEED_KI)} onblur={() => edits.discard(SPEED_KI)} /></div>{/if}
-{#if metadata[SPEED_EFFECTIVE_KP]}<div><span>Effective Kp</span><strong class="mono">{values[SPEED_EFFECTIVE_KP]?.type === "f32" ? values[SPEED_EFFECTIVE_KP]?.value : "—"}</strong></div>{/if}
-{#if metadata[SPEED_EFFECTIVE_KI]}<div><span>Effective Ki</span><strong class="mono">{values[SPEED_EFFECTIVE_KI]?.type === "f32" ? values[SPEED_EFFECTIVE_KI]?.value : "—"}</strong></div>{/if}
+{#if metadata[SPEED_EFFECTIVE_KP]}<div><span>Effective Kp</span><strong class="mono">{effectiveText(SPEED_EFFECTIVE_KP)}</strong></div>{/if}
+{#if metadata[SPEED_EFFECTIVE_KI]}<div><span>Effective Ki</span><strong class="mono">{effectiveText(SPEED_EFFECTIVE_KI)}</strong></div>{/if}
 </div>
             </div><div class="arrow">→</div><div class="signal-chip">Iq Ref</div>
           </div>
