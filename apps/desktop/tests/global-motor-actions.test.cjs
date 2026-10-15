@@ -47,7 +47,7 @@ test("Stop acknowledgement never falsely claims controlled motion has finished",
   assert.match(h.read("motorActionNotice"),/Stop accepted; monitor firmware Motor State/);
   assert.equal(h.read("motorState"),"RUN");
   assert.doesNotMatch(h.read("motorActionNotice"),/motor stopped/i);
-  assert.match(source,/Motor \{motorState \?\? "unknown"\}/);
+  assert.match(source,/localize\("Motor", \$uiLanguage\)\} \{motorState \?\? "unknown"\}/);
 });
 test("device Stop rejection appears as an error and does not claim success",async()=>{
   const h=harness();
@@ -80,7 +80,7 @@ test("global power button shows firmware enable state, not the next Action", () 
   assert.match(source, /<i class="codicon codicon-power"><\/i> \{enableStatus\}/);
   assert.match(source, /\.motor-disabled \{ color: #f85149; \}/);
   assert.match(source, /\.motor-enabled \{ color: #3fb950; \}/);
-  assert.match(source, /title=\{enableStatus === "DISABLED" \? "Motor DISABLED — click to Enable"/);
+  assert.match(source, /title=\{localize\(enableStatus === "DISABLED" \? "Motor DISABLED — click to Enable"/);
 });
 
 test("global power button changes only after device Motor State readback", async () => {

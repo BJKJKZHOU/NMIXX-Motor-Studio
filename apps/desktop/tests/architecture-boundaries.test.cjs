@@ -238,9 +238,9 @@ test("Motion and Control Tuning select the same firmware Profile Parameter", () 
 test("new motor identification and encoder preflight errors are visible, not only hover titles", () => {
   const motor = source("motor/MotorPage.svelte");
   const encoder = source("encoder/EncoderPage.svelte");
-  assert.match(motor, /role="alert">\{state\.message\}/);
-  assert.match(encoder, /role="alert">\{phaseMessage\}/);
-  assert.match(encoder, /role="alert">\{homingMessage\}/);
+  assert.match(motor, /role="alert">\{localizeFeedback\(state\.message, \$uiLanguage\)\}/);
+  assert.match(encoder, /role="alert">\{localizeFeedback\(phaseMessage, \$uiLanguage\)\}/);
+  assert.match(encoder, /role="alert">\{localizeFeedback\(homingMessage, \$uiLanguage\)\}/);
   assert.match(motor, /PARAM_MOTOR_RL_I_PEAK/);
   assert.match(motor, /PARAM_MOTOR_ALIGN_CURRENT/);
 });
