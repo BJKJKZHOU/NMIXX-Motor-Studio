@@ -38,6 +38,12 @@ function motorHarness() {
     applyCandidate:null,failReasonSymbol:"PARAM_IDENT_FAIL_REASON",
     values:{PARAM_IDENT_RS_LS_VALID:{type:"u8",value:1}},
     onError:(error)=>errors.push(String(error)),
+    $uiLanguage:"zh-CN",
+    translateFormat:(key, language, values)=>{
+      assert.equal(key,"motor.identification.enable.confirm");
+      assert.equal(language,"zh-CN");
+      return values.kind+" 辨识需要使能电机。\\n\\n是否使能并继续？";
+    },
     window:{confirm:(text)=>{calls.push(["confirm",text]);return confirmResult;}},
     startIdentificationAction:async (key,allowEnable)=>{calls.push(["identification_start",key,allowEnable]);return typeof response==="function"?response(key,allowEnable):response;},
     applyIdentificationAction:async (key)=>{calls.push(["identification_apply",key]);return {txn:2,actionId:0x1104};},
@@ -78,6 +84,7 @@ test("Motor identification explicit Enable confirmation changes request flag onl
   h.setResponse((key,allowEnable)=>allowEnable?{status:"started",handle:{txn:3,actionId:0x1101}}:{status:"requires_enable"});
   h.setConfirm(false);
   await h.run();
+  assert.match(h.calls.find(c=>c[0]==="confirm")[1],/辨识需要使能电机/);
   assert.equal(h.calls.filter(c=>c[0]==="identification_start").length,1);
   h.setConfirm(true);
   await h.run();

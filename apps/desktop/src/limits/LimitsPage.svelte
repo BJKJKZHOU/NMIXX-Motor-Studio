@@ -1,4 +1,5 @@
 <script lang="ts">
+  import { uiLanguage, localize, translate } from "../i18n";
   import type { ConnectionInfo } from "../connection/types";
   import type { MotorState } from "../motor/state";
   import { canWriteInMotorState } from "../parameters/writeState";
@@ -34,7 +35,7 @@
 
   function displayText(symbol: string) { return parameterText(values[symbol]) || "—"; }
   function unitFor(symbol: string) { return metadata[symbol]?.unit ?? ""; }
-  function parameterLabel(symbol: string, fallback = "Unavailable") { return metadata[symbol]?.label ?? fallback; }
+  function parameterLabel(symbol: string, fallback = "Unavailable") { return localize(metadata[symbol]?.label ?? fallback, $uiLanguage); }
   function isWritable(symbol: string) { return !$parameters.loading && !$parameters.saving && canWriteInMotorState(metadata[symbol], motorState); }
   function numericValue(symbol: string): number | null {
     const value = values[symbol];
@@ -55,22 +56,22 @@
 
 <div class="limits-root">
   <section class="page-toolbar">
-    <div class="page-title">LIMITS / SAFETY</div>
+    <div class="page-title">{translate("ui.limits.safety", $uiLanguage).toUpperCase()}</div>
   </section>
 
   <section class="limits-content">
     {#if !connection}
-      <div class="empty-state"><i class="codicon codicon-plug"></i><div>Connect a device to configure limits.</div></div>
+      <div class="empty-state"><i class="codicon codicon-plug"></i><div>{translate("limits.connect.required", $uiLanguage)}</div></div>
     {:else}
       <div class="limits-sheet">
         <section class="limits-section">
-          <div class="section-title">Operating Limits</div>
-          <div class="operating-grid" role="table" aria-label="Operating limits">
+          <div class="section-title">{translate("ui.operating.limits", $uiLanguage)}</div>
+          <div class="operating-grid" role="table" aria-label={translate("limits.aria.operating", $uiLanguage)}>
             <div class="operating-header" role="row">
-              <div role="columnheader">Parameter</div>
-              <div role="columnheader">User Limit</div>
-              <div role="columnheader">Hardware Limit</div>
-              <div role="columnheader">Effective</div>
+              <div role="columnheader">{translate("ui.parameter", $uiLanguage)}</div>
+              <div role="columnheader">{translate("ui.user.limit", $uiLanguage)}</div>
+              <div role="columnheader">{translate("ui.hardware.limit", $uiLanguage)}</div>
+              <div role="columnheader">{translate("ui.effective", $uiLanguage)}</div>
             </div>
 
             {#each OPERATING_LIMITS as row}
@@ -103,7 +104,7 @@
                   {/if}
                 </div>
                 <div class:active-limit-cell={isConfigured(row.effectiveSymbol)} class="limit-cell hardware-value mono" role="cell"
-                  title="Actual limit currently used by firmware">
+                  title={translate("limits.tooltip.effective", $uiLanguage)}>
                   {#if metadata[row.effectiveSymbol]}
                     <span>{displayText(row.effectiveSymbol)}</span>
                     <span class="unit">{unitFor(row.effectiveSymbol)}</span>
@@ -117,12 +118,12 @@
         </section>
 
         <section class="limits-section bus-section">
-          <div class="section-title">Bus Voltage</div>
-          <div class="bus-grid" role="table" aria-label="Bus voltage limits">
+          <div class="section-title">{translate("ui.bus.voltage", $uiLanguage)}</div>
+          <div class="bus-grid" role="table" aria-label={translate("limits.aria.bus", $uiLanguage)}>
             <div class="bus-header" role="row">
-              <div role="columnheader">Minimum</div>
-              <div role="columnheader">Actual</div>
-              <div role="columnheader">Maximum</div>
+              <div role="columnheader">{translate("ui.minimum", $uiLanguage)}</div>
+              <div role="columnheader">{translate("ui.actual", $uiLanguage)}</div>
+              <div role="columnheader">{translate("ui.maximum", $uiLanguage)}</div>
             </div>
             <div class="bus-row" role="row">
               <div class="bus-cell" role="cell">
@@ -142,7 +143,7 @@
                 {:else}
                   <span class="muted">—</span>
                 {/if}
-                <span class="bus-caption">Undervoltage limit</span>
+                <span class="bus-caption">{translate("ui.undervoltage.limit", $uiLanguage)}</span>
               </div>
 
               <div
@@ -159,7 +160,7 @@
                 {:else}
                   <span class="muted">—</span>
                 {/if}
-                <span class="bus-caption">DC bus voltage</span>
+                <span class="bus-caption">{translate("ui.dc.bus.voltage", $uiLanguage)}</span>
               </div>
 
               <div class="bus-cell" role="cell">
@@ -179,7 +180,7 @@
                 {:else}
                   <span class="muted">—</span>
                 {/if}
-                <span class="bus-caption">Overvoltage limit</span>
+                <span class="bus-caption">{translate("ui.overvoltage.limit", $uiLanguage)}</span>
               </div>
             </div>
           </div>
@@ -187,21 +188,21 @@
 
         <section class="limits-section position-section unavailable-section">
           <div class="section-heading">
-            <div class="section-title">Position Limits</div>
-            <div class="section-note">Firmware unavailable</div>
+            <div class="section-title">{translate("ui.position.limits", $uiLanguage)}</div>
+            <div class="section-note">{translate("ui.firmware.unavailable", $uiLanguage)}</div>
           </div>
 
-          <div class="position-grid" role="table" aria-label="Position limits">
+          <div class="position-grid" role="table" aria-label={translate("limits.aria.position", $uiLanguage)}>
             <div class="position-row" role="row">
-              <div class="parameter-name" role="cell">Zero reference</div>
+              <div class="parameter-name" role="cell">{translate("ui.zero.reference", $uiLanguage)}</div>
               <div class="muted mono" role="cell">—</div>
             </div>
             <div class="position-row" role="row">
-              <div class="parameter-name" role="cell">Enable</div>
-              <div role="cell"><button class="disabled-control" disabled>Off</button></div>
+              <div class="parameter-name" role="cell">{translate("limits.position.enable", $uiLanguage)}</div>
+              <div role="cell"><button class="disabled-control" disabled>{translate("limits.position.off", $uiLanguage)}</button></div>
             </div>
             <div class="position-row" role="row">
-              <div class="parameter-name" role="cell">Minimum position</div>
+              <div class="parameter-name" role="cell">{translate("limits.position.minimum", $uiLanguage)}</div>
               <div class="position-editor" role="cell">
                 <input class="compact-input mono" value="" placeholder="Turn" disabled />
                 <input class="compact-input mono" value="" placeholder="Theta" disabled />
@@ -209,7 +210,7 @@
               </div>
             </div>
             <div class="position-row" role="row">
-              <div class="parameter-name" role="cell">Maximum position</div>
+              <div class="parameter-name" role="cell">{translate("limits.position.maximum", $uiLanguage)}</div>
               <div class="position-editor" role="cell">
                 <input class="compact-input mono" value="" placeholder="Turn" disabled />
                 <input class="compact-input mono" value="" placeholder="Theta" disabled />

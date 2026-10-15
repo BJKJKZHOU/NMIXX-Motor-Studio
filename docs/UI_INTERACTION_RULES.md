@@ -22,6 +22,7 @@ Current page
     domain-specific configuration and actions
 
 Bottom status bar
+    compact 中 / EN language toggle
     connection/device identity
     live Current / Speed / Position / Vbus
 ```
@@ -35,6 +36,28 @@ The intended top-toolbar composition is:
 ```
 
 The action group is aligned to the left edge of the main content area and must not extend over the left Activity Bar. The Problems indicator is aligned to the far right.
+
+## Interface language
+
+The desktop is **Chinese by default**. A compact `中 / EN` toggle appears in
+the **bottom-left status bar**, before connection status. Clicking it switches
+Chinese and English without reconnecting the device, changing a Parameter, or
+starting an Action. Persist a valid selection in `nmixx.ui.language` and
+restore it on the next launch; missing, invalid or inaccessible local storage
+must retain Chinese as the initial language.
+
+Translate normal workflow navigation, control labels, prompts, confirmation
+feedback and human-oriented HostSchema labels. Keep standard engineering
+symbols and units **unchanged in either language**, including `Rs`, `Ld`,
+`Lq`, `Flux`, `Id`, `Iq`, `Kp`, `Ki`, `RPM`, `rad/s`, `A`,
+`N·m`, `FAST` and `NORMAL`. Do not translate raw `PARAM_*`, `ACTION_*`,
+enumeration wire values, log contents, script source, or protocol error codes.
+Translated display copy is never written back to the firmware.
+
+The firmware's DISABLED/ENABLED/RUN state retains its uppercase protocol
+spelling where required (notably the global enable toggle). Status messages
+translate only their human-facing descriptions. Unknown diagnostics fall back
+to the source text rather than concealing essential failure details.
 
 ## Human-facing labels
 

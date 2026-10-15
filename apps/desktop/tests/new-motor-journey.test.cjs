@@ -157,6 +157,13 @@ test("new motor from USB connection through three identifications, phase search 
     startIdentificationAction:device.start,applyIdentificationAction:device.apply,
     onError:error=>errors.push(String(error)),
     window:{confirm:()=>true},
+    $uiLanguage:"zh-CN",
+    translateFormat:(key, language, values)=>{
+      assert.equal(language,"zh-CN");
+      if(key==="motor.identification.enable.confirm")return values.kind+" 辨识需要使能电机。";
+      if(key==="motor.identification.failure.reason")return "原因代码 "+values.code;
+      throw Error("unexpected translation key "+key);
+    },
   },config[0]);
 
   // Inherited RL injection setting is unsafe for the chosen current limit.

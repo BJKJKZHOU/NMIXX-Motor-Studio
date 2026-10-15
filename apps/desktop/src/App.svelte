@@ -1,5 +1,6 @@
 <script lang="ts">
   import { onDestroy, onMount } from "svelte";
+  import { uiLanguage, restoreUiLanguage, cycleUiLanguage, languageBadge, languageSwitchTitle, localize, localizeFeedback, translate, type MessageKey } from "./i18n";
   import ConnectionPage from "./connection/ConnectionPage.svelte";
   import AutomationHost from "./automation/AutomationHost.svelte";
   import { startAutomationTracking, clearAutomationProjection } from "./automation/state";
@@ -59,20 +60,20 @@
   let connectionGeneration = 0;
   let problemsOpen = false;
 
-  const workflowPages: Array<{ id: Page; title: string; icon: string }> = [
-    { id: "connection", title: "Connection", icon: "codicon-plug" },
-    { id: "motor", title: "Motor", icon: "codicon-circuit-board" },
-    { id: "encoder", title: "Encoder", icon: "codicon-record" },
-    { id: "limits", title: "Limits / Safety", icon: "codicon-shield" },
-    { id: "control", title: "Control Architecture", icon: "codicon-settings-gear" },
-    { id: "motion", title: "Motion", icon: "codicon-play-circle" },
-    { id: "tuning", title: "Control Tuning", icon: "codicon-pulse" },
-    { id: "analysis", title: "Analysis", icon: "codicon-graph-line" },
+  const workflowPages: Array<{ id: Page; titleKey: MessageKey; icon: string }> = [
+    { id: "connection", titleKey: "ui.connection", icon: "codicon-plug" },
+    { id: "motor", titleKey: "ui.motor", icon: "codicon-circuit-board" },
+    { id: "encoder", titleKey: "ui.encoder", icon: "codicon-record" },
+    { id: "limits", titleKey: "ui.limits.safety", icon: "codicon-shield" },
+    { id: "control", titleKey: "ui.control.architecture", icon: "codicon-settings-gear" },
+    { id: "motion", titleKey: "ui.motion", icon: "codicon-play-circle" },
+    { id: "tuning", titleKey: "ui.control.tuning", icon: "codicon-pulse" },
+    { id: "analysis", titleKey: "ui.analysis", icon: "codicon-graph-line" },
   ];
-  const toolPages: Array<{ id: Page; title: string; icon: string }> = [
-    { id: "parameters", title: "Parameters", icon: "codicon-list-flat" },
-    { id: "events", title: "Events", icon: "codicon-warning" },
-    { id: "automation", title: "Automation", icon: "codicon-terminal" },
+  const toolPages: Array<{ id: Page; titleKey: MessageKey; icon: string }> = [
+    { id: "parameters", titleKey: "ui.parameters", icon: "codicon-list-flat" },
+    { id: "events", titleKey: "ui.events", icon: "codicon-warning" },
+    { id: "automation", titleKey: "ui.automation", icon: "codicon-terminal" },
   ];
   function setError(error: unknown) { errorText = error instanceof Error ? error.message : String(error); }
   function persistConnectionSchemaPath(path: string) {
@@ -118,7 +119,7 @@
       if (token === connectionGeneration) connectionInitializing = false;
     }
   }
-  function pageTitle(page: Page): string { return [...workflowPages, ...toolPages].find((item) => item.id === page)?.title ?? page; }
+  function pageTitle(page: Page): MessageKey { return [...workflowPages, ...toolPages].find((item) => item.id === page)?.titleKey ?? "ui.connection"; }
   function runtimePosition(totalTurns: number | null): string {
     if (totalTurns === null || !Number.isFinite(totalTurns)) return "—";
     let turn = Math.floor(totalTurns);
@@ -172,6 +173,7 @@
     catch (error) { setError(error); } finally { globalActionBusy = false; }
   }
   onMount(() => {
+    restoreUiLanguage();
     try {
       const storedPath = localStorage.getItem(SCHEMA_PATH_STORAGE_KEY);
       if (storedPath?.trim()) connectionSchemaPath = storedPath;
@@ -191,10 +193,10 @@
 </script>
 
 <div class="workbench"><div class="body">
-  <nav class="activity-bar" aria-label="Commissioning workflow">
-    {#each workflowPages as page}<button class:active={activePage === page.id} class="activity" title={page.title} onclick={() => activePage = page.id}><i class={`codicon ${page.icon}`}></i></button>{/each}
+  <nav class="activity-bar" aria-label={translate("ui.control.architecture", $uiLanguage)}>
+    {#each workflowPages as page}<button class:active={activePage === page.id} class="activity" title={translate(page.titleKey, $uiLanguage)} onclick={() => activePage = page.id}><i class={`codicon ${page.icon}`}></i></button>{/each}
     <div class="workflow-separator"></div>
-    {#each toolPages as page}<button class:active={activePage === page.id} class="activity" title={page.title} onclick={() => activePage = page.id}><i class={`codicon ${page.icon}`}></i></button>{/each}
+    {#each toolPages as page}<button class:active={activePage === page.id} class="activity" title={translate(page.titleKey, $uiLanguage)} onclick={() => activePage = page.id}><i class={`codicon ${page.icon}`}></i></button>{/each}
     <div class="activity-spacer"></div>
   </nav>
   <div class="global-toolbar"><div class="global-toolbar-left">
@@ -202,25 +204,25 @@
     <div class="global-actions">
       <button class:motor-disabled={enableStatus === "DISABLED"} class:motor-enabled={enableStatus === "ENABLED"} class="tool-button global-action"
         disabled={!connectionReady || motorState === null || globalActionBusy} onclick={() => void toggleMotorEnable()}
-        title={enableStatus === "DISABLED" ? "Motor DISABLED — click to Enable" : enableStatus === "ENABLED" ? "Motor ENABLED — click to Disable" : "Motor enable state unknown"}>
+        title={localize(enableStatus === "DISABLED" ? "Motor DISABLED — click to Enable" : enableStatus === "ENABLED" ? "Motor ENABLED — click to Disable" : "Motor enable state unknown", $uiLanguage)}>
         <i class="codicon codicon-power"></i> {enableStatus}
       </button>
-      <button class="tool-button global-action stop-action" disabled={!connection || globalStopBusy} onclick={() => void stopCurrentMotorOperation()} title="Stop current motor operation">
-        <i class={`codicon ${globalStopBusy ? "codicon-loading codicon-modifier-spin" : "codicon-debug-stop"}`}></i> Stop
+      <button class="tool-button global-action stop-action" disabled={!connection || globalStopBusy} onclick={() => void stopCurrentMotorOperation()} title={translate("ui.stop.current.motor.operation", $uiLanguage)}>
+        <i class={`codicon ${globalStopBusy ? "codicon-loading codicon-modifier-spin" : "codicon-debug-stop"}`}></i> {translate("ui.stop", $uiLanguage)}
       </button>
       <span class="global-group-gap"></span>
-      <button class="tool-button global-action" disabled={!connectionReady || readingParameters} onclick={() => void refreshAllParameters()} title="Read current RAM parameters from device"><i class={`codicon ${readingParameters ? "codicon-loading codicon-modifier-spin" : "codicon-refresh"}`}></i> Read</button>
+      <button class="tool-button global-action" disabled={!connectionReady || readingParameters} onclick={() => void refreshAllParameters()} title={translate("ui.read.current.ram.parameters.from.device", $uiLanguage)}><i class={`codicon ${readingParameters ? "codicon-loading codicon-modifier-spin" : "codicon-refresh"}`}></i> {translate("ui.read", $uiLanguage)}</button>
       <button class="tool-button global-action" disabled={!connectionReady || !parameterSaveAvailable || motorState !== "DISABLED" || globalActionBusy} onclick={() => void savePersistentParameters()}
-        title={!parameterSaveAvailable ? "Parameter persistence is not exposed by this firmware" : motorState !== "DISABLED" ? "Disable the motor before saving persistent parameters" : "Save persistent RAM parameters to device storage"}>
-        <i class={`codicon ${saveFeedback === "saved" ? "codicon-check" : "codicon-save"}`}></i>{saveFeedback === "saved" ? "Saved" : "Save"}
+        title={localize(!parameterSaveAvailable ? "Parameter persistence is not exposed by this firmware" : motorState !== "DISABLED" ? "Disable the motor before saving persistent parameters" : "Save persistent RAM parameters to device storage", $uiLanguage)}>
+        <i class={`codicon ${saveFeedback === "saved" ? "codicon-check" : "codicon-save"}`}></i>{localize(saveFeedback === "saved" ? "Saved" : "Save", $uiLanguage)}
       </button>
     </div>
-    {#if motorActionNotice}<span class="global-command-feedback" role="status" title={motorActionNotice}>{motorActionNotice} · Motor {motorState ?? "unknown"}</span>{/if}
+    {#if motorActionNotice}<span class="global-command-feedback" role="status" title={localizeFeedback(motorActionNotice, $uiLanguage)}>{localizeFeedback(motorActionNotice, $uiLanguage)} · {translate("ui.motor", $uiLanguage)} {motorState ?? "unknown"}</span>{/if}
   </div><div class="problems-host">
     <button class:problem-error={topProblem?.severity === "FAULT" || topProblem?.severity === "ERROR"}
       class:problem-warning={topProblem?.severity === "WARNING"} class:problem-info={topProblem?.severity === "INFO"}
       class="problems-indicator" disabled={!connectionReady}
-      title={connectionReady ? "Active problems" : "Connect and initialize a device to inspect problems"}
+      title={localize(connectionReady ? "Active problems" : "Connect and initialize a device to inspect problems", $uiLanguage)}
       onclick={() => problemsOpen = !problemsOpen}>
       <i class={`codicon ${topProblem?.severity === "FAULT" || topProblem?.severity === "ERROR" ? "codicon-error" : topProblem?.severity === "WARNING" ? "codicon-warning" : "codicon-info"}`}></i><span>{activeProblems.length}</span>
     </button>
@@ -228,11 +230,11 @@
       <div class="problems-popover">
         {#if topProblem}
           <button class="problem-summary" onclick={() => { activePage = "events"; problemsOpen = false; }}>
-            <strong>{topProblem.summary}</strong>
-            <span>{topProblem.description}</span>
+            <strong>{localize(topProblem.summary, $uiLanguage)}</strong>
+            <span>{localizeFeedback(topProblem.description, $uiLanguage)}</span>
           </button>
         {:else}
-          <div class="problem-summary empty">No active problems.</div>
+          <div class="problem-summary empty">{translate("ui.no.active.problems", $uiLanguage)}</div>
         {/if}
       </div>
     {/if}
@@ -244,12 +246,12 @@
     {:else if activePage === "encoder"}<div class="domain-page-container"><EncoderPage connection={readyConnection} {motorState} onError={setError} /></div>
     {:else if activePage === "limits"}<div class="domain-page-container"><LimitsPage connection={readyConnection} {motorState} onError={setError} /></div>
     {:else if activePage === "control"}
-      <div class="control-domain-shell"><aside class="control-navigation" aria-label="Control Architecture pages">
-        <button class="control-navigation-parent" onclick={() => controlArchitectureExpanded = !controlArchitectureExpanded} aria-expanded={controlArchitectureExpanded}><i class="codicon codicon-settings-gear"></i><span>Control Architecture</span><i class={`codicon ${controlArchitectureExpanded ? "codicon-chevron-down" : "codicon-chevron-right"} control-navigation-chevron`}></i></button>
+      <div class="control-domain-shell"><aside class="control-navigation" aria-label={translate("ui.control.architecture", $uiLanguage)}>
+        <button class="control-navigation-parent" onclick={() => controlArchitectureExpanded = !controlArchitectureExpanded} aria-expanded={controlArchitectureExpanded}><i class="codicon codicon-settings-gear"></i><span>{translate("ui.control.architecture", $uiLanguage)}</span><i class={`codicon ${controlArchitectureExpanded ? "codicon-chevron-down" : "codicon-chevron-right"} control-navigation-chevron`}></i></button>
         {#if controlArchitectureExpanded}<div class="control-navigation-children">
-          <button class:active={activeControlLoop === "current"} onclick={() => activeControlLoop = "current"}>Current Loop</button>
-          <button class:active={activeControlLoop === "speed"} onclick={() => activeControlLoop = "speed"}>Speed Loop</button>
-          <button class:active={activeControlLoop === "position"} onclick={() => activeControlLoop = "position"}>Position Loop</button>
+          <button class:active={activeControlLoop === "current"} onclick={() => activeControlLoop = "current"}>{translate("ui.current.loop", $uiLanguage)}</button>
+          <button class:active={activeControlLoop === "speed"} onclick={() => activeControlLoop = "speed"}>{translate("ui.speed.loop", $uiLanguage)}</button>
+          <button class:active={activeControlLoop === "position"} onclick={() => activeControlLoop = "position"}>{translate("ui.position.loop", $uiLanguage)}</button>
         </div>{/if}
       </aside><div class="control-domain-page"><ControlPage connection={readyConnection} {motorState} loop={activeControlLoop} onError={setError} /></div></div>
     {:else if activePage === "tuning"}<div class="domain-page-container"><ControlTuningPage connection={readyConnection} {motorState} onError={setError} /></div>
@@ -258,18 +260,23 @@
     {:else if activePage === "events"}<div class="domain-page-container"><EventsPage connection={readyConnection} onNavigate={(page) => activePage = page} onError={setError} /></div>
     {:else if activePage === "automation"}<div class="domain-page-container"><AutomationHost connected={!!readyConnection} /></div>
     {:else if activePage !== "analysis"}
-      <section class="page-toolbar"><div class="page-title">{pageTitle(activePage).toUpperCase()}</div></section>
-      <section class="placeholder-page"><div class="placeholder-title">{pageTitle(activePage)}</div><div class="placeholder-copy">This workflow page is reserved for the corresponding application domain. Device behavior will be added through the shared Application API rather than implemented in the shell.</div></section>
+      <section class="page-toolbar"><div class="page-title">{translate(pageTitle(activePage), $uiLanguage).toUpperCase()}</div></section>
+      <section class="placeholder-page"><div class="placeholder-title">{translate(pageTitle(activePage), $uiLanguage)}</div><div class="placeholder-copy">{translate("ui.this.workflow.page.is.reserved.for.the.corresponding.application.domain", $uiLanguage)}</div></section>
     {/if}
     <div class:inactive={activePage !== "analysis"} class="scope-page-container"><ScopePage connection={readyConnection} active={activePage === "analysis"} onSummary={(summary) => scopeSummary = summary} onError={setError} /></div>
-    {#if errorText || $parameterState.error}<div class="error-text app-error">{errorText || $parameterState.error}</div>{/if}
+    {#if errorText || $parameterState.error}<div class="error-text app-error">{localizeFeedback((errorText || $parameterState.error) ?? "", $uiLanguage)}</div>{/if}
   </main>
 </div>
-<footer class="statusbar"><div class="connection-status"><span class:connected={!!connection} class="status-dot"></span>{connection ? connectionReady ? "AxDr_L" : connectionInitializing ? "Initializing…" : "Initialization incomplete" : "Disconnected"}</div><div class="status-spacer"></div>
-  <div class="live-status"><span>Current {currentIq === null ? "—" : `${currentIq.toFixed(3)} A`}</span><span>Speed {speedWm === null ? "—" : `${speedWm.toFixed(3)} rad/s`}</span><span>Position {positionText}</span><span>Vbus {vbus === null ? "—" : `${vbus.toFixed(2)} V`}</span></div>
+<footer class="statusbar"><button class="language-toggle" aria-label={languageSwitchTitle($uiLanguage)}
+  title={languageSwitchTitle($uiLanguage)}
+  onclick={() => cycleUiLanguage($uiLanguage)}>{languageBadge($uiLanguage)}</button><div class="connection-status"><span class:connected={!!connection} class="status-dot"></span>{connection ? connectionReady ? "AxDr_L" : localize(connectionInitializing ? "Initializing…" : "Initialization incomplete", $uiLanguage) : translate("ui.disconnected", $uiLanguage)}</div><div class="status-spacer"></div>
+  <div class="live-status"><span>{translate("ui.current", $uiLanguage)} {currentIq === null ? "—" : `${currentIq.toFixed(3)} A`}</span><span>{translate("ui.speed", $uiLanguage)} {speedWm === null ? "—" : `${speedWm.toFixed(3)} rad/s`}</span><span>{translate("ui.position", $uiLanguage)} {positionText}</span><span>Vbus {vbus === null ? "—" : `${vbus.toFixed(2)} V`}</span></div>
 </footer></div>
 
 <style>
+  .language-toggle { flex: 0 0 auto; min-width: 26px; height: 19px; padding: 0 5px; border: 1px solid var(--vscode-panel-border); border-radius: 3px; background: transparent; color: var(--vscode-foreground); font: inherit; font-size: 10px; cursor: pointer; }
+  .language-toggle:hover { background: var(--vscode-list-hoverBackground); }
+  .language-toggle:focus-visible { outline: 1px solid var(--vscode-focusBorder); outline-offset: 1px; }
   .global-toolbar { grid-column: 1 / -1; grid-row: 1; min-width: 0; display: flex; align-items: center; justify-content: space-between; gap: 12px; padding: 0 10px 0 14px; background: #181818; border-bottom: 1px solid var(--vscode-panel-border, #2b2b2b); }
   .global-toolbar-left { min-width: 0; display: flex; align-items: center; gap: 12px; }
   .global-toolbar-divider { width: 1px; height: 22px; flex: 0 0 auto; background: var(--vscode-panel-border, #303030); }

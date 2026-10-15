@@ -1,4 +1,5 @@
 <script lang="ts">
+  import { uiLanguage, translate } from "../i18n";
   import ScopeEchartsView from "../analysis/scope/ScopeEchartsView.svelte";
   import type { ScopeChannel } from "../analysis/scope/types";
   import type { TuningExperimentSnapshot } from "./tuningExperiment";
@@ -63,7 +64,7 @@
 {#if !result}
   <div class="waveform-empty">
     <i class="codicon codicon-graph-line"></i>
-    <div>Run an experiment to capture the tuning response.</div>
+    <div>{translate("tuning.experiment.empty", $uiLanguage)}</div>
   </div>
 {:else}
   <div class="waveform-view">

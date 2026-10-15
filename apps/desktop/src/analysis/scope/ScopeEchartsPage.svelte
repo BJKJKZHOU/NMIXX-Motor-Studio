@@ -1,4 +1,5 @@
 <script lang="ts">
+  import { uiLanguage, localize, localizeFeedback, translate, translateFormat } from "../../i18n";
   import { onDestroy, onMount } from "svelte";
   import ScopeEchartsView from "./ScopeEchartsView.svelte";
   import { scopeOperation, type ScopeOperation } from "../../automation/operations";
@@ -41,7 +42,7 @@
   let viewRange: [number, number] = [-defaultLatestSpanSeconds, 0];
   let viewRevision = 0;
   let activeConnection: ConnectionInfo | undefined;
-  let channelNotice = "";
+  let channelNotice: { limit: number; rate: "FAST" | "NORMAL" } | null = null;
 
   $: channels = connection?.channels.filter((channel) => channel.supportsFast || channel.supportsNormal) ?? [];
   $: visibleChannels = channels.filter((channel) => selectedIds.has(channel.id));
@@ -108,7 +109,7 @@
     viewRefreshTimer = undefined;
     configured = !!connection?.runtimeChannelIds?.length;
     configurationDirty = false;
-    channelNotice = "";
+    channelNotice = null;
     snapshot = undefined;
     followingLatest = true;
     viewRange = [-defaultLatestSpanSeconds, 0];
@@ -138,15 +139,15 @@
     return rate === "fast" ? connection.fastMaxChannels : connection.normalMaxChannels;
   }
 
-  function validateChannelSelection(ids: Set<number>, nextRates: Map<number, ScopeRate>): string {
+  function validateChannelSelection(ids: Set<number>, nextRates: Map<number, ScopeRate>): { limit: number; rate: "FAST" | "NORMAL" } | null {
     for (const rate of ["fast", "normal"] as const) {
       const count = selectedRateCount(ids, nextRates, rate);
       const limit = rateLimit(rate);
       if (count > limit) {
-        return `Scope supports at most ${limit} ${rate.toUpperCase()} channels.`;
+        return { limit, rate: rate === "fast" ? "FAST" : "NORMAL" };
       }
     }
-    return "";
+    return null;
   }
 
   function setSelected(id: number) {
@@ -174,7 +175,7 @@
       return;
     }
 
-    channelNotice = "";
+    channelNotice = null;
     onClearError();
     selectedIds = next;
     rates = nextRates;
@@ -195,7 +196,7 @@
       return;
     }
 
-    channelNotice = "";
+    channelNotice = null;
     onClearError();
     rates = nextRates;
     configurationDirty = true;
@@ -212,7 +213,7 @@
     if (connection !== requestedConnection) return false;
     configured = true;
     configurationDirty = false;
-    channelNotice = "";
+    channelNotice = null;
     onClearError();
     return true;
   }
@@ -408,7 +409,7 @@
 </script>
 
 <section class="page-toolbar">
-  <div class="page-title">ANALYSIS / SCOPE</div>
+  <div class="page-title">{translate("ui.analysis.scope", $uiLanguage)}</div>
   <div class="toolbar-actions">
     <!-- svelte-ignore a11y_click_events_have_key_events a11y_no_static_element_interactions -->
     <vscode-button
@@ -417,15 +418,15 @@
       onclick={() => void toggleRun()}
     >
       <i class={`codicon ${stopping ? "codicon-loading codicon-modifier-spin" : running ? "codicon-debug-stop" : "codicon-play"}`}></i>
-      {stopping ? "Stopping…" : running ? "Stop" : "Run"}
+      {localize(stopping ? "Stopping…" : running ? "Stop" : "Run", $uiLanguage)}
     </vscode-button>
   </div>
 </section>
 
 <div class="scope-spike-shell">
   <aside class="scope-spike-sidebar">
-    <div class="section-heading">CHANNELS</div>
-    {#if channelNotice}<div class="scope-channel-notice">{channelNotice}</div>{/if}
+    <div class="section-heading">{translate("scope.channels.heading", $uiLanguage)}</div>
+    {#if channelNotice}<div class="scope-channel-notice">{translateFormat("scope.channel.selection.exceeded", $uiLanguage, channelNotice)}</div>{/if}
     {#each channels as channel}
       <div class:active-channel={activeChannelId === channel.id} class="channel-block">
         <div class="scope-spike-channel">
@@ -456,7 +457,7 @@
         {#if selectedIds.has(channel.id) && activeChannelId === channel.id}
           <div class="channel-y-controls">
             <label>
-              <span>Scale/div</span>
+              <span>{translate("ui.scale.div", $uiLanguage)}</span>
               <input
                 type="number"
                 min="0.000001"
@@ -467,7 +468,7 @@
               <em>{channel.unit ?? ""}/div</em>
             </label>
             <label>
-              <span>Y Pos</span>
+              <span>{translate("ui.y.pos", $uiLanguage)}</span>
               <input
                 type="number"
                 step="any"
@@ -476,23 +477,23 @@
               />
               <em>{channel.unit ?? ""}</em>
             </label>
-            <button class="auto-button" onclick={() => autoVertical(channel.id)}>Auto</button>
+            <button class="auto-button" onclick={() => autoVertical(channel.id)}>{translate("ui.auto", $uiLanguage)}</button>
           </div>
         {/if}
       </div>
     {/each}
     <div class="scope-spike-note">
-      Click a channel name to make its Y axis active. Scale/div and Y Pos control each trace independently.
-      Horizontal zoom and pan are continuous ECharts dataZoom interactions; double-click returns the current span to Latest.
+      {translate("ui.click.a.channel.name.to.make.its.y.axis.active.scale.div.and.y.pos.control.e", $uiLanguage)}
+      {translate("ui.horizontal.zoom.and.pan.are.continuous.echarts.datazoom.interactions.double.", $uiLanguage)}
     </div>
   </aside>
 
   <section class="scope-spike-workspace">
     <div class="scope-spike-meta">
-      <span>{followingLatest ? `latest ${viewSpan(viewRange).toFixed(3)} s` : `history ${viewSpan(viewRange).toFixed(3)} s`}</span>
-      {#if !followingLatest}<button class="latest-button" onclick={returnToLatest}>Latest</button>{/if}
-      <span>{snapshot?.preview ? "baseline preview" : (snapshot?.recordedSeconds?.toFixed(3) ?? "0.000") + " s recorded"}</span>
-      <span>loss {snapshot?.lostFrames ?? 0}</span>
+      <span>{localize(followingLatest ? "latest" : "history", $uiLanguage)} {viewSpan(viewRange).toFixed(3)} s</span>
+      {#if !followingLatest}<button class="latest-button" onclick={returnToLatest}>{translate("ui.latest", $uiLanguage)}</button>{/if}
+      <span>{snapshot?.preview ? translate("ui.baseline.preview", $uiLanguage) : (snapshot?.recordedSeconds?.toFixed(3) ?? "0.000") + " s " + translate("ui.recorded", $uiLanguage)}</span>
+      <span>{translate("ui.loss", $uiLanguage)} {snapshot?.lostFrames ?? 0}</span>
     </div>
     <div class="scope-spike-plot">
       <ScopeEchartsView

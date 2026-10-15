@@ -1,4 +1,5 @@
 <script lang="ts">
+  import { uiLanguage, localize, localizeFeedback, translate } from "../i18n";
   import type { ConnectionInfo } from "../connection/types";
   import { clearProtection } from "../actions/api";
   import { clearProblemHistory, problemError, problemSnapshot, recheckProblems } from "../problems/state";
@@ -34,25 +35,25 @@
 
 <div class="events-root">
   <section class="page-toolbar">
-    <div class="page-title">EVENTS / PROBLEMS</div>
+    <div class="page-title">{translate("ui.events.problems", $uiLanguage)}</div>
     <div class="toolbar-actions">
-      <button class="tool-button" disabled={!connection || busy} onclick={() => void perform(recheckProblems)}><i class="codicon codicon-refresh"></i> Recheck</button>
+      <button class="tool-button" disabled={!connection || busy} onclick={() => void perform(recheckProblems)}><i class="codicon codicon-refresh"></i> {translate("ui.recheck", $uiLanguage)}</button>
       <button class="tool-button" disabled={!connection || busy || !connection?.commissioning.protectionClear || !hasClearableFault}
-        title={connection?.commissioning.protectionClear ? "Clear device protection faults; firmware requires DISABLED" : "Protection clear is not exposed by this firmware"}
-        onclick={() => void perform(clearFault)}>Clear Fault</button>
-      <button class="tool-button" disabled={!connection || busy || history.length === active.length} onclick={() => void perform(clearProblemHistory)}>Clear History</button>
+        title={localize(connection?.commissioning.protectionClear ? "Clear device protection faults; firmware requires DISABLED" : "Protection clear is not exposed by this firmware", $uiLanguage)}
+        onclick={() => void perform(clearFault)}>{translate("ui.clear.fault", $uiLanguage)}</button>
+      <button class="tool-button" disabled={!connection || busy || history.length === active.length} onclick={() => void perform(clearProblemHistory)}>{translate("ui.clear.history", $uiLanguage)}</button>
     </div>
   </section>
 
   <section class="events-content">
     {#if !connection}
-      <div class="empty-state"><i class="codicon codicon-plug"></i><div>Connect a device to inspect problems and event history.</div></div>
+      <div class="empty-state"><i class="codicon codicon-plug"></i><div>{translate("ui.connect.a.device.to.inspect.problems.and.event.history", $uiLanguage)}</div></div>
     {:else}
-      {#if $problemError}<div class="error-text" role="alert">{$problemError}</div>{/if}
+      {#if $problemError}<div class="error-text" role="alert">{localizeFeedback($problemError, $uiLanguage)}</div>{/if}
       <section class="events-section">
-        <div class="section-title">Active Problems <span>{active.length}</span></div>
+        <div class="section-title">{translate("events.problems.active.heading", $uiLanguage)} <span>{active.length}</span></div>
         {#if active.length === 0}
-          <div class="events-empty">No active problems.</div>
+          <div class="events-empty">{translate("ui.no.active.problems", $uiLanguage)}</div>
         {:else}
           <div class="problem-list">
             {#each active as problem (problem.id)}
@@ -60,9 +61,9 @@
                 class:severity-warning={problem.severity === "WARNING"}
                 class:severity-error={problem.severity === "ERROR"}
                 class:severity-fault={problem.severity === "FAULT"}>
-                <div class="problem-level"><strong>{severityLabel(problem.severity)}</strong><span>{problem.domain === "ENCODER" ? "Encoder" : "Protection"}</span></div>
-                <div class="problem-detail"><strong>{problem.summary}</strong><p>{problem.description}</p><div class="problem-meta">{problem.domain === "PROTECTION" ? "Mask" : "Code"} {mask(problem)} · Last {time(problem.lastSeenMs)} · Count {problem.occurrenceCount}</div></div>
-                <div class="problem-action"><button class="tool-button" onclick={() => onNavigate(target(problem))}>{problem.domain === "ENCODER" ? "Open Encoder" : "Inspect Limits"}</button></div>
+                <div class="problem-level"><strong>{localize(severityLabel(problem.severity), $uiLanguage)}</strong><span>{localize(problem.domain === "ENCODER" ? "Encoder" : "Protection", $uiLanguage)}</span></div>
+                <div class="problem-detail"><strong>{localize(problem.summary, $uiLanguage)}</strong><p>{localizeFeedback(problem.description, $uiLanguage)}</p><div class="problem-meta">{localize(problem.domain === "PROTECTION" ? "Mask" : "Code", $uiLanguage)} {mask(problem)} · {translate("events.problem.last.seen", $uiLanguage)} {time(problem.lastSeenMs)} · {translate("events.problem.occurrence.count", $uiLanguage)} {problem.occurrenceCount}</div></div>
+                <div class="problem-action"><button class="tool-button" onclick={() => onNavigate(target(problem))}>{localize(problem.domain === "ENCODER" ? "Open Encoder" : "Inspect Limits", $uiLanguage)}</button></div>
               </article>
             {/each}
           </div>
@@ -70,18 +71,18 @@
       </section>
 
       <section class="events-section">
-        <div class="section-title">History <span>{history.length}</span></div>
+        <div class="section-title">{translate("ui.history", $uiLanguage)} <span>{history.length}</span></div>
         {#if history.length === 0}
-          <div class="events-empty">No retained problem history.</div>
+          <div class="events-empty">{translate("ui.no.retained.problem.history", $uiLanguage)}</div>
         {:else}
           <div class="history-list">
             {#each history as problem (problem.id)}
               <div class="history-row">
-                <span class:active={problem.active} class:resolved={!problem.active} class="history-state">{problem.active ? "Active" : "Resolved"}</span>
-                <strong>{severityLabel(problem.severity)} · {problem.summary}</strong>
+                <span class:active={problem.active} class:resolved={!problem.active} class="history-state">{translate(problem.active ? "events.problem.active" : "events.problem.resolved", $uiLanguage)}</span>
+                <strong>{localize(severityLabel(problem.severity), $uiLanguage)} · {localize(problem.summary, $uiLanguage)}</strong>
                 <span class="mono">{mask(problem)}</span>
-                <span>First {time(problem.firstSeenMs)}</span>
-                <span>Last {time(problem.lastSeenMs)}</span>
+                <span>{translate("events.problem.first.seen", $uiLanguage)} {time(problem.firstSeenMs)}</span>
+                <span>{translate("events.problem.last.seen", $uiLanguage)} {time(problem.lastSeenMs)}</span>
                 <span>×{problem.occurrenceCount}</span>
               </div>
             {/each}
