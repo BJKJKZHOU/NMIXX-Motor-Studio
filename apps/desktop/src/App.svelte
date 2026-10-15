@@ -240,9 +240,9 @@
   <main class="main-area">
     {#if activePage === "connection"}
       <ConnectionPage {connection} ready={connectionReady} initializing={connectionInitializing} onRetry={() => void setConnection(connection)} bind:port={connectionPort} bind:schemaPath={connectionSchemaPath} onSchemaPathChanged={persistConnectionSchemaPath} onConnected={(next) => void setConnection(next)} onDisconnected={() => void setConnection(undefined)} onError={setError} />
-    {:else if activePage === "motor"}<div class="domain-page-container"><MotorPage connection={readyConnection} onError={setError} /></div>
-    {:else if activePage === "encoder"}<div class="domain-page-container"><EncoderPage connection={readyConnection} onError={setError} /></div>
-    {:else if activePage === "limits"}<div class="domain-page-container"><LimitsPage connection={readyConnection} onError={setError} /></div>
+    {:else if activePage === "motor"}<div class="domain-page-container"><MotorPage connection={readyConnection} {motorState} onError={setError} /></div>
+    {:else if activePage === "encoder"}<div class="domain-page-container"><EncoderPage connection={readyConnection} {motorState} onError={setError} /></div>
+    {:else if activePage === "limits"}<div class="domain-page-container"><LimitsPage connection={readyConnection} {motorState} onError={setError} /></div>
     {:else if activePage === "control"}
       <div class="control-domain-shell"><aside class="control-navigation" aria-label="Control Architecture pages">
         <button class="control-navigation-parent" onclick={() => controlArchitectureExpanded = !controlArchitectureExpanded} aria-expanded={controlArchitectureExpanded}><i class="codicon codicon-settings-gear"></i><span>Control Architecture</span><i class={`codicon ${controlArchitectureExpanded ? "codicon-chevron-down" : "codicon-chevron-right"} control-navigation-chevron`}></i></button>

@@ -1,6 +1,8 @@
 <script lang="ts">
   import { onMount } from "svelte";
   import type { ConnectionInfo } from "../connection/types";
+  import type { MotorState } from "../motor/state";
+  import { canWriteInMotorState } from "../parameters/writeState";
   import { selectParameters } from "../parameters/state";
   import { createParameterEditor } from "../parameters/editor";
   import { modifiedParameterIds } from "../parameters/persistence";
@@ -9,7 +11,7 @@
   import type { ActionCompletion, ActionHandle } from "../actions/types";
   import { setPositionZero, startHoming as startHomingAction, startPhaseSearch as startPhaseSearchAction } from "./api";
 
-  type Props = { connection: ConnectionInfo | undefined; onError?: (error: unknown) => void };
+  type Props = { connection: ConnectionInfo | undefined; motorState: MotorState | null; onError?: (error: unknown) => void };
   type PhaseState = "idle" | "running" | "success" | "stopped" | "failed";
   type HomingState = PhaseState;
   type EnumOption = { value: number; symbol: string; label: string };
@@ -23,7 +25,7 @@
   const ALL_PARAMETER_SYMBOLS = [PHASE_CURRENT_SYMBOL, MOTOR_DIR_SYMBOL,
     ENCODER_PROTOCOL_SYMBOL, ENCODER_SPI_TYPE_SYMBOL, ABZ_PPR_SYMBOL, ZERO_VALID_SYMBOL];
 
-  let { connection, onError = () => undefined }: Props = $props();
+  let { connection, motorState, onError = () => undefined }: Props = $props();
   const parameters = selectParameters(ALL_PARAMETER_SYMBOLS);
   const edits = createParameterEditor(parameters);
   let metadata = $derived($parameters.metadata);
@@ -72,7 +74,7 @@
   }
   function unitFor(symbol: string): string { return metadata[symbol]?.unit ?? ""; }
   function parameterLabel(symbol: string, fallback?: string): string { return metadata[symbol]?.label ?? fallback ?? "Unavailable"; }
-  function isWritable(symbol: string): boolean { return !$parameters.loading && !$parameters.saving && (metadata[symbol]?.access.includes("w") ?? false); }
+  function isWritable(symbol: string): boolean { return !$parameters.loading && !$parameters.saving && canWriteInMotorState(metadata[symbol], motorState); }
   function phaseSearchAvailable(): boolean { return connection?.commissioning?.phaseSearch ?? false; }
   function setZeroAvailable(): boolean { return connection?.commissioning?.positionSetZero ?? false; }
   function homingAvailable(): boolean { return connection?.commissioning?.homing ?? false; }

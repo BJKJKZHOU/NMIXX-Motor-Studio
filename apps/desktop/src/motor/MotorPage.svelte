@@ -1,6 +1,8 @@
 <script lang="ts">
   import { onMount, untrack } from "svelte";
   import type { ConnectionInfo } from "../connection/types";
+  import type { MotorState } from "../motor/state";
+  import { canWriteInMotorState } from "../parameters/writeState";
   import { selectParameters } from "../parameters/state";
   import { createParameterEditor } from "../parameters/editor";
   import { parameterText } from "../parameters/codec";
@@ -9,7 +11,7 @@
   import { applyIdentification as applyIdentificationAction, identificationApplyCandidate, onActionCompleted, startIdentification as startIdentificationAction } from "../actions/api";
   import type { ActionCompletion, ActionHandle } from "../actions/types";
 
-  type Props = { connection: ConnectionInfo | undefined; onError?: (error: unknown) => void };
+  type Props = { connection: ConnectionInfo | undefined; motorState: MotorState | null; onError?: (error: unknown) => void };
   type IdentKey = "rsLs" | "flux" | "jb";
   type IdentPhase = "idle" | "running" | "ready" | "applying" | "applied" | "failed";
   type IdentState = { phase: IdentPhase; message: string };
@@ -40,14 +42,17 @@
     { activeSymbol: "PARAM_MOTOR_J", identifiedSymbol: "PARAM_IDENT_J_RESULT", identifiedValidSymbol: "PARAM_IDENT_JB_VALID", identKey: "jb" },
     { activeSymbol: "PARAM_MOTOR_B", identifiedSymbol: "PARAM_IDENT_B_RESULT", identifiedValidSymbol: "PARAM_IDENT_JB_VALID" },
   ];
-  const IDENTIFICATION_SETTING_SYMBOLS = ["PARAM_MOTOR_IF_CURRENT", "PARAM_IDENT_JB_EXCITE_RATIO", "PARAM_IDENT_JB_EXCITE_HZ"] as const;
+  const IDENTIFICATION_SETTING_SYMBOLS = [
+    "PARAM_MOTOR_RL_I_PEAK", "PARAM_MOTOR_ALIGN_CURRENT", "PARAM_MOTOR_IF_CURRENT",
+    "PARAM_IDENT_JB_EXCITE_RATIO", "PARAM_IDENT_JB_EXCITE_HZ",
+  ] as const;
   const failReasonSymbol = "PARAM_IDENT_FAIL_REASON";
   const parameters = selectParameters([
     ...ROWS.flatMap((row) => [row.activeSymbol, row.identifiedSymbol, row.identifiedValidSymbol].filter((symbol): symbol is string => !!symbol)),
     ...IDENTIFICATION_SETTING_SYMBOLS, failReasonSymbol,
   ]);
   const edits = createParameterEditor(parameters);
-  let { connection, onError = () => undefined }: Props = $props();
+  let { connection, motorState, onError = () => undefined }: Props = $props();
   let metadata = $derived($parameters.metadata);
   let values = $derived($parameters.values);
   let drafts = $derived($edits.drafts);
@@ -104,7 +109,7 @@
     const value = metadata[symbol]?.default;
     return value === null || value === undefined ? "—" : String(value);
   }
-  function isWritable(symbol: string) { return !$parameters.loading && !$parameters.saving && !!metadata[symbol]?.access.includes("w"); }
+  function isWritable(symbol: string) { return !$parameters.loading && !$parameters.saving && canWriteInMotorState(metadata[symbol], motorState); }
   function identificationAvailable(key: IdentKey): boolean {
     const capabilities = connection?.commissioning;
     if (!capabilities) return false;
@@ -251,6 +256,7 @@
       <div class="empty-state"><i class="codicon codicon-plug"></i><div>Connect a device to configure motor parameters.</div></div>
     {:else}
       <div class="motor-sheet">
+        {#if motorState !== "DISABLED"}<div class="state-note">Disable the motor before editing its model, identification currents or commissioning limits.</div>{/if}
         <section class="motor-section">
           <div class="section-title">Motor Parameters</div>
 

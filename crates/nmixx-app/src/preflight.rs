@@ -11,6 +11,8 @@ const MOTOR_FLUX: &str = "PARAM_MOTOR_FLUX";
 const LIMIT_I_MAX: &str = "PARAM_LIMIT_I_MAX";
 const LIMIT_WM_MAX: &str = "PARAM_LIMIT_WM_MAX";
 const IDENT_IF_CURRENT: &str = "PARAM_MOTOR_IF_CURRENT";
+const ALIGN_CURRENT: &str = "PARAM_MOTOR_ALIGN_CURRENT";
+const RL_I_PEAK: &str = "PARAM_MOTOR_RL_I_PEAK";
 const IDENT_JB_EXCITE_RATIO: &str = "PARAM_IDENT_JB_EXCITE_RATIO";
 const IDENT_JB_EXCITE_HZ: &str = "PARAM_IDENT_JB_EXCITE_HZ";
 const ENCODER_READY: &str = "PARAM_ENCODER_READY";
@@ -85,7 +87,24 @@ impl PreflightService {
         )?;
 
         match kind {
-            IdentificationKind::RsLs => {}
+            IdentificationKind::RsLs => {
+                let peak = self.require_positive(
+                    RL_I_PEAK,
+                    PreflightDomain::Identification,
+                    "Rs/Ls injection peak current must be configured.",
+                    &mut issues,
+                )?;
+                if let (Some(peak), Some(limit)) = (peak, current_limit) {
+                    if peak >= limit {
+                        self.push_issue(
+                            RL_I_PEAK,
+                            PreflightDomain::Identification,
+                            "Rs/Ls injection peak must be below the configured current limit.",
+                            &mut issues,
+                        )?;
+                    }
+                }
+            }
             IdentificationKind::Flux => {
                 self.require_positive(
                     LIMIT_WM_MAX,
@@ -117,6 +136,22 @@ impl PreflightService {
                     "Active Lq must be valid before Flux identification.",
                     &mut issues,
                 )?;
+                let align = self.require_positive(
+                    ALIGN_CURRENT,
+                    PreflightDomain::Identification,
+                    "Align current must be configured before Flux identification.",
+                    &mut issues,
+                )?;
+                if let (Some(align), Some(limit)) = (align, current_limit) {
+                    if align > limit {
+                        self.push_issue(
+                            ALIGN_CURRENT,
+                            PreflightDomain::Identification,
+                            "Align current must not exceed the configured current limit.",
+                            &mut issues,
+                        )?;
+                    }
+                }
                 let if_current = self.require_positive(
                     IDENT_IF_CURRENT,
                     PreflightDomain::Identification,
@@ -171,6 +206,36 @@ impl PreflightService {
                     "Active Flux must be valid before J/B identification.",
                     &mut issues,
                 )?;
+                let align = self.require_positive(
+                    ALIGN_CURRENT,
+                    PreflightDomain::Identification,
+                    "Align current must be configured before J/B identification.",
+                    &mut issues,
+                )?;
+                let if_current = self.require_positive(
+                    IDENT_IF_CURRENT,
+                    PreflightDomain::Identification,
+                    "I/F startup current must be configured before J/B identification.",
+                    &mut issues,
+                )?;
+                if let Some(limit) = current_limit {
+                    if align.is_some_and(|value| value > limit) {
+                        self.push_issue(
+                            ALIGN_CURRENT,
+                            PreflightDomain::Identification,
+                            "Align current must not exceed the configured current limit.",
+                            &mut issues,
+                        )?;
+                    }
+                    if if_current.is_some_and(|value| value > limit) {
+                        self.push_issue(
+                            IDENT_IF_CURRENT,
+                            PreflightDomain::Identification,
+                            "I/F startup current must not exceed the configured current limit.",
+                            &mut issues,
+                        )?;
+                    }
+                }
                 self.require_positive(
                     IDENT_JB_EXCITE_RATIO,
                     PreflightDomain::Identification,
