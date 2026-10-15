@@ -1,5 +1,5 @@
 <script lang="ts">
-  import { uiLanguage, localize, localizeFeedback, translate } from "../../i18n";
+  import { uiLanguage, localize, localizeFeedback, translate, translateFormat } from "../../i18n";
   import { onDestroy, onMount } from "svelte";
   import ScopeEchartsView from "./ScopeEchartsView.svelte";
   import { scopeOperation, type ScopeOperation } from "../../automation/operations";
@@ -42,7 +42,7 @@
   let viewRange: [number, number] = [-defaultLatestSpanSeconds, 0];
   let viewRevision = 0;
   let activeConnection: ConnectionInfo | undefined;
-  let channelNotice = "";
+  let channelNotice: { limit: number; rate: "FAST" | "NORMAL" } | null = null;
 
   $: channels = connection?.channels.filter((channel) => channel.supportsFast || channel.supportsNormal) ?? [];
   $: visibleChannels = channels.filter((channel) => selectedIds.has(channel.id));
@@ -109,7 +109,7 @@
     viewRefreshTimer = undefined;
     configured = !!connection?.runtimeChannelIds?.length;
     configurationDirty = false;
-    channelNotice = "";
+    channelNotice = null;
     snapshot = undefined;
     followingLatest = true;
     viewRange = [-defaultLatestSpanSeconds, 0];
@@ -139,15 +139,15 @@
     return rate === "fast" ? connection.fastMaxChannels : connection.normalMaxChannels;
   }
 
-  function validateChannelSelection(ids: Set<number>, nextRates: Map<number, ScopeRate>): string {
+  function validateChannelSelection(ids: Set<number>, nextRates: Map<number, ScopeRate>): { limit: number; rate: "FAST" | "NORMAL" } | null {
     for (const rate of ["fast", "normal"] as const) {
       const count = selectedRateCount(ids, nextRates, rate);
       const limit = rateLimit(rate);
       if (count > limit) {
-        return `Scope supports at most ${limit} ${rate.toUpperCase()} channels.`;
+        return { limit, rate: rate === "fast" ? "FAST" : "NORMAL" };
       }
     }
-    return "";
+    return null;
   }
 
   function setSelected(id: number) {
@@ -175,7 +175,7 @@
       return;
     }
 
-    channelNotice = "";
+    channelNotice = null;
     onClearError();
     selectedIds = next;
     rates = nextRates;
@@ -196,7 +196,7 @@
       return;
     }
 
-    channelNotice = "";
+    channelNotice = null;
     onClearError();
     rates = nextRates;
     configurationDirty = true;
@@ -213,7 +213,7 @@
     if (connection !== requestedConnection) return false;
     configured = true;
     configurationDirty = false;
-    channelNotice = "";
+    channelNotice = null;
     onClearError();
     return true;
   }
@@ -426,7 +426,7 @@
 <div class="scope-spike-shell">
   <aside class="scope-spike-sidebar">
     <div class="section-heading">{translate("ui.channels.2", $uiLanguage)}</div>
-    {#if channelNotice}<div class="scope-channel-notice">{localizeFeedback(channelNotice, $uiLanguage)}</div>{/if}
+    {#if channelNotice}<div class="scope-channel-notice">{translateFormat("scope.channel.selection.exceeded", $uiLanguage, channelNotice)}</div>{/if}
     {#each channels as channel}
       <div class:active-channel={activeChannelId === channel.id} class="channel-block">
         <div class="scope-spike-channel">
