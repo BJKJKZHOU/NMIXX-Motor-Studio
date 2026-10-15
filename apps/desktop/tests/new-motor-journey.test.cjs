@@ -254,9 +254,27 @@ test("new motor from USB connection through three identifications, phase search 
 
   // Position mode must be selected while DISABLED; global enable then has
   // a calibrated encoder available and the Tuning page may start a motor run.
+  // The newly identified model + phase calibration may only be persisted
+  // through the global Save while the drive is DISABLED.
+  const save=handlers("App.svelte",["savePersistentParameters"],{
+    connectionReady:true,parameterSaveAvailable:true,motorState:device.motorState,
+    globalActionBusy:false,saveFeedback:"idle",
+    saveParameters:async()=>{},
+    saveParameterBaseline:async()=>{
+      device.commands.push(["ACTION","ACTION_CONFIG_SAVE"]);
+    },
+    showSavedFeedback:()=>{},
+    onError:error=>errors.push(String(error)),
+  });
+  const beforeSave=device.commands.length;
+  await save.get("savePersistentParameters()");
+  assert.equal(device.commands.length,beforeSave);
   global.ctx.motorState=device.motorState;
   await global.get("toggleMotorEnable()");
   assert.equal(device.motorState,"DISABLED");
+  save.ctx.motorState="DISABLED";
+  await save.get("savePersistentParameters()");
+  assert.deepEqual(device.commands.at(-1),["ACTION","ACTION_CONFIG_SAVE"]);
   const motion=handlers("motion/MotionPage.svelte",["setMode"],{
     motorState:"DISABLED",MOTION_MODE:"PARAM_MOTOR_MODE",
     metadata:{PARAM_MOTOR_MODE:commonMeta},
