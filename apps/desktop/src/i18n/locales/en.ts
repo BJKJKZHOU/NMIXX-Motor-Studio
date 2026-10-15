@@ -86,6 +86,8 @@ export const enMessages = {
   "ui.parameter": "Parameter",
   "ui.default": "Default",
   "ui.active": "Active",
+  "events.problem.active": "Active",
+  "events.problem.resolved": "Resolved",
   "ui.identified": "Identified",
   "ui.action": "Action",
   "ui.value": "Value",

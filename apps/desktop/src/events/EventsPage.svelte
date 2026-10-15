@@ -49,7 +49,7 @@
     {#if !connection}
       <div class="empty-state"><i class="codicon codicon-plug"></i><div>{translate("ui.connect.a.device.to.inspect.problems.and.event.history", $uiLanguage)}</div></div>
     {:else}
-      {#if $problemError}<div class="error-text" role="alert">{$problemError}</div>{/if}
+      {#if $problemError}<div class="error-text" role="alert">{localizeFeedback($problemError, $uiLanguage)}</div>{/if}
       <section class="events-section">
         <div class="section-title">{translate("ui.active.problems.2", $uiLanguage)} <span>{active.length}</span></div>
         {#if active.length === 0}
@@ -78,8 +78,8 @@
           <div class="history-list">
             {#each history as problem (problem.id)}
               <div class="history-row">
-                <span class:active={problem.active} class:resolved={!problem.active} class="history-state">{localize(problem.active ? "Active" : "Resolved", $uiLanguage)}</span>
-                <strong>{severityLabel(problem.severity)} · {localize(problem.summary, $uiLanguage)}</strong>
+                <span class:active={problem.active} class:resolved={!problem.active} class="history-state">{translate(problem.active ? "events.problem.active" : "events.problem.resolved", $uiLanguage)}</span>
+                <strong>{localize(severityLabel(problem.severity), $uiLanguage)} · {localize(problem.summary, $uiLanguage)}</strong>
                 <span class="mono">{mask(problem)}</span>
                 <span>First {time(problem.firstSeenMs)}</span>
                 <span>Last {time(problem.lastSeenMs)}</span>

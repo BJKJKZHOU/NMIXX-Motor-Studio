@@ -87,6 +87,8 @@ export const zhCNMessages = {
   "ui.parameter": "参数",
   "ui.default": "默认值",
   "ui.active": "当前值",
+  "events.problem.active": "活动中",
+  "events.problem.resolved": "已解决",
   "ui.identified": "辨识结果",
   "ui.action": "操作",
   "ui.value": "数值",
