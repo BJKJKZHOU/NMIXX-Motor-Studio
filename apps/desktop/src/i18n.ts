@@ -2,10 +2,32 @@ import { writable } from "svelte/store";
 import { enMessages } from "./i18n/locales/en";
 import { zhCNMessages } from "./i18n/locales/zh-CN";
 
-export type UiLanguage = "zh-CN" | "en";
+/** Add another locale by registering one language file here.
+ * The statusbar toggle and type-safe messages update from this registry.
+ */
+export const languageOptions = [
+  { code: "zh-CN", label: "中", name: "简体中文", messages: zhCNMessages },
+  { code: "en", label: "EN", name: "English", messages: enMessages },
+] as const;
+export type UiLanguage = (typeof languageOptions)[number]["code"];
 export type MessageKey = keyof typeof enMessages;
 const STORAGE_KEY = "nmixx.ui.language";
-const locales: Record<UiLanguage, Record<MessageKey, string>> = { "zh-CN": zhCNMessages, en: enMessages };
+const locales: Record<UiLanguage, Record<MessageKey, string>> =
+  Object.fromEntries(languageOptions.map(({ code, messages }) => [code, messages])) as Record<UiLanguage, Record<MessageKey, string>>;
+
+export function nextUiLanguage(language: UiLanguage): UiLanguage {
+  const index = languageOptions.findIndex(option => option.code === language);
+  return languageOptions[(index + 1) % languageOptions.length].code;
+}
+export function languageBadge(language: UiLanguage): string {
+  return languageOptions.find(option => option.code === language)?.label ?? "中";
+}
+export function languageSwitchTitle(language: UiLanguage): string {
+  return languageOptions.find(option => option.code === nextUiLanguage(language))?.name ?? "简体中文";
+}
+export function cycleUiLanguage(current: UiLanguage): void {
+  setUiLanguage(nextUiLanguage(current));
+}
 const byEnglish = new Map<string, MessageKey>(
   (Object.entries(enMessages) as Array<[MessageKey, string]>).map(([key, value]) => [value, key]),
 );
@@ -14,7 +36,8 @@ export const uiLanguage = writable<UiLanguage>("zh-CN");
 export function restoreUiLanguage(): void {
   try {
     const selected = localStorage.getItem(STORAGE_KEY);
-    if (selected === "zh-CN" || selected === "en") uiLanguage.set(selected);
+    const option = languageOptions.find(item => item.code === selected);
+    if (option) uiLanguage.set(option.code);
   } catch { /* Retain the Chinese default. */ }
 }
 export function setUiLanguage(language: UiLanguage): void {

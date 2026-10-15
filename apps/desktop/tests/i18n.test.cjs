@@ -93,9 +93,9 @@ test("multi-line commissioning preflight reasons localize individually",()=>{
 test("bottom-left language toggle is separate from Connection and cannot send motor commands",()=>{
   const app=source("App.svelte");
   assert.match(app,/<footer class="statusbar"><button class="language-toggle"/);
-  assert.match(app,/onclick=\{\(\) => setUiLanguage\(\$uiLanguage === "zh-CN" \? "en" : "zh-CN"\)\}/);
+  assert.match(app,/onclick=\{\(\) => cycleUiLanguage\(\$uiLanguage\)\}/);
   assert.match(app,/restoreUiLanguage\(\)/);
-  assert.match(app,/\{\$uiLanguage === "zh-CN" \? "中" : "EN"\}/);
+  assert.match(app,/\{languageBadge\(\$uiLanguage\)\}/);
   const fragment=app.match(/<button class="language-toggle"[\s\S]*?<\/button>/)?.[0];
   assert.ok(fragment);
   assert.doesNotMatch(fragment,/motor_enable|motor_disable|motor_stop|parameter_write|invoke\(/);
@@ -124,4 +124,13 @@ test("locale resources share the same stable keys and preserve engineering symbo
   assert.equal(translate("ui.connection","en"),"Connection");
   assert.equal(translate("ui.imax","zh-CN"),"Imax");
   assert.equal(translate("ui.imax","en"),"Imax");
+});
+
+test("language registry adds future locales without changing statusbar button",()=>{
+  const {nextUiLanguage,languageBadge,languageSwitchTitle}=environment().exports;
+  assert.equal(nextUiLanguage("zh-CN"),"en");
+  assert.equal(nextUiLanguage("en"),"zh-CN");
+  assert.equal(languageBadge("zh-CN"),"中");
+  assert.equal(languageBadge("en"),"EN");
+  assert.equal(languageSwitchTitle("zh-CN"),"English");
 });

@@ -1,6 +1,6 @@
 <script lang="ts">
   import { onDestroy, onMount } from "svelte";
-  import { uiLanguage, restoreUiLanguage, setUiLanguage, localize, localizeFeedback, translate } from "./i18n";
+  import { uiLanguage, restoreUiLanguage, cycleUiLanguage, languageBadge, languageSwitchTitle, localize, localizeFeedback, translate, type MessageKey } from "./i18n";
   import ConnectionPage from "./connection/ConnectionPage.svelte";
   import AutomationHost from "./automation/AutomationHost.svelte";
   import { startAutomationTracking, clearAutomationProjection } from "./automation/state";
@@ -60,20 +60,20 @@
   let connectionGeneration = 0;
   let problemsOpen = false;
 
-  const workflowPages: Array<{ id: Page; title: string; icon: string }> = [
-    { id: "connection", title: "Connection", icon: "codicon-plug" },
-    { id: "motor", title: "Motor", icon: "codicon-circuit-board" },
-    { id: "encoder", title: "Encoder", icon: "codicon-record" },
-    { id: "limits", title: "Limits / Safety", icon: "codicon-shield" },
-    { id: "control", title: "Control Architecture", icon: "codicon-settings-gear" },
-    { id: "motion", title: "Motion", icon: "codicon-play-circle" },
-    { id: "tuning", title: "Control Tuning", icon: "codicon-pulse" },
-    { id: "analysis", title: "Analysis", icon: "codicon-graph-line" },
+  const workflowPages: Array<{ id: Page; titleKey: MessageKey; icon: string }> = [
+    { id: "connection", titleKey: "ui.connection", icon: "codicon-plug" },
+    { id: "motor", titleKey: "ui.motor", icon: "codicon-circuit-board" },
+    { id: "encoder", titleKey: "ui.encoder", icon: "codicon-record" },
+    { id: "limits", titleKey: "ui.limits.safety", icon: "codicon-shield" },
+    { id: "control", titleKey: "ui.control.architecture", icon: "codicon-settings-gear" },
+    { id: "motion", titleKey: "ui.motion", icon: "codicon-play-circle" },
+    { id: "tuning", titleKey: "ui.control.tuning", icon: "codicon-pulse" },
+    { id: "analysis", titleKey: "ui.analysis", icon: "codicon-graph-line" },
   ];
-  const toolPages: Array<{ id: Page; title: string; icon: string }> = [
-    { id: "parameters", title: "Parameters", icon: "codicon-list-flat" },
-    { id: "events", title: "Events", icon: "codicon-warning" },
-    { id: "automation", title: "Automation", icon: "codicon-terminal" },
+  const toolPages: Array<{ id: Page; titleKey: MessageKey; icon: string }> = [
+    { id: "parameters", titleKey: "ui.parameters", icon: "codicon-list-flat" },
+    { id: "events", titleKey: "ui.events", icon: "codicon-warning" },
+    { id: "automation", titleKey: "ui.automation", icon: "codicon-terminal" },
   ];
   function setError(error: unknown) { errorText = error instanceof Error ? error.message : String(error); }
   function persistConnectionSchemaPath(path: string) {
@@ -119,7 +119,7 @@
       if (token === connectionGeneration) connectionInitializing = false;
     }
   }
-  function pageTitle(page: Page): string { return [...workflowPages, ...toolPages].find((item) => item.id === page)?.title ?? page; }
+  function pageTitle(page: Page): MessageKey { return [...workflowPages, ...toolPages].find((item) => item.id === page)?.titleKey ?? "ui.connection"; }
   function runtimePosition(totalTurns: number | null): string {
     if (totalTurns === null || !Number.isFinite(totalTurns)) return "—";
     let turn = Math.floor(totalTurns);
@@ -194,9 +194,9 @@
 
 <div class="workbench"><div class="body">
   <nav class="activity-bar" aria-label="Commissioning workflow">
-    {#each workflowPages as page}<button class:active={activePage === page.id} class="activity" title={localize(page.title, $uiLanguage)} onclick={() => activePage = page.id}><i class={`codicon ${page.icon}`}></i></button>{/each}
+    {#each workflowPages as page}<button class:active={activePage === page.id} class="activity" title={translate(page.titleKey, $uiLanguage)} onclick={() => activePage = page.id}><i class={`codicon ${page.icon}`}></i></button>{/each}
     <div class="workflow-separator"></div>
-    {#each toolPages as page}<button class:active={activePage === page.id} class="activity" title={localize(page.title, $uiLanguage)} onclick={() => activePage = page.id}><i class={`codicon ${page.icon}`}></i></button>{/each}
+    {#each toolPages as page}<button class:active={activePage === page.id} class="activity" title={translate(page.titleKey, $uiLanguage)} onclick={() => activePage = page.id}><i class={`codicon ${page.icon}`}></i></button>{/each}
     <div class="activity-spacer"></div>
   </nav>
   <div class="global-toolbar"><div class="global-toolbar-left">
@@ -260,16 +260,16 @@
     {:else if activePage === "events"}<div class="domain-page-container"><EventsPage connection={readyConnection} onNavigate={(page) => activePage = page} onError={setError} /></div>
     {:else if activePage === "automation"}<div class="domain-page-container"><AutomationHost connected={!!readyConnection} /></div>
     {:else if activePage !== "analysis"}
-      <section class="page-toolbar"><div class="page-title">{localize(pageTitle(activePage), $uiLanguage).toUpperCase()}</div></section>
-      <section class="placeholder-page"><div class="placeholder-title">{localize(pageTitle(activePage), $uiLanguage)}</div><div class="placeholder-copy">{translate("ui.this.workflow.page.is.reserved.for.the.corresponding.application.domain", $uiLanguage)}</div></section>
+      <section class="page-toolbar"><div class="page-title">{translate(pageTitle(activePage), $uiLanguage).toUpperCase()}</div></section>
+      <section class="placeholder-page"><div class="placeholder-title">{translate(pageTitle(activePage), $uiLanguage)}</div><div class="placeholder-copy">{translate("ui.this.workflow.page.is.reserved.for.the.corresponding.application.domain", $uiLanguage)}</div></section>
     {/if}
     <div class:inactive={activePage !== "analysis"} class="scope-page-container"><ScopePage connection={readyConnection} active={activePage === "analysis"} onSummary={(summary) => scopeSummary = summary} onError={setError} /></div>
     {#if errorText || $parameterState.error}<div class="error-text app-error">{errorText || $parameterState.error}</div>{/if}
   </main>
 </div>
-<footer class="statusbar"><button class="language-toggle" aria-label={$uiLanguage === "zh-CN" ? "切换为 English" : "Switch to 简体中文"}
-  title={$uiLanguage === "zh-CN" ? "切换为 English" : "Switch to 简体中文"}
-  onclick={() => setUiLanguage($uiLanguage === "zh-CN" ? "en" : "zh-CN")}>{$uiLanguage === "zh-CN" ? "中" : "EN"}</button><div class="connection-status"><span class:connected={!!connection} class="status-dot"></span>{connection ? connectionReady ? "AxDr_L" : localize(connectionInitializing ? "Initializing…" : "Initialization incomplete", $uiLanguage) : translate("ui.disconnected", $uiLanguage)}</div><div class="status-spacer"></div>
+<footer class="statusbar"><button class="language-toggle" aria-label={languageSwitchTitle($uiLanguage)}
+  title={languageSwitchTitle($uiLanguage)}
+  onclick={() => cycleUiLanguage($uiLanguage)}>{languageBadge($uiLanguage)}</button><div class="connection-status"><span class:connected={!!connection} class="status-dot"></span>{connection ? connectionReady ? "AxDr_L" : localize(connectionInitializing ? "Initializing…" : "Initialization incomplete", $uiLanguage) : translate("ui.disconnected", $uiLanguage)}</div><div class="status-spacer"></div>
   <div class="live-status"><span>{translate("ui.current", $uiLanguage)} {currentIq === null ? "—" : `${currentIq.toFixed(3)} A`}</span><span>{translate("ui.speed", $uiLanguage)} {speedWm === null ? "—" : `${speedWm.toFixed(3)} rad/s`}</span><span>{translate("ui.position", $uiLanguage)} {positionText}</span><span>Vbus {vbus === null ? "—" : `${vbus.toFixed(2)} V`}</span></div>
 </footer></div>
 
