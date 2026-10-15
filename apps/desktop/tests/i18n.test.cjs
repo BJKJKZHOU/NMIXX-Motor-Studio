@@ -8,6 +8,15 @@ const ts = require("typescript");
 
 const root = join(__dirname,"../src");
 const source = path => readFileSync(join(root,path),"utf8");
+function loadLocale(path) {
+  const exports = {};
+  vm.runInNewContext(ts.transpileModule(source(path), {
+    compilerOptions: { target: ts.ScriptTarget.ES2022, module: ts.ModuleKind.CommonJS }
+  }).outputText, { exports, require: () => { throw Error("Locale files must contain text only"); } });
+  return exports;
+}
+const english = loadLocale("i18n/locales/en.ts");
+const chinese = loadLocale("i18n/locales/zh-CN.ts");
 function environment(stored = null, storageAvailable = true) {
   let value = stored;
   const updates = [];
@@ -19,6 +28,8 @@ function environment(stored = null, storageAvailable = true) {
   const context = vm.createContext({
     exports,localStorage:storage,
     require(name) {
+      if (name === "./i18n/locales/en") return english;
+      if (name === "./i18n/locales/zh-CN") return chinese;
       assert.equal(name,"svelte/store");
       return { writable(initial) {
         let current=initial;
@@ -102,4 +113,15 @@ test("primary workflow pages subscribe to the shared language state",()=>{
     assert.match(content,/import \{ uiLanguage, localize/);
     assert.match(content,/\$uiLanguage/);
   }
+});
+
+test("locale resources share the same stable keys and preserve engineering symbols",()=>{
+  const en = english.enMessages, zh = chinese.zhCNMessages;
+  assert.deepEqual(Object.keys(en).sort(),Object.keys(zh).sort());
+  assert.ok(Object.keys(en).length >= 300);
+  const {translate}=environment().exports;
+  assert.equal(translate("ui.connection","zh-CN"),"连接");
+  assert.equal(translate("ui.connection","en"),"Connection");
+  assert.equal(translate("ui.rs","zh-CN"),"Rs");
+  assert.equal(translate("ui.rs","en"),"Rs");
 });
