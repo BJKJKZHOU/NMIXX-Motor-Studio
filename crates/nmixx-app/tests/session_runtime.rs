@@ -2,7 +2,7 @@ use std::collections::VecDeque;
 use std::sync::{Arc, Mutex};
 use std::time::Duration;
 
-use nmixx_app::{AxdrStatus, ParameterType, ParameterValue};
+use nmixx_app::{AxdrStatus, ParameterType, ParameterValue, PositionValue};
 use nmixx_app::raw::{ActionError, DeviceSession, SessionError, SessionEvent};
 use nmixx_core::protocol::{
     EVENT_ACTION_COMPLETE, EVENT_NOTIFY, MSG_EVENT, MSG_PARAMETER, MSG_RESPONSE, NODE_ID_DEFAULT,
@@ -112,6 +112,50 @@ fn parameter_write_round_trip_uses_session_runtime() {
         &sent[0].data()[..6],
         &[1, PARAM_WRITE, 0x01, 0x01, ParameterType::U8 as u8, 16]
     );
+}
+
+#[test]
+fn manual_position_repeat_sends_one_action_then_only_new_position_target() {
+    let state = ScriptState::default();
+    state.respond_on_send(vec![Ok(response(
+        1, PARAM_WRITE, AxdrStatus::Ok, &[0x04, 0x07],
+    ))]);
+    state.respond_on_send(vec![Ok(response(
+        2, PARAM_WRITE, AxdrStatus::Ok, &[0x02, 0x10],
+    ))]);
+    state.respond_on_send(vec![Ok(response(
+        3, PARAM_WRITE, AxdrStatus::Ok, &[0x04, 0x07],
+    ))]);
+
+    let session = DeviceSession::spawn(Box::new(ScriptedTransport::new(state.clone())));
+    session.parameter_write(0x0704, ParameterValue::Position(
+        PositionValue { turns: 2, theta: 0.0 },
+    )).unwrap();
+    let handle = session.action_start(0x1002).unwrap();
+    assert_eq!(handle.action_id, 0x1002);
+    // Once Position remains RUN the Host's next manual Repeat click updates
+    // only the target. There must be no second ACTION_MOTOR_RUN on the wire.
+    session.parameter_write(0x0704, ParameterValue::Position(
+        PositionValue { turns: 1, theta: 0.0 },
+    )).unwrap();
+
+    let sent = state.sent.lock().unwrap();
+    assert_eq!(sent.len(), 3);
+    assert!(sent.iter().all(|frame| frame.id == can_id(MSG_PARAMETER, NODE_ID_DEFAULT)));
+    assert_eq!(
+        &sent[0].data()[..5],
+        &[1, PARAM_WRITE, 0x04, 0x07, ParameterType::Position as u8]
+    );
+    assert_eq!(&sent[0].data()[5..9], &2i32.to_le_bytes());
+    assert_eq!(
+        &sent[1].data()[..5],
+        &[2, PARAM_WRITE, 0x02, 0x10, ParameterType::Action as u8]
+    );
+    assert_eq!(
+        &sent[2].data()[..5],
+        &[3, PARAM_WRITE, 0x04, 0x07, ParameterType::Position as u8]
+    );
+    assert_eq!(&sent[2].data()[5..9], &1i32.to_le_bytes());
 }
 
 #[test]
