@@ -378,4 +378,9 @@ export const zhCNMessages = {
   "limits.position.off": "关闭",
   "errors.position.delta.finite": "位置增量必须是有限数值。",
 
+  "events.problem.first.seen": "首次",
+  "events.problem.last.seen": "最近",
+  "events.problem.occurrence.count": "次数",
+  "motion.command.stop.tooltip": "停止电机运动",
+  "motion.command.uncommitted.warning": "运动参数未提交：按 Enter 写入或 Esc 放弃后再运行。",
 } satisfies Record<keyof typeof enMessages, string>;

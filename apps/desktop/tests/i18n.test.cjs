@@ -167,3 +167,14 @@ test("gain source selection is locale-free and phase/experiment placeholders use
   assert.match(source("automation/AutomationHost.svelte"),/translate\("automation\.loading", \$uiLanguage\)/);
   assert.match(source("analysis/scope/ScopeEchartsPage.svelte"),/translateFormat\("scope\.channel\.selection\.exceeded", \$uiLanguage, channelNotice\)/);
 });
+
+test("Events and Motion keep contextual copy in locale resources",()=>{
+  const {translate}=environment().exports;
+  assert.equal(translate("ui.active","zh-CN"),"当前值");
+  assert.equal(translate("events.problem.active","zh-CN"),"活动中");
+  assert.equal(translate("events.problem.first.seen","zh-CN"),"首次");
+  assert.equal(translate("events.problem.last.seen","zh-CN"),"最近");
+  assert.equal(translate("motion.command.stop.tooltip","zh-CN"),"停止电机运动");
+  assert.match(source("events/EventsPage.svelte"),/translate\("events\.problem\.last\.seen", \$uiLanguage\)/);
+  assert.match(source("motion/MotionPage.svelte"),/translate\("motion\.command\.uncommitted\.warning", \$uiLanguage\)/);
+});

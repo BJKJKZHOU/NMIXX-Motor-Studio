@@ -62,7 +62,7 @@
                 class:severity-error={problem.severity === "ERROR"}
                 class:severity-fault={problem.severity === "FAULT"}>
                 <div class="problem-level"><strong>{localize(severityLabel(problem.severity), $uiLanguage)}</strong><span>{localize(problem.domain === "ENCODER" ? "Encoder" : "Protection", $uiLanguage)}</span></div>
-                <div class="problem-detail"><strong>{localize(problem.summary, $uiLanguage)}</strong><p>{localizeFeedback(problem.description, $uiLanguage)}</p><div class="problem-meta">{localize(problem.domain === "PROTECTION" ? "Mask" : "Code", $uiLanguage)} {mask(problem)} · Last {time(problem.lastSeenMs)} · Count {problem.occurrenceCount}</div></div>
+                <div class="problem-detail"><strong>{localize(problem.summary, $uiLanguage)}</strong><p>{localizeFeedback(problem.description, $uiLanguage)}</p><div class="problem-meta">{localize(problem.domain === "PROTECTION" ? "Mask" : "Code", $uiLanguage)} {mask(problem)} · {translate("events.problem.last.seen", $uiLanguage)} {time(problem.lastSeenMs)} · {translate("events.problem.occurrence.count", $uiLanguage)} {problem.occurrenceCount}</div></div>
                 <div class="problem-action"><button class="tool-button" onclick={() => onNavigate(target(problem))}>{localize(problem.domain === "ENCODER" ? "Open Encoder" : "Inspect Limits", $uiLanguage)}</button></div>
               </article>
             {/each}
@@ -81,8 +81,8 @@
                 <span class:active={problem.active} class:resolved={!problem.active} class="history-state">{translate(problem.active ? "events.problem.active" : "events.problem.resolved", $uiLanguage)}</span>
                 <strong>{localize(severityLabel(problem.severity), $uiLanguage)} · {localize(problem.summary, $uiLanguage)}</strong>
                 <span class="mono">{mask(problem)}</span>
-                <span>First {time(problem.firstSeenMs)}</span>
-                <span>Last {time(problem.lastSeenMs)}</span>
+                <span>{translate("events.problem.first.seen", $uiLanguage)} {time(problem.firstSeenMs)}</span>
+                <span>{translate("events.problem.last.seen", $uiLanguage)} {time(problem.lastSeenMs)}</span>
                 <span>×{problem.occurrenceCount}</span>
               </div>
             {/each}

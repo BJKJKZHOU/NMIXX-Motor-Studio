@@ -377,4 +377,9 @@ export const enMessages = {
   "limits.position.off": "Off",
   "errors.position.delta.finite": "Delta position must be finite.",
 
+  "events.problem.first.seen": "First",
+  "events.problem.last.seen": "Last",
+  "events.problem.occurrence.count": "Count",
+  "motion.command.stop.tooltip": "Stop motor motion",
+  "motion.command.uncommitted.warning": "Uncommitted Motion edits: Enter to write or Esc to discard before Run.",
 } as const;

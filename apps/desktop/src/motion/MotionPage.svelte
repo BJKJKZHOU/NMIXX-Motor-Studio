@@ -197,9 +197,9 @@
       {/if}
       <div class="motion-runbar">
         <button class="motion-run" disabled={!canRun() || actionBusy} title={localize(uncommittedMotion ? "Commit or discard Motion edits first" : "Run motion", $uiLanguage)} onclick={run}><i class="codicon codicon-debug-start"></i> {translate("ui.run", $uiLanguage)}</button>
-        <button disabled={!canStop()} title="Stop motor motion" onclick={stop}><i class={`codicon ${stopBusy ? "codicon-loading codicon-modifier-spin" : "codicon-debug-stop"}`}></i> {translate("ui.stop", $uiLanguage)}</button>
+        <button disabled={!canStop()} title={translate("motion.command.stop.tooltip", $uiLanguage)} onclick={stop}><i class={`codicon ${stopBusy ? "codicon-loading codicon-modifier-spin" : "codicon-debug-stop"}`}></i> {translate("ui.stop", $uiLanguage)}</button>
       </div>
-      {#if uncommittedMotion}<div role="status" class="motion-command-feedback">Uncommitted Motion edits: Enter to write or Esc to discard before Run.</div>{/if}
+      {#if uncommittedMotion}<div role="status" class="motion-command-feedback">{translate("motion.command.uncommitted.warning", $uiLanguage)}</div>{/if}
       {#if runFeedback}<div role="status" class="motion-command-feedback">{localizeFeedback(runFeedback, $uiLanguage)}</div>{/if}
       {#if motorState}<div class="motion-command-feedback">Device motor state: {motorState}</div>{/if}
     </div>
