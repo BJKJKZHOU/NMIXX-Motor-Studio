@@ -83,11 +83,11 @@ test("translation of device acknowledgements preserves English command data",()=
 });
 test("multi-line commissioning preflight reasons localize individually",()=>{
   const {localizeFeedback}=environment().exports;
-  const english="Current limit must be configured before identification.\\nAlign current must not exceed the configured current limit.";
+  const english="Current limit must be configured before identification.\nAlign current must not exceed the configured current limit.";
   const result=localizeFeedback(english,"zh-CN");
   assert.match(result,/辨识前需配置电流限值/);
   assert.match(result,/Align 电流不得超过配置电流限值/);
-  assert.equal(result.split("\\n").length,2);
+  assert.equal(result.split("\n").length,2);
 });
 
 test("bottom-left language toggle is separate from Connection and cannot send motor commands",()=>{
@@ -122,6 +122,6 @@ test("locale resources share the same stable keys and preserve engineering symbo
   const {translate}=environment().exports;
   assert.equal(translate("ui.connection","zh-CN"),"连接");
   assert.equal(translate("ui.connection","en"),"Connection");
-  assert.equal(translate("ui.imax","zh-CN"),"Rs");
+  assert.equal(translate("ui.imax","zh-CN"),"Imax");
   assert.equal(translate("ui.imax","en"),"Imax");
 });
