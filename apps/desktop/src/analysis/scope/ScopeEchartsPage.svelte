@@ -425,7 +425,7 @@
 
 <div class="scope-spike-shell">
   <aside class="scope-spike-sidebar">
-    <div class="section-heading">{translate("ui.channels.2", $uiLanguage)}</div>
+    <div class="section-heading">{translate("scope.channels.heading", $uiLanguage)}</div>
     {#if channelNotice}<div class="scope-channel-notice">{translateFormat("scope.channel.selection.exceeded", $uiLanguage, channelNotice)}</div>{/if}
     {#each channels as channel}
       <div class:active-channel={activeChannelId === channel.id} class="channel-block">

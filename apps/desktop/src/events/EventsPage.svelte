@@ -51,7 +51,7 @@
     {:else}
       {#if $problemError}<div class="error-text" role="alert">{localizeFeedback($problemError, $uiLanguage)}</div>{/if}
       <section class="events-section">
-        <div class="section-title">{translate("ui.active.problems.2", $uiLanguage)} <span>{active.length}</span></div>
+        <div class="section-title">{translate("events.problems.active.heading", $uiLanguage)} <span>{active.length}</span></div>
         {#if active.length === 0}
           <div class="events-empty">{translate("ui.no.active.problems", $uiLanguage)}</div>
         {:else}
