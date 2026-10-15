@@ -377,8 +377,18 @@ impl ApplicationSession {
         Ok(handle)
     }
     pub fn motor_stop(&self) -> Result<ActionHandle, ApplicationError> {
-        // Explicit Stop/Disable cancels the current Repeat leg without advancing it.
+        // Explicit Stop always discards the next manual Repeat endpoint.
         self.inner.motion.cancel_repeat_leg().map_err(ApplicationError::Motion)?;
+        self.stop_motor_command()
+    }
+
+    /// The successful end of a *finite* tuning Position leg keeps its A/B
+    /// endpoints for the next explicit Run. It never starts a reverse leg.
+    pub(crate) fn tuning_leg_stop(&self) -> Result<ActionHandle, ApplicationError> {
+        self.stop_motor_command()
+    }
+
+    fn stop_motor_command(&self) -> Result<ActionHandle, ApplicationError> {
         if self.workflow_owner.is_none() { self.inner.workflow_access.revoke(); }
         // Cancel delayed Run before sending Stop, including while PREPARING.
         self.inner.motor_gate.cancel();
@@ -501,7 +511,7 @@ impl ApplicationSession {
         }
         let config = self.inner.motion.get();
         let mode = self.read_motion_mode()?;
-        let repeat = experiment.is_none() && mode == MotionMode::Position && config.repeat;
+        let repeat = mode == MotionMode::Position && config.repeat;
         let motor_state = if repeat { Some(self.read_motor_state()?) } else { None };
         let target = if repeat {
             if motor_state == Some(MotorState::Run) {

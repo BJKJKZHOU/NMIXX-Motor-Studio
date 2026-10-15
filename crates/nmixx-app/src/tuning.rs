@@ -88,9 +88,8 @@ impl ApplicationSession {
             )).map(|meta| meta.id).collect::<Vec<_>>();
             self.require_refresh(self.parameter_read_many(&ids)?)?;
             let mode = self.read_motion_mode()?;
-            let preview_duration = if mode == MotionMode::Position {
-                self.motion_preview()?.times.last().copied().unwrap_or(0.0).max(0.0)
-            } else { 0.0 };
+            // Execution must use the firmware trajectory reference, not a
+            // preview duration that changes with the selected Motion profile.
             let capture_duration = self.tuning_capture_duration(selections)?;
             // The check and command sequence are ordered against Stop/Disconnect.
             // A stale preparation must not reconfigure/start capture after close.
@@ -107,7 +106,7 @@ impl ApplicationSession {
             }
             let app = self.clone();
             *worker = Some(thread::spawn(move || {
-                app.run_tuning_experiment(generation, ticket, mode, preview_duration, capture_duration);
+                app.run_tuning_experiment(generation, ticket, mode, capture_duration);
             }));
             Ok(())
         })();
@@ -230,7 +229,7 @@ impl ApplicationSession {
         }
         true
     }
-    fn run_tuning_experiment(&self, generation: u64, ticket: u64, mode: MotionMode, preview_duration: f64, capture_duration: Duration) {
+    fn run_tuning_experiment(&self, generation: u64, ticket: u64, mode: MotionMode, capture_duration: Duration) {
         if !self.wait_tuning(generation, TUNING_PRE_CAPTURE, true) {
             self.finish_cancelled_pre_capture(generation);
             return;
@@ -248,20 +247,26 @@ impl ApplicationSession {
         let mut stop_sent = false;
         let reserve_ratio = (TUNING_POST_CAPTURE.as_secs_f64() / capture_duration.as_secs_f64()).clamp(0.0, 1.0);
         if auto_position {
-            let run_window = Duration::from_secs_f64(preview_duration) + TUNING_POSITION_SETTLE;
-            let mut elapsed = Duration::ZERO;
-            let mut completed_window = true;
-            while elapsed < run_window {
-                if self.tuning_stop_requested(generation) { completed_window = false; break; }
+            let target = match self.read_position_turns("PARAM_TARGET_POSITION") {
+                Ok(value) => value,
+                Err(error) => { self.fail_tuning_experiment(generation, error); return; }
+            };
+            let mut at_target_since: Option<Instant> = None;
+            loop {
+                if self.tuning_stop_requested(generation) { break; }
                 match self.tuning_record_status() {
                     Ok(status) if status.capacity_samples > 0 => {
                         let used = status.samples as f64 / status.capacity_samples as f64;
                         if used >= 1.0 - reserve_ratio {
-                            completed_window = false;
-                            if self.read_motor_state().ok() == Some(MotorState::Run) {
-                                if let Err(error) = self.motion_stop() { self.fail_tuning_experiment(generation, error); return; }
-                                stop_sent = true;
-                                let _ = self.set_tuning_state(generation, TuningExperimentState::Stopping);
+                            // A recording bound is not successful arrival. The
+                            // ordinary Stop cancels pending Repeat endpoints.
+                            if let Err(error) = self.motion_stop() { self.fail_tuning_experiment(generation, error); return; }
+                            stop_sent = true;
+                            let _ = self.set_tuning_state(generation, TuningExperimentState::Stopping);
+                            if let Ok(mut runtime) = self.inner.tuning_experiment.lock() {
+                                if runtime.generation == generation {
+                                    runtime.message = Some("Capture stopped at the 128 MiB recording limit".to_owned());
+                                }
                             }
                             break;
                         }
@@ -272,22 +277,36 @@ impl ApplicationSession {
                 match self.read_motor_state() {
                     Ok(MotorState::Run) => {}
                     Ok(state) => {
-                        if !self.tuning_stop_requested(generation) && !stop_sent {
-                            self.fail_tuning_experiment(generation, format!("Motor left RUN unexpectedly (state {state}); check firmware faults"));
-                            return;
-                        }
-                        completed_window = false;
-                        break;
+                        self.fail_tuning_experiment(generation,
+                            format!("Motor left RUN unexpectedly (state {state}); check firmware faults"));
+                        return;
                     }
                     Err(error) => { self.fail_tuning_experiment(generation, error); return; }
                 }
-                let step = TUNING_POLL.min(run_window.saturating_sub(elapsed));
-                thread::sleep(step); elapsed += step;
-            }
-            if completed_window && self.read_motor_state().ok() == Some(MotorState::Run) {
-                if let Err(error) = self.motion_stop() { self.fail_tuning_experiment(generation, error); return; }
-                stop_sent = true;
-                let _ = self.set_tuning_state(generation, TuningExperimentState::Stopping);
+                // Firmware maintains the exact Position trajectory reference,
+                // including its quintic S curves. No estimated timer is used.
+                let reference = match self.read_position_turns("PARAM_REF_POSITION") {
+                    Ok(value) => value,
+                    Err(error) => { self.fail_tuning_experiment(generation, error); return; }
+                };
+                if (reference - target).abs() <= 1e-5 {
+                    let since = at_target_since.get_or_insert_with(Instant::now);
+                    if since.elapsed() >= TUNING_POSITION_SETTLE {
+                        if self.tuning_stop_requested(generation) { break; }
+                        // This is a successful *automatic* end of one leg.
+                        // Keep A/B for the next user-clicked tuning Run.
+                        if let Err(error) = self.tuning_leg_stop() {
+                            self.fail_tuning_experiment(generation, error);
+                            return;
+                        }
+                        stop_sent = true;
+                        let _ = self.set_tuning_state(generation, TuningExperimentState::Stopping);
+                        break;
+                    }
+                } else {
+                    at_target_since = None;
+                }
+                thread::sleep(TUNING_POLL);
             }
         }
         let mut stop_deadline = if stop_sent { Some(Instant::now() + MOTOR_STOP_TIMEOUT) } else { None };
