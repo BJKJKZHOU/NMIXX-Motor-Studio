@@ -427,3 +427,108 @@ fn numeric_value(value: &ParameterValue) -> Option<f64> {
         ParameterValue::Position(_) => None,
     }
 }
+
+#[cfg(test)]
+mod onboarding_tests {
+    use super::*;
+    use std::collections::{HashMap, VecDeque};
+    use std::sync::{Arc, Mutex};
+    use nmixx_core::protocol::{
+        AxdrStatus, ParameterType, MSG_PARAMETER, MSG_RESPONSE, NODE_ID_DEFAULT,
+        PARAM_READ, can_id,
+    };
+    use nmixx_core::transport::{FrameTransport, TransportError};
+    use nmixx_core::wire::CanFdFrame;
+
+    struct MotorFixture {
+        parameters: Arc<Mutex<HashMap<u16, f32>>>,
+        responses: VecDeque<CanFdFrame>,
+    }
+    impl FrameTransport for MotorFixture {
+        fn send(&mut self, frame: &CanFdFrame) -> Result<(), TransportError> {
+            let request = frame.data();
+            let id = u16::from_le_bytes([request[2], request[3]]);
+            let mut body = vec![
+                request[0], MSG_PARAMETER, PARAM_READ, AxdrStatus::Ok as u8,
+                request[2], request[3],
+            ];
+            if id == 0x0803 || id == 0x0804 {
+                body.push(ParameterType::U32 as u8);
+                body.extend_from_slice(&0u32.to_le_bytes());
+            } else {
+                body.push(ParameterType::F32 as u8);
+                let value = *self.parameters.lock().unwrap().get(&id).unwrap_or(&0.0);
+                body.extend_from_slice(&value.to_le_bytes());
+            }
+            self.responses.push_back(
+                CanFdFrame::new(can_id(MSG_RESPONSE, NODE_ID_DEFAULT), &body).unwrap()
+            );
+            Ok(())
+        }
+        fn receive(&mut self, _timeout: std::time::Duration) -> Result<CanFdFrame, TransportError> {
+            self.responses.pop_front().ok_or(TransportError::Timeout)
+        }
+    }
+
+    fn environment() -> (PreflightService, Arc<Mutex<HashMap<u16, f32>>>) {
+        let entries: &[(&str, u16)] = &[
+            (EVENT_ERROR, 0x0803), (EVENT_TRIP, 0x0804),
+            (LIMIT_I_MAX, 0x0201), (LIMIT_WM_MAX, 0x0202),
+            (MOTOR_PP, 0x0110), (MOTOR_RS, 0x0111),
+            (MOTOR_LD, 0x0112), (MOTOR_LQ, 0x0113),
+            (MOTOR_FLUX, 0x0114), (ALIGN_CURRENT, 0x0117),
+            (IDENT_IF_CURRENT, 0x0118), (RL_I_PEAK, 0x0119),
+            (IDENT_JB_EXCITE_RATIO, 0x0923), (IDENT_JB_EXCITE_HZ, 0x0924),
+        ];
+        let mut schema = String::from(
+            "schema_version = 1\nprotocol = \"axdr-canfd-v1\"\n[source]\nrepository = \"fixture\"\ngit_sha = \"abc\"\nparameter_schema = 1\n"
+        );
+        for (symbol, id) in entries {
+            let typ = if *symbol == EVENT_ERROR || *symbol == EVENT_TRIP { "u32" } else { "f32" };
+            schema.push_str(&format!(
+                "\n[[parameters]]\nsymbol = \"{symbol}\"\nlabel = \"{symbol}\"\nid = {id}\ntype = \"{typ}\"\naccess = \"ro\"\ndescription = \"fixture\"\n"
+            ));
+        }
+        let values = Arc::new(Mutex::new(HashMap::from([
+            (0x0201, 2.0), (0x0202, 40.0), (0x0110, 7.0),
+            (0x0111, 0.3), (0x0112, 0.0002), (0x0113, 0.0002),
+            (0x0114, 0.01), (0x0117, 0.5), (0x0118, 0.5),
+            (0x0119, 1.0), (0x0923, 0.2), (0x0924, 3.0),
+        ])));
+        let session = crate::DeviceSession::spawn(Box::new(MotorFixture {
+            parameters: values.clone(),
+            responses: VecDeque::new(),
+        }));
+        let parameters = ParameterService::new(session, HostSchema::parse(&schema).unwrap());
+        (PreflightService::new(parameters), values)
+    }
+
+    #[test]
+    fn new_motor_rs_ls_does_not_pass_with_peak_equal_to_user_limit() {
+        let (preflight, values) = environment();
+        values.lock().unwrap().insert(0x0119, 2.0);
+        let issues = preflight.check_identification(IdentificationKind::RsLs).unwrap();
+        assert!(issues.iter().any(|issue| issue.parameter_id == Some(0x0119)));
+        values.lock().unwrap().insert(0x0119, 1.0);
+        assert!(preflight.check_identification(IdentificationKind::RsLs).unwrap().is_empty());
+    }
+
+    #[test]
+    fn new_motor_flux_and_jb_reject_invalid_align_and_if_currents() {
+        let (preflight, values) = environment();
+        values.lock().unwrap().insert(0x0117, 0.0);
+        let issues = preflight.check_identification(IdentificationKind::Flux).unwrap();
+        assert!(issues.iter().any(|issue| issue.parameter_id == Some(0x0117)));
+        values.lock().unwrap().insert(0x0117, 3.0);
+        let issues = preflight.check_identification(IdentificationKind::Flux).unwrap();
+        assert!(issues.iter().any(|issue| issue.parameter_id == Some(0x0117)));
+        values.lock().unwrap().insert(0x0117, 0.5);
+        assert!(preflight.check_identification(IdentificationKind::Flux).unwrap().is_empty());
+
+        values.lock().unwrap().insert(0x0118, 3.0);
+        let issues = preflight.check_identification(IdentificationKind::Jb).unwrap();
+        assert!(issues.iter().any(|issue| issue.parameter_id == Some(0x0118)));
+        values.lock().unwrap().insert(0x0118, 0.5);
+        assert!(preflight.check_identification(IdentificationKind::Jb).unwrap().is_empty());
+    }
+}
