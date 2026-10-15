@@ -122,6 +122,6 @@ test("locale resources share the same stable keys and preserve engineering symbo
   const {translate}=environment().exports;
   assert.equal(translate("ui.connection","zh-CN"),"连接");
   assert.equal(translate("ui.connection","en"),"Connection");
-  assert.equal(translate("ui.rs","zh-CN"),"Rs");
-  assert.equal(translate("ui.rs","en"),"Rs");
+  assert.equal(translate("ui.imax","zh-CN"),"Rs");
+  assert.equal(translate("ui.imax","en"),"Imax");
 });
