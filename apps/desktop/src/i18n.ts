@@ -65,6 +65,8 @@ export function localize(value: string, language: UiLanguage): string {
 export function localizeFeedback(value: string, language: UiLanguage): string {
   if (language === "en") return value;
   if (value.includes("\n")) return value.split("\n").map(line => localizeFeedback(line, language)).join("\n");
+  const reason = /^Reason ([0-9]+)$/.exec(value);
+  if (reason) return translateFormat("motor.identification.failure.reason", language, { code: reason[1] });
   const key = byEnglish.get(value);
   if (key) return translate(key, language);
   for (const [english, token] of byEnglish) {

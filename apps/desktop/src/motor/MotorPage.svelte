@@ -242,7 +242,7 @@
     }
     else {
       const reason = numericValue(values[failReasonSymbol]);
-      setIdentState(pending.identKey, "failed", reason ? translateFormat("motor.identification.failure.reason", $uiLanguage, { code: reason }) : "No valid result");
+      setIdentState(pending.identKey, "failed", reason ? `Reason ${reason}` : "No valid result");
     }
   }
 </script>
