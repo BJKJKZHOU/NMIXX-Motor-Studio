@@ -338,3 +338,25 @@ test("new motor from USB connection through three identifications, phase search 
   assert.deepEqual(errors, ["Error: Encoder not ready"]);
   assert.deepEqual(device.commands.filter(c=>c[0]==="ACTION"&&c[1]==="ACTION_IDENT_APPLY").map(c=>c[2]),["rsLs","flux","jb"]);
 });
+
+test("commissioning editors honor DISABLED, ENABLED and RUN HostSchema write_state",()=>{
+  const exports={};
+  vm.runInNewContext(transpile(source("parameters/writeState.ts")),{
+    exports,require:()=>({}),
+  });
+  const can=exports.canWriteInMotorState;
+  const disabled={access:"rw",writeState:"disabled"};
+  const notRunning={access:"rw",writeState:"not_running"};
+  const live={access:"rw",writeState:null};
+  assert.equal(can(disabled,"DISABLED"),true);
+  assert.equal(can(disabled,"ENABLED"),false);
+  assert.equal(can(disabled,"RUN"),false);
+  assert.equal(can(disabled,null),false);
+  assert.equal(can(notRunning,"ENABLED"),true);
+  assert.equal(can(notRunning,"RUN"),false);
+  assert.equal(can(live,"RUN"),true);
+  assert.equal(can({access:"ro",writeState:null},"DISABLED"),false);
+  for (const page of ["motor/MotorPage.svelte","encoder/EncoderPage.svelte","limits/LimitsPage.svelte"]) {
+    assert.match(source(page),/canWriteInMotorState\(metadata\[symbol\], motorState\)/);
+  }
+});
