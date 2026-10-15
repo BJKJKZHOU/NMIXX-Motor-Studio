@@ -147,7 +147,10 @@ impl AutomationApi for SessionWorkflowApi {
             }
             "motion.run" => {
                 self.claim_motion(control)?;
-                Ok(accepted(self.app.motion_run().map_err(|e|e.to_string())?, false))
+                match self.app.motion_run().map_err(|e| e.to_string())? {
+                    Some(handle) => Ok(accepted(handle, false)),
+                    None => Ok(json!({"completed": true, "targetUpdated": true})),
+                }
             }
             "identification.run" => {
                 let (kind,label) = match text(&params,"kind")? {

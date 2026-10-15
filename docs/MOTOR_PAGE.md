@@ -117,7 +117,9 @@ Identification startup/configuration values that have a clear user-facing role m
 
 The current GUI exposes the user-facing identification setup Parameters required by the Application preflight when the connected firmware provides them:
 
-- the shared I/F forced-start current, `PARAM_IDENT_IF_CURRENT`;
+- the Rs/Ls injection peak current, `PARAM_MOTOR_RL_I_PEAK`;
+- the shared Align current, `PARAM_MOTOR_ALIGN_CURRENT`;
+- the shared I/F forced-start current, `PARAM_MOTOR_IF_CURRENT`;
 - J/B excitation ratio, `PARAM_IDENT_JB_EXCITE_RATIO`;
 - J/B excitation frequency, `PARAM_IDENT_JB_EXCITE_HZ`.
 
@@ -187,7 +189,8 @@ The current GUI implements:
 - latest valid Rs/Ls, Flux and J/B results;
 - Rs/Ls, Flux and J/B Action start/completion state;
 - explicit Apply after a valid result;
-- shared I/F startup current when exposed by the Host schema;
+- Rs/Ls injection peak, Align current and shared I/F startup current from the same HostSchema;
+- DISABLED-only writes locked in the UI while the motor is ENABLED/RUN;
 - J/B excitation ratio and frequency when exposed by the Host schema.
 
 Current implementation notes:

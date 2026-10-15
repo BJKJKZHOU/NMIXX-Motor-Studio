@@ -318,9 +318,9 @@ Initial intended mapping:
 
 | Action | Required operating limits | Other important prerequisites |
 | --- | --- | --- |
-| Rs/Ls identification | Current limit | valid motor setup and suitable motor state |
-| Flux identification | Current limit, speed limit | valid Rs/Ls result and suitable motor state |
-| J/B identification | Current limit, speed limit | valid Flux result and suitable motor state |
+| Rs/Ls identification | Current limit, Rs/Ls injection peak strictly below configured current limit | valid motor setup and suitable motor state |
+| Flux identification | Current limit, speed limit, Align/I-F currents within limit | valid Rs/Ls result and suitable motor state |
+| J/B identification | Current limit, speed limit, Align/I-F currents within limit | valid Flux result and suitable motor state |
 | Torque run | Current limit, speed limit | suitable motor/control state |
 | Speed run | Current limit, speed limit | suitable motor/control state |
 | Position run | Current limit, speed limit | suitable motor/control state |

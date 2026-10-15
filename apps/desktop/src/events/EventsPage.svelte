@@ -6,17 +6,19 @@
 
   export let connection: ConnectionInfo | undefined;
   export let onError: (error: unknown) => void = () => undefined;
+  export let onNavigate: (page: "encoder" | "limits") => void = () => undefined;
   let busy = false;
 
   $: active = $problemSnapshot.active;
   $: history = $problemSnapshot.history;
-  $: hasClearableFault = active.some((problem) => problem.severity === "ERROR" || problem.severity === "FAULT");
+  $: hasClearableFault = active.some((problem) => problem.domain === "PROTECTION" && (problem.severity === "ERROR" || problem.severity === "FAULT"));
 
   function severityLabel(severity: ProblemSeverity): string {
     return severity === "FAULT" ? "Fault" : severity === "ERROR" ? "Error" : severity === "WARNING" ? "Warning" : "Info";
   }
   function time(ms: number): string { return ms ? new Date(ms).toLocaleTimeString() : "—"; }
   function mask(problem: ProblemRecord): string { return "0x" + problem.code.toString(16).toUpperCase().padStart(8, "0"); }
+  function target(problem: ProblemRecord): "encoder" | "limits" { return problem.domain === "ENCODER" ? "encoder" : "limits"; }
 
   async function perform(operation: () => Promise<void>) {
     if (busy || !connection) return;
@@ -58,9 +60,9 @@
                 class:severity-warning={problem.severity === "WARNING"}
                 class:severity-error={problem.severity === "ERROR"}
                 class:severity-fault={problem.severity === "FAULT"}>
-                <div class="problem-level"><strong>{severityLabel(problem.severity)}</strong><span>Protection</span></div>
-                <div class="problem-detail"><strong>{problem.summary}</strong><p>{problem.description}</p><div class="problem-meta">Mask {mask(problem)} · Last {time(problem.lastSeenMs)} · Count {problem.occurrenceCount}</div></div>
-                <div class="problem-action muted">Device protection</div>
+                <div class="problem-level"><strong>{severityLabel(problem.severity)}</strong><span>{problem.domain === "ENCODER" ? "Encoder" : "Protection"}</span></div>
+                <div class="problem-detail"><strong>{problem.summary}</strong><p>{problem.description}</p><div class="problem-meta">{problem.domain === "PROTECTION" ? "Mask" : "Code"} {mask(problem)} · Last {time(problem.lastSeenMs)} · Count {problem.occurrenceCount}</div></div>
+                <div class="problem-action"><button class="tool-button" onclick={() => onNavigate(target(problem))}>{problem.domain === "ENCODER" ? "Open Encoder" : "Inspect Limits"}</button></div>
               </article>
             {/each}
           </div>

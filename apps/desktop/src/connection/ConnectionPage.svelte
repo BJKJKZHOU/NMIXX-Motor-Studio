@@ -4,6 +4,9 @@
   import type { ConnectionInfo } from "./types";
 
   export let connection: ConnectionInfo | undefined;
+  export let ready = false;
+  export let initializing = false;
+  export let onRetry: () => void = () => undefined;
   export let port: string;
   export let schemaPath: string;
   export let onConnected: (connection: ConnectionInfo) => void = () => undefined;
@@ -79,6 +82,7 @@
       <input id="connection-schema" bind:value={schemaPath} class="compact-input mono" onchange={() => onSchemaPathChanged(schemaPath)} />
       <div class="connection-actions">
         {#if connection}
+          {#if !ready && !initializing}<vscode-button secondary disabled={busy} onclick={onRetry}>Retry initialization</vscode-button>{/if}
           <!-- svelte-ignore a11y_click_events_have_key_events a11y_no_static_element_interactions -->
           <vscode-button secondary disabled={busy} onclick={disconnect}>Disconnect</vscode-button>
         {:else}
@@ -92,7 +96,7 @@
   <div class="connection-card">
     <div class="connection-card-title">Device</div>
     <div class="property-grid connection-properties">
-      <span>Status</span><strong>{connection ? "Connected" : "Disconnected"}</strong>
+      <span>Status</span><strong>{connection ? ready ? "Connected" : initializing ? "Initializing" : "Initialization incomplete" : "Disconnected"}</strong>
       <span>Endpoint</span><strong>{connection?.port ?? "—"}</strong>
       <span>FAST rate</span><strong>{connection ? `${(connection.fastRateHz / 1000).toFixed(1)} kHz` : "—"}</strong>
       <span>NORMAL rate</span><strong>{connection ? `${(connection.normalRateHz / 1000).toFixed(1)} kHz` : "—"}</strong>

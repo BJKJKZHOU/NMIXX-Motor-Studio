@@ -1,5 +1,5 @@
 export type ProblemSeverity = "INFO" | "WARNING" | "ERROR" | "FAULT";
-export type ProblemDomain = "PROTECTION";
+export type ProblemDomain = "PROTECTION" | "ENCODER";
 
 export type ProblemRecord = {
   id: string;

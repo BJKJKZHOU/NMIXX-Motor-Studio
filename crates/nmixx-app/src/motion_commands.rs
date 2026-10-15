@@ -78,12 +78,14 @@ impl ApplicationSession {
         self.require_motor_enabled()?;
         self.require_motion_mode(MotionMode::Speed)?;
 
+        if request.max_speed_rad_s.is_some() {
+            return Err(ApplicationError::Motion("Speed mode has no separate max-speed Parameter; set the Speed Target or operating speed limit".into()));
+        }
         self.write_motion_f32("PARAM_TARGET_SPEED", request.target_rad_s)?;
-        self.write_optional_motion_f32("PARAM_MOTION_WM_MAX", request.max_speed_rad_s)?;
         self.write_optional_motion_f32("PARAM_MOTION_WM_ACC", request.acceleration_rad_s2)?;
         self.write_optional_motion_f32("PARAM_MOTION_WM_DEC", request.deceleration_rad_s2)?;
 
-        self.motion_run()
+        self.motion_run()?.ok_or_else(|| ApplicationError::Motion("No new Run Action was issued".into()))
     }
 
     /// Write the position-command Parameters and start the already-enabled POSITION mode.
@@ -112,7 +114,8 @@ impl ApplicationSession {
         }
         self.motion_set(config)?;
 
-        self.write_optional_motion_f32("PARAM_MOTION_WM_MAX", request.max_speed_rad_s)?;
+        // Position mode uses abs(PARAM_TARGET_SPEED) as trajectory speed cap.
+        self.write_optional_motion_f32("PARAM_TARGET_SPEED", request.max_speed_rad_s)?;
         self.write_optional_motion_f32("PARAM_MOTION_WM_ACC", request.acceleration_rad_s2)?;
         self.write_optional_motion_f32("PARAM_MOTION_WM_DEC", request.deceleration_rad_s2)?;
 
@@ -123,7 +126,7 @@ impl ApplicationSession {
             )?;
         }
 
-        self.motion_run()
+        self.motion_run()?.ok_or_else(|| ApplicationError::Motion("No new Run Action was issued".into()))
     }
 
     /// Read the small runtime set needed for headless sensored speed/position debugging.

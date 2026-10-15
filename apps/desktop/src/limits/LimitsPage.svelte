@@ -1,11 +1,13 @@
 <script lang="ts">
   import type { ConnectionInfo } from "../connection/types";
+  import type { MotorState } from "../motor/state";
+  import { canWriteInMotorState } from "../parameters/writeState";
   import { selectParameters } from "../parameters/state";
   import { createParameterEditor } from "../parameters/editor";
   import { parameterText } from "../parameters/codec";
   import { modifiedParameterIds } from "../parameters/persistence";
 
-  type Props = { connection: ConnectionInfo | undefined; onError?: (error: unknown) => void };
+  type Props = { connection: ConnectionInfo | undefined; motorState: MotorState | null; onError?: (error: unknown) => void };
   const CURRENT_USER_SYMBOL = "PARAM_LIMIT_I_MAX";
   const SPEED_USER_SYMBOL = "PARAM_LIMIT_WM_MAX";
   const CURRENT_HARDWARE_SYMBOL = "PARAM_LIMIT_I_HARDWARE";
@@ -24,7 +26,7 @@
     CURRENT_EFFECTIVE_SYMBOL, SPEED_EFFECTIVE_SYMBOL, VBUS_MIN_SYMBOL, VBUS_ACTUAL_SYMBOL, VBUS_MAX_SYMBOL,
   ]);
   const edits = createParameterEditor(parameters);
-  let { connection, onError = () => undefined }: Props = $props();
+  let { connection, motorState, onError = () => undefined }: Props = $props();
   let metadata = $derived($parameters.metadata);
   let values = $derived($parameters.values);
   let drafts = $derived($edits.drafts);
@@ -33,7 +35,7 @@
   function displayText(symbol: string) { return parameterText(values[symbol]) || "—"; }
   function unitFor(symbol: string) { return metadata[symbol]?.unit ?? ""; }
   function parameterLabel(symbol: string, fallback = "Unavailable") { return metadata[symbol]?.label ?? fallback; }
-  function isWritable(symbol: string) { return !$parameters.loading && !$parameters.saving && !!metadata[symbol]?.access.includes("w"); }
+  function isWritable(symbol: string) { return !$parameters.loading && !$parameters.saving && canWriteInMotorState(metadata[symbol], motorState); }
   function numericValue(symbol: string): number | null {
     const value = values[symbol];
     if (!value || value.type === "position") return null;

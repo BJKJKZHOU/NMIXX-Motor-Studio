@@ -100,7 +100,7 @@ impl ApplicationSession {
     }
     pub(crate) fn from_session_with_motion(session: DeviceSession, schema: HostSchema, motion: MotionService) -> Result<Self, ApplicationError> {
         motion.reset_runtime().map_err(ApplicationError::Motion)?;
-        let events = session.subscribe()?;
+        let events = session.subscribe_control()?;
         let parameters = ParameterService::new(session.clone(), schema.clone());
         let motion_capabilities = MotionCapabilities::from_schema(&schema);
         let commissioning_capabilities = CommissioningCapabilities::from_schema(&schema);
@@ -141,9 +141,14 @@ impl ApplicationSession {
                     }
                     _ => {}
                 }
-                if let Ok(mut subscribers) = inner.events.lock() {
-                    subscribers.retain(|sender| sender.send(event.clone()).is_ok());
-                };
+                // Scope consumes the raw stream directly from DeviceSession.
+                // Application subscribers only need actions and device events;
+                // relaying waveform frames here queues unbounded redundant data.
+                if !matches!(&event, SessionEvent::FastData(_) | SessionEvent::NormalData(_)) {
+                    if let Ok(mut subscribers) = inner.events.lock() {
+                        subscribers.retain(|sender| sender.send(event.clone()).is_ok());
+                    }
+                }
             }
         });
         Ok(app)
@@ -202,7 +207,9 @@ impl ApplicationSession {
     pub fn parameter_metadata(&self) -> &[ParameterMetadata] { self.inner.parameters.parameters() }
     pub fn parameter_read(&self, id: u16) -> Result<ParameterValue, ApplicationError> { Ok(self.inner.parameters.read(id)?) }
     pub fn parameter_read_many(&self, ids: &[u16]) -> Result<Vec<(u16, Result<ParameterValue, ParameterServiceError>)>, ApplicationError> {
-        Ok(self.inner.parameters.read_many(ids)?)
+        let results = self.inner.parameters.read_many(ids)?;
+        self.inner.problems.sync_from_parameters(&self.inner.parameters, &self.inner.schema);
+        Ok(results)
     }
     pub fn parameter_cached(&self, id: u16) -> Result<Option<ParameterValue>, ApplicationError> { Ok(self.inner.parameters.cached(id)?) }
     pub fn parameter_cached_many(&self, ids: &[u16]) -> Result<Vec<(u16, Result<ParameterValue, ParameterServiceError>)>, ApplicationError> {
@@ -228,7 +235,7 @@ impl ApplicationSession {
     }
 
     pub fn problems_recheck(&self) -> Result<ProblemSnapshot, ApplicationError> {
-        let ids = protection_parameter_ids(&self.inner.schema);
+        let ids = problem_parameter_ids(&self.inner.schema);
         if !ids.is_empty() {
             let results = self.inner.parameters.read_many(&ids)?;
             self.require_refresh(results)?;
@@ -370,6 +377,18 @@ impl ApplicationSession {
         Ok(handle)
     }
     pub fn motor_stop(&self) -> Result<ActionHandle, ApplicationError> {
+        // Explicit Stop always discards the next manual Repeat endpoint.
+        self.inner.motion.cancel_repeat_leg().map_err(ApplicationError::Motion)?;
+        self.stop_motor_command()
+    }
+
+    /// The successful end of a *finite* tuning Position leg keeps its A/B
+    /// endpoints for the next explicit Run. It never starts a reverse leg.
+    pub(crate) fn tuning_leg_stop(&self) -> Result<ActionHandle, ApplicationError> {
+        self.stop_motor_command()
+    }
+
+    fn stop_motor_command(&self) -> Result<ActionHandle, ApplicationError> {
         if self.workflow_owner.is_none() { self.inner.workflow_access.revoke(); }
         // Cancel delayed Run before sending Stop, including while PREPARING.
         self.inner.motor_gate.cancel();
@@ -383,6 +402,8 @@ impl ApplicationSession {
         Ok(handle)
     }
     pub fn motor_disable(&self) -> Result<ActionHandle, ApplicationError> {
+        // Explicit Stop/Disable cancels the current Repeat leg without advancing it.
+        self.inner.motion.cancel_repeat_leg().map_err(ApplicationError::Motion)?;
         if self.workflow_owner.is_none() { self.inner.workflow_access.revoke(); }
         self.inner.motor_gate.cancel();
         let cancelled = self.request_tuning_stop();
@@ -471,10 +492,10 @@ impl ApplicationSession {
             .preview_with_parameters(&self.inner.parameters, None, current_position_turn)
             .map_err(ApplicationError::Motion)
     }
-    pub fn motion_run(&self) -> Result<ActionHandle, ApplicationError> {
+    pub fn motion_run(&self) -> Result<Option<ActionHandle>, ApplicationError> {
         self.motion_run_at(self.inner.motor_gate.ticket(), None)
     }
-    fn motion_run_at(&self, ticket: u64, experiment: Option<u64>) -> Result<ActionHandle, ApplicationError> {
+    fn motion_run_at(&self, ticket: u64, experiment: Option<u64>) -> Result<Option<ActionHandle>, ApplicationError> {
         let _workflow = self.workflow_permit()?;
         let _command = self.inner.motor_gate.start(ticket)
             .map_err(|message| ApplicationError::Motion(message.to_owned()))?;
@@ -488,37 +509,62 @@ impl ApplicationSession {
                 return Err(ApplicationError::TuningExperimentBusy);
             }
         }
-        let completion = self.action_completion_waiter()?;
         let config = self.inner.motion.get();
         let mode = self.read_motion_mode()?;
-        let repeat_target = if mode == MotionMode::Position && config.repeat {
-            let current = self.read_position_turns("PARAM_RUN_POSITION")?;
-            let absolute_target = if config.position_command == PositionCommand::Absolute {
-                Some(self.read_position_turns("PARAM_TARGET_POSITION")?)
-            } else {
-                None
-            };
-            self.inner.motion.repeat_target(current, absolute_target).map_err(ApplicationError::Motion)?
-        } else {
-            None
-        };
-        let handle = self.inner.motion.run_checked(&self.inner.parameters, &self.inner.session, repeat_target.map(|(target, _)| target), || self.workflow_checkpoint(ticket))
-            .map_err(ApplicationError::Motion)?;
-        if let Some((_, target_is_b)) = repeat_target {
-            self.inner.motion.repeat_mark_started(target_is_b).map_err(ApplicationError::Motion)?;
-            // Do not keep the whole connection alive while waiting for an Action.
-            let weak = Arc::downgrade(&self.inner);
-            thread::spawn(move || {
-                let Ok(status) = completion.wait(handle, None) else { return; };
-                if let Some(inner) = weak.upgrade() {
-                    let _ = (ApplicationSession { inner, workflow_owner: None, workflow_cleanup: false }).motion_run_completed(status);
+        let repeat = mode == MotionMode::Position && config.repeat;
+        let motor_state = if repeat { Some(self.read_motor_state()?) } else { None };
+        let target = if repeat {
+            if motor_state == Some(MotorState::Run) {
+                // Ordinary Position Run has no ACTION_COMPLETE; the firmware
+                // trajectory reference reaches the selected endpoint at completion.
+                let previous = self.inner.motion.repeat_pending_target()
+                    .map_err(ApplicationError::Motion)?
+                    .ok_or_else(|| ApplicationError::Motion("Repeat has not been started here".into()))?;
+                let reference = self.read_position_turns("PARAM_REF_POSITION")?;
+                if (reference - previous).abs() > 1e-5 {
+                    return Err(ApplicationError::Motion("Previous Repeat trajectory is not complete".into()));
                 }
-            });
+            }
+            let current = self.read_position_turns("PARAM_RUN_POSITION")?;
+            let absolute = if config.position_command == PositionCommand::Absolute {
+                Some(self.read_position_turns("PARAM_TARGET_POSITION")?)
+            } else { None };
+            self.inner.motion.repeat_target(current, absolute).map_err(ApplicationError::Motion)?
+        } else { None };
+
+        if motor_state == Some(MotorState::Run) {
+            // A subsequent manual Run selects A/B on the Host. Firmware stays
+            // RUN and follows the newly written Position target.
+            let (next, is_b) = target.ok_or_else(|| ApplicationError::Motion("Missing Repeat target".into()))?;
+            self.workflow_checkpoint(ticket).map_err(ApplicationError::Motion)?;
+            let meta = self.inner.schema.parameter_by_key("PARAM_TARGET_POSITION")
+                .ok_or_else(|| ApplicationError::Motion("Position target is not exposed".into()))?;
+            let position = crate::motion::turns_to_position(next).map_err(ApplicationError::Motion)?;
+            self.inner.parameters.write_readback(meta.id, ParameterValue::Position(position))?;
+            self.inner.motion.repeat_mark_started(is_b).map_err(ApplicationError::Motion)?;
+            return Ok(None);
         }
-        Ok(handle)
-    }
-    fn motion_run_completed(&self, status: AxdrStatus) -> Result<(), ApplicationError> {
-        self.inner.motion.repeat_completed(status).map_err(ApplicationError::Motion)
+
+        let handle = match self.inner.motion.run_checked(
+            &self.inner.parameters,
+            &self.inner.session,
+            target.map(|(value, _)| value),
+            || self.workflow_checkpoint(ticket),
+        ) {
+            Ok(handle) => handle,
+            Err(error) => {
+                // The initial Run did not succeed. Do not retain A/B endpoints
+                // captured before its device writes and Action request.
+                if repeat {
+                    self.inner.motion.cancel_repeat_leg().map_err(ApplicationError::Motion)?;
+                }
+                return Err(ApplicationError::Motion(error));
+            }
+        };
+        if let Some((_, is_b)) = target {
+            self.inner.motion.repeat_mark_started(is_b).map_err(ApplicationError::Motion)?;
+        }
+        Ok(Some(handle))
     }
     pub fn motion_stop(&self) -> Result<ActionHandle, ApplicationError> {
         self.inner.motion.cancel_repeat_leg().map_err(ApplicationError::Motion)?;
@@ -617,8 +663,9 @@ fn identification_result_valid(
     matches!(parameters.cached(metadata.id), Ok(Some(ParameterValue::U8(1))))
 }
 
-fn protection_parameter_ids(schema: &HostSchema) -> Vec<u16> {
-    ["PARAM_EVENT_REPORT", "PARAM_EVENT_WARNING", "PARAM_EVENT_ERROR", "PARAM_EVENT_TRIP"]
+fn problem_parameter_ids(schema: &HostSchema) -> Vec<u16> {
+    ["PARAM_EVENT_REPORT", "PARAM_EVENT_WARNING", "PARAM_EVENT_ERROR", "PARAM_EVENT_TRIP",
+     "PARAM_ENCODER_PROTOCOL", "PARAM_ENCODER_READY", "PARAM_ENCODER_VALID", "PARAM_ENCODER_FAULT"]
         .into_iter()
         .filter_map(|symbol| schema.parameter_by_symbol(symbol).map(|metadata| metadata.id))
         .collect()

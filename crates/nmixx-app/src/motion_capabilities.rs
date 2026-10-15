@@ -47,22 +47,21 @@ impl MotionCapabilities {
         let position_target = has_parameter("PARAM_TARGET_POSITION");
         let speed_target = has_parameter("PARAM_TARGET_SPEED");
         let torque_target = has_parameter("PARAM_TARGET_TORQUE");
-        let torque_ramp = has_parameter("PARAM_MOTION_TORQUE_RAMP");
-        let sensorless_startup_current = has_parameter("PARAM_SENSORLESS_STARTUP_CURRENT");
+        let torque_ramp = has_parameter("PARAM_MOTION_TE_RATE");
+        let sensorless_startup_current = has_parameter("PARAM_MOTOR_IF_CURRENT");
         let sensorless_entry_speed = has_parameter("PARAM_SENSORLESS_ENTRY_SPEED");
 
         let acceleration = has_parameter("PARAM_MOTION_WM_ACC");
         let deceleration = has_parameter("PARAM_MOTION_WM_DEC");
-        let max_speed = has_parameter("PARAM_MOTION_WM_MAX");
+        let max_speed = speed_target;
 
-        // Current AxDr_L represents its implemented position/speed motion
-        // planner through Wm_Max/Acc/Dec. More advanced trajectory types must
-        // be explicitly advertised by dedicated schema entries; do not infer
-        // them merely because the GUI knows how to preview them.
+        // Current firmware selects trapezoidal/S-curve profiles through one enum.
+        // Discover support from the actual exported profile symbols.
+        let profile = schema.parameter_by_key("PARAM_MOTION_PROFILE");
         let trajectory_trapezoidal = acceleration && deceleration;
-        let trajectory_s_curve =
-            has_parameter("PARAM_MOTION_SCURVE_MODE")
-            || has_parameter("PARAM_MOTION_SCURVE_ENABLE");
+        let trajectory_s_curve = profile.is_some_and(|parameter|
+            parameter.allowed_symbols.iter().any(|value|
+                value == "MOTION_S_TIME" || value == "MOTION_S_PEAK"));
         let filter_time = has_parameter("PARAM_MOTION_FILTER_TIME");
         let trajectory_filtered = filter_time;
 
@@ -102,7 +101,7 @@ mod tests {
     use super::*;
 
     #[test]
-    fn discovers_axdr_like_motion_surface_without_inventing_advanced_profiles() {
+    fn discovers_firmware_motion_profile_and_shared_speed_target() {
         let schema = HostSchema::parse(
             r#"
 schema_version = 1
@@ -147,12 +146,29 @@ access = "rw"
 description = "torque"
 
 [[parameters]]
-symbol = "PARAM_MOTION_WM_MAX"
-label = "Max Speed"
-id = 1537
+symbol = "PARAM_MOTION_TE_RATE"
+label = "Torque slew rate"
+id = 1540
 type = "f32"
 access = "rw"
-description = "max speed"
+description = "torque slew"
+
+[[parameters]]
+symbol = "PARAM_MOTOR_IF_CURRENT"
+label = "I/F Current"
+id = 280
+type = "f32"
+access = "rw"
+description = "startup current"
+
+[[parameters]]
+symbol = "PARAM_MOTION_PROFILE"
+label = "Motion Profile"
+id = 1541
+type = "u8"
+access = "rw"
+description = "profile"
+allowed_symbols = ["MOTION_TRAPEZOID", "MOTION_S_TIME", "MOTION_S_PEAK"]
 
 [[parameters]]
 symbol = "PARAM_MOTION_WM_ACC"
@@ -190,7 +206,10 @@ description = "stop"
         assert!(capabilities.sensorless_speed);
         assert!(capabilities.torque);
         assert!(capabilities.trajectory_trapezoidal);
-        assert!(!capabilities.trajectory_s_curve);
+        assert!(capabilities.trajectory_s_curve);
+        assert!(capabilities.max_speed);
+        assert!(capabilities.torque_ramp);
+        assert!(capabilities.sensorless_startup_current);
         assert!(!capabilities.trajectory_filtered);
         assert!(capabilities.run);
         assert!(capabilities.stop);

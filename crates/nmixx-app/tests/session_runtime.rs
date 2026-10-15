@@ -2,7 +2,7 @@ use std::collections::VecDeque;
 use std::sync::{Arc, Mutex};
 use std::time::Duration;
 
-use nmixx_app::{AxdrStatus, ParameterType, ParameterValue};
+use nmixx_app::{AxdrStatus, ParameterType, ParameterValue, PositionValue};
 use nmixx_app::raw::{ActionError, DeviceSession, SessionError, SessionEvent};
 use nmixx_core::protocol::{
     EVENT_ACTION_COMPLETE, EVENT_NOTIFY, MSG_EVENT, MSG_PARAMETER, MSG_RESPONSE, NODE_ID_DEFAULT,
@@ -115,6 +115,50 @@ fn parameter_write_round_trip_uses_session_runtime() {
 }
 
 #[test]
+fn manual_position_repeat_sends_one_action_then_only_new_position_target() {
+    let state = ScriptState::default();
+    state.respond_on_send(vec![Ok(response(
+        1, PARAM_WRITE, AxdrStatus::Ok, &[0x04, 0x07],
+    ))]);
+    state.respond_on_send(vec![Ok(response(
+        2, PARAM_WRITE, AxdrStatus::Ok, &[0x02, 0x10],
+    ))]);
+    state.respond_on_send(vec![Ok(response(
+        3, PARAM_WRITE, AxdrStatus::Ok, &[0x04, 0x07],
+    ))]);
+
+    let session = DeviceSession::spawn(Box::new(ScriptedTransport::new(state.clone())));
+    session.parameter_write(0x0704, ParameterValue::Position(
+        PositionValue { turns: 2, theta: 0.0 },
+    )).unwrap();
+    let handle = session.action_start(0x1002).unwrap();
+    assert_eq!(handle.action_id, 0x1002);
+    // Once Position remains RUN the Host's next manual Repeat click updates
+    // only the target. There must be no second ACTION_MOTOR_RUN on the wire.
+    session.parameter_write(0x0704, ParameterValue::Position(
+        PositionValue { turns: 1, theta: 0.0 },
+    )).unwrap();
+
+    let sent = state.sent.lock().unwrap();
+    assert_eq!(sent.len(), 3);
+    assert!(sent.iter().all(|frame| frame.id == can_id(MSG_PARAMETER, NODE_ID_DEFAULT)));
+    assert_eq!(
+        &sent[0].data()[..5],
+        &[1, PARAM_WRITE, 0x04, 0x07, ParameterType::Position as u8]
+    );
+    assert_eq!(&sent[0].data()[5..9], &2i32.to_le_bytes());
+    assert_eq!(
+        &sent[1].data()[..5],
+        &[2, PARAM_WRITE, 0x02, 0x10, ParameterType::Action as u8]
+    );
+    assert_eq!(
+        &sent[2].data()[..5],
+        &[3, PARAM_WRITE, 0x04, 0x07, ParameterType::Position as u8]
+    );
+    assert_eq!(&sent[2].data()[5..9], &1i32.to_le_bytes());
+}
+
+#[test]
 fn async_event_is_dispatched_while_waiting_for_parameter_response() {
     let state = ScriptState::default();
     let event = CanFdFrame::new(
@@ -141,6 +185,20 @@ fn async_event_is_dispatched_while_waiting_for_parameter_response() {
         events.recv_timeout(Duration::from_millis(100)).unwrap(),
         SessionEvent::DeviceEvent(_)
     ));
+}
+
+#[test]
+fn control_subscription_does_not_receive_waveform_frames() {
+    use nmixx_core::protocol::MSG_FAST_DATA;
+
+    let state = ScriptState::default();
+    let stream = CanFdFrame::new(can_id(MSG_FAST_DATA, NODE_ID_DEFAULT), &[1, 0, 7, 1, 10, 0]).unwrap();
+    let notify = CanFdFrame::new(can_id(MSG_EVENT, NODE_ID_DEFAULT), &[EVENT_NOTIFY, 0, 0, 0]).unwrap();
+    let session = DeviceSession::spawn(Box::new(ScriptedTransport::new(state.clone())));
+    let control = session.subscribe_control().unwrap();
+    state.incoming.lock().unwrap().extend([Ok(stream), Ok(notify)]);
+    assert!(matches!(control.recv_timeout(Duration::from_millis(100)).unwrap(), SessionEvent::DeviceEvent(_)));
+    assert!(control.try_recv().is_err());
 }
 
 #[test]
@@ -240,4 +298,22 @@ fn malformed_response_does_not_poison_following_request() {
         session.parameter_read(0x0710, ParameterType::U8).unwrap(),
         ParameterValue::U8(0)
     );
+}
+
+#[test]
+fn permanent_transport_io_failure_closes_the_session_worker() {
+    let state = ScriptState::default();
+    state.incoming.lock().unwrap().push_back(Err(TransportError::Io("cable removed".into())));
+    let session = DeviceSession::spawn(Box::new(ScriptedTransport::new(state)));
+    // The worker must terminate after the permanent I/O failure rather than
+    // consuming further requests on the dead transport.
+    let mut closed = false;
+    for _ in 0..100 {
+        if matches!(session.parameter_read(0x0710, ParameterType::U8), Err(SessionError::Closed)) {
+            closed = true;
+            break;
+        }
+        std::thread::sleep(Duration::from_millis(1));
+    }
+    assert!(closed);
 }

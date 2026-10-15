@@ -86,14 +86,21 @@ Incremental delta is not an uncommitted Parameter draft.
 The page shows only executable trajectory/profile behavior advertised by the
 connected firmware.
 
-Current AxDr_L Position/Speed motion uses the trapezoidal/T profile represented by
-`Wm_Max / Wm_Acc / Wm_Dec`. S-curve, filtered-profile or other controls must not
-be presented as normal executable choices merely because a preview implementation
-exists.
+AxDr_L exports `PARAM_MOTION_PROFILE` with `MOTION_TRAPEZOID`, `MOTION_S_TIME`
+and `MOTION_S_PEAK`, in addition to `PARAM_MOTION_WM_ACC/DEC`.
+Both Motion and Control Tuning select the same firmware Parameter from its
+HostSchema enum symbols. The selector is editable only when the motor is not RUN.
 
-When future firmware exposes another profile through stable Parameters/capability
-metadata, the page may add that option without creating a second Host-owned copy of
-those values.
+The S-curve preview uses the firmware's quintic velocity shape and its
+acceleration-time factors (1 for S_TIME; 1.875 for S_PEAK).
+It is an initial-plan prediction from rest, not a replacement for actual device
+feedback when commands or mechanical conditions change during movement.
+Sensorless Speed still uses its own firmware startup trajectory.
+
+Position's Max Speed input is a workflow label for the absolute value of
+`PARAM_TARGET_SPEED`, not a separate firmware `PARAM_MOTION_WM_MAX` Parameter.
+The same target-speed Parameter supplies the signed Speed-mode command, so both
+pages must use one shared committed value. Torque slew uses `PARAM_MOTION_TE_RATE`.
 
 ## Preview semantics
 
@@ -130,11 +137,11 @@ The f32 Plot position must never overwrite the exact typed Position Parameter.
 Run is explicit and domain-local.
 
 - Run never implicitly Enables the motor.
-- The motor must already be ENABLED.
+- The first Run requires ENABLED. Subsequent manual Position Repeat clicks may update a target while the motor remains RUN.
 - The selected firmware mode and command Parameters must already be committed.
 - Any pending normal Parameter writes/host Motion-state updates are completed before
   Run is dispatched.
-- One Run interaction sends one semantic Motion Run request.
+- One click sends one Host operation: the initial Motor Run Action or, while Position Repeat is already RUN, a Position target write.
 - Device/runtime feedback remains authoritative for actual motion.
 
 Run acceptance is not universal proof that motion has finished. Normal Speed,
@@ -176,10 +183,11 @@ A continuously cycling A <-> B servo-test is a separate workflow with its own
 control/button and lifecycle. It must not be implemented by changing the meaning
 of Repeat.
 
-The current AxDr_L generic Motor Run does not emit an ACTION_COMPLETE event for
-normal Position motion. Therefore the existing completion-driven Repeat bookkeeping
-is not yet a valid end-to-end implementation: Application must use a valid
-successful-leg completion criterion before advancing the next manual Run target.
+The firmware does not emit ACTION_COMPLETE for ordinary Position Run. After the
+first Run, the firmware remains RUN and follows PARAM_TARGET_POSITION. On a later
+manual Run click, the Application checks that the prior trajectory reference has
+reached its selected endpoint and writes the opposite target. It does not send a
+second Motor Run Action or introduce a firmware Repeat mode.
 Stop, Disable, a failed Run or a fault must not advance Repeat direction.
 
 Repeat sequencing belongs in the Application Motion workflow and remains

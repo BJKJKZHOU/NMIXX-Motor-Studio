@@ -96,7 +96,7 @@ test("status bar runtime values come from shared baseline telemetry", () => {
   assert.match(shell, /startRuntimeTelemetryTracking/);
   assert.match(shell, /Vbus/);
   assert.match(shell, /const GLOBAL_SYMBOLS = \["PARAM_MOTOR_STATE"\]/);
-  assert.match(shell, /const POLLED_SYMBOLS = \["PARAM_MOTOR_STATE"\]/);
+  assert.match(shell, /const POLLED_SYMBOLS = \["PARAM_MOTOR_STATE"/);
   assert.doesNotMatch(shell, /PARAM_RUN_POSITION"\] as const/);
 });
 
@@ -161,4 +161,86 @@ test("Motion preview may use runtime Plot position while Run keeps exact Positio
   assert.match(app, /motion_preview[\s\S]*runtime_telemetry[\s\S]*position_turns/);
   assert.match(motion, /current_position_turn_override/);
   assert.match(motion, /run_checked[\s\S]*read_position\(parameters, "PARAM_RUN_POSITION"\)/);
+});
+
+test("Motion run barrier preserves rejected Host Motion writes", () => {
+  const motion = source("motion/store.ts");
+  assert.match(motion, /lastWriteErrorEpoch === epoch/);
+  assert.match(motion, /await writeChain/);
+  assert.match(motion, /throw lastWriteError/);
+});
+
+
+test("Control Architecture and Tuning distinguish saved manual speed gains from effective gains", () => {
+  const control = source("control/ControlPage.svelte");
+  const tuning = source("control/ControlTuningPage.svelte");
+  for (const page of [control, tuning]) {
+    assert.match(page, /PARAM_CTRL_SPEED_KP_EFFECTIVE/);
+    assert.match(page, /PARAM_CTRL_SPEED_KI_EFFECTIVE/);
+    assert.match(page, /Effective Kp/);
+    assert.match(page, /Effective Ki/);
+  }
+  assert.match(control, /Manual Kp/);
+  assert.match(control, /Manual Id Kp/);
+});
+
+
+test("Encoder health is checked through the shared Application problems service", () => {
+  const app = readFileSync(join(repo, "crates/nmixx-app/src/application.rs"), "utf8");
+  const problems = readFileSync(join(repo, "crates/nmixx-app/src/problems.rs"), "utf8");
+  const shell = source("App.svelte");
+  const events = source("events/EventsPage.svelte");
+  assert.match(app, /PARAM_ENCODER_FAULT/);
+  assert.match(problems, /update_encoder_health/);
+  assert.match(problems, /ENC_PROTOCOL_NONE/);
+  assert.match(shell, /PARAM_ENCODER_VALID/);
+  assert.match(shell, /onNavigate=\{\(page\) => activePage = page\}/);
+  assert.match(events, /Open Encoder/);
+  assert.match(events, /Inspect Limits/);
+});
+
+
+test("Connection readiness hides unfinished sessions from business pages but retains Disconnect and Stop", () => {
+  const shell = source("App.svelte");
+  const connection = source("connection/ConnectionPage.svelte");
+  assert.match(shell, /connectionReady = true/);
+  assert.match(shell, /readyConnection = connectionReady \? connection : undefined/);
+  assert.match(shell, /<MotorPage connection=\{readyConnection\}/);
+  assert.match(shell, /<ScopePage connection=\{readyConnection\}/);
+  assert.match(connection, /Retry initialization/);
+  assert.match(connection, /onRetry/);
+  assert.match(shell, /stop-action" disabled=\{!connection \|\| globalStopBusy\}/);
+});
+
+
+test("Position Tuning is reference-completed, not preview-timer-completed", () => {
+  const tuning = readFileSync(join(repo, "crates/nmixx-app/src/tuning.rs"), "utf8");
+  const app = readFileSync(join(repo, "crates/nmixx-app/src/application.rs"), "utf8");
+  assert.match(tuning, /read_position_turns\("PARAM_REF_POSITION"\)/);
+  assert.match(tuning, /TUNING_POSITION_SETTLE/);
+  assert.match(tuning, /tuning_leg_stop\(\)/);
+  assert.doesNotMatch(tuning, /preview_duration/);
+  assert.match(app, /mode == MotionMode::Position && config\.repeat/);
+  assert.match(app, /pub\(crate\) fn tuning_leg_stop/);
+  assert.match(app, /pub fn motor_stop[\s\S]*?cancel_repeat_leg/);
+});
+test("Motion and Control Tuning select the same firmware Profile Parameter", () => {
+  const motion = source("motion/MotionPage.svelte");
+  const tuning = source("control/ControlTuningPage.svelte");
+  const app = readFileSync(join(repo, "crates/nmixx-app/src/motion.rs"), "utf8");
+  assert.match(motion, /motionProfileOptions\(metadata\[MOTION_PROFILE\]\)/);
+  assert.match(tuning, /motionProfileOptions\(metadata\[MOTION_PROFILE\]\)/);
+  assert.match(app, /MOTION_S_TIME/);
+  assert.match(app, /MOTION_S_PEAK/);
+  assert.match(app, /position_preview\(distance_turn, max_speed, acc, dec, limit, profile\)/);
+});
+
+test("new motor identification and encoder preflight errors are visible, not only hover titles", () => {
+  const motor = source("motor/MotorPage.svelte");
+  const encoder = source("encoder/EncoderPage.svelte");
+  assert.match(motor, /role="alert">\{state\.message\}/);
+  assert.match(encoder, /role="alert">\{phaseMessage\}/);
+  assert.match(encoder, /role="alert">\{homingMessage\}/);
+  assert.match(motor, /PARAM_MOTOR_RL_I_PEAK/);
+  assert.match(motor, /PARAM_MOTOR_ALIGN_CURRENT/);
 });

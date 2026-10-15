@@ -13,7 +13,13 @@ export type IdentificationStartResult =
 
 async function reflected<T>(operation: Promise<T>): Promise<T> {
   const result = await operation;
-  await synchronizeParameters();
+  try {
+    await synchronizeParameters();
+  } catch (error) {
+    // The firmware accepted the Action. A later cache read failed; reporting
+    // the whole command as rejected would mislead the operator.
+    throw new Error(`Device accepted the command, but Parameter readback failed: ${String(error)}`);
+  }
   return result;
 }
 export function enableMotor(): Promise<ActionHandle> { return reflected(invoke<ActionHandle>("motor_enable")); }

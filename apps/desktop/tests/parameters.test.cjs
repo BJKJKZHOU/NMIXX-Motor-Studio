@@ -139,3 +139,18 @@ test("RAM-modified tracking is limited to HostSchema persistent Parameters", () 
   assert.match(persistence, /const tracked = new Set<number>\(\)/);
   assert.match(persistence, /tracked\.has\(result\.id\)/);
 });
+
+test("Motion profile options resolve firmware-declared enum symbols", () => {
+  const options = motion.motionProfileOptions(meta("u8", {
+    allowedSymbols: ["MOTION_TRAPEZOID", "MOTION_S_TIME", "MOTION_S_PEAK"],
+    allowed: [0, 3, 7],
+  }));
+  assert.deepEqual(options, [
+    { value: 0, label: "Trapezoidal" },
+    { value: 3, label: "S-curve · same time" },
+    { value: 7, label: "S-curve · limited acceleration" },
+  ]);
+  assert.equal(motion.motionProfileLabel(meta("u8", {
+    allowedSymbols: ["MOTION_TRAPEZOID", "MOTION_S_TIME", "MOTION_S_PEAK"], allowed: [0, 3, 7],
+  }), { type: "u8", value: 7 }), "S-curve · limited acceleration");
+});

@@ -15,3 +15,7 @@ export interface MotionPreview {
   primaryUnit: string;
   secondaryUnit?: string | null;
 }
+
+export type MotionRunResult =
+  | { kind: "runAccepted"; handle: { txn: number; actionId: number } }
+  | { kind: "targetUpdated" };

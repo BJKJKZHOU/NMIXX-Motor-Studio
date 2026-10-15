@@ -11,6 +11,10 @@ const EVENT_REPORT: &str = "PARAM_EVENT_REPORT";
 const EVENT_WARNING: &str = "PARAM_EVENT_WARNING";
 const EVENT_ERROR: &str = "PARAM_EVENT_ERROR";
 const EVENT_TRIP: &str = "PARAM_EVENT_TRIP";
+const ENCODER_PROTOCOL: &str = "PARAM_ENCODER_PROTOCOL";
+const ENCODER_READY: &str = "PARAM_ENCODER_READY";
+const ENCODER_VALID: &str = "PARAM_ENCODER_VALID";
+const ENCODER_FAULT: &str = "PARAM_ENCODER_FAULT";
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Serialize)]
 #[serde(rename_all = "SCREAMING_SNAKE_CASE")]
@@ -25,6 +29,7 @@ pub enum ProblemSeverity {
 #[serde(rename_all = "SCREAMING_SNAKE_CASE")]
 pub enum ProblemDomain {
     Protection,
+    Encoder,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize)]
@@ -63,22 +68,49 @@ impl ProblemService {
     pub(crate) fn update_protection(&self, status: ProtectionEventFrame) {
         let Ok(mut state) = self.state.lock() else { return; };
         let now = now_ms();
-        update_record(&mut state, "protection.report", ProblemSeverity::Info, "Protection report active",
+        update_record(&mut state, "protection.report", ProblemDomain::Protection, ProblemSeverity::Info, "Protection report active",
             "The device reports one or more active informational protection bits.", status.report, now);
-        update_record(&mut state, "protection.warning", ProblemSeverity::Warning, "Protection warning active",
+        update_record(&mut state, "protection.warning", ProblemDomain::Protection, ProblemSeverity::Warning, "Protection warning active",
             "The device reports one or more active protection warnings.", status.warning, now);
-        update_record(&mut state, "protection.error", ProblemSeverity::Error, "Protection error active",
+        update_record(&mut state, "protection.error", ProblemDomain::Protection, ProblemSeverity::Error, "Protection error active",
             "The device reports a software protection error. The drive may be disabled until the fault is cleared.", status.error, now);
-        update_record(&mut state, "protection.trip", ProblemSeverity::Fault, "Hardware trip active",
+        update_record(&mut state, "protection.trip", ProblemDomain::Protection, ProblemSeverity::Fault, "Hardware trip active",
             "The device reports a hardware-fast protection trip.", status.trip, now);
     }
 
     pub(crate) fn sync_from_parameters(&self, parameters: &ParameterService, schema: &HostSchema) {
-        let Some(report) = cached_u32(parameters, schema, EVENT_REPORT) else { return; };
-        let Some(warning) = cached_u32(parameters, schema, EVENT_WARNING) else { return; };
-        let Some(error) = cached_u32(parameters, schema, EVENT_ERROR) else { return; };
-        let Some(trip) = cached_u32(parameters, schema, EVENT_TRIP) else { return; };
-        self.update_protection(ProtectionEventFrame { report, warning, error, trip });
+        if let (Some(report), Some(warning), Some(error), Some(trip)) = (
+            cached_u32(parameters, schema, EVENT_REPORT), cached_u32(parameters, schema, EVENT_WARNING),
+            cached_u32(parameters, schema, EVENT_ERROR), cached_u32(parameters, schema, EVENT_TRIP),
+        ) {
+            self.update_protection(ProtectionEventFrame { report, warning, error, trip });
+        }
+
+        let Some(protocol_meta) = schema.parameter_by_symbol(ENCODER_PROTOCOL) else { return; };
+        let Some(protocol) = cached_u8(parameters, schema, ENCODER_PROTOCOL) else { return; };
+        let Ok(none) = protocol_meta.enum_u8("ENC_PROTOCOL_NONE") else { return; };
+        if protocol == none {
+            self.update_encoder_health(false, 0, 0, 0);
+        } else if let (Some(ready), Some(valid), Some(fault)) = (
+            cached_u8(parameters, schema, ENCODER_READY), cached_u8(parameters, schema, ENCODER_VALID),
+            cached_u8(parameters, schema, ENCODER_FAULT),
+        ) {
+            self.update_encoder_health(true, ready, valid, fault);
+        }
+    }
+
+    fn update_encoder_health(&self, configured: bool, ready: u8, valid: u8, fault: u8) {
+        let Ok(mut state) = self.state.lock() else { return; };
+        let now = now_ms();
+        update_record(&mut state, "encoder.fault", ProblemDomain::Encoder, ProblemSeverity::Error,
+            "Encoder fault", "The configured encoder reports a fault. Inspect the encoder, wiring and feedback protocol.",
+            u32::from(configured && fault != 0), now);
+        update_record(&mut state, "encoder.ready", ProblemDomain::Encoder, ProblemSeverity::Warning,
+            "Encoder not ready", "The configured encoder is not ready for servo operation.",
+            u32::from(configured && fault == 0 && ready == 0), now);
+        update_record(&mut state, "encoder.valid", ProblemDomain::Encoder, ProblemSeverity::Warning,
+            "Encoder feedback invalid", "The encoder is initialized but its current feedback is invalid.",
+            u32::from(configured && fault == 0 && ready != 0 && valid == 0), now);
     }
 
     pub(crate) fn snapshot(&self) -> ProblemSnapshot {
@@ -96,6 +128,14 @@ impl ProblemService {
     }
 }
 
+fn cached_u8(parameters: &ParameterService, schema: &HostSchema, symbol: &str) -> Option<u8> {
+    let metadata = schema.parameter_by_symbol(symbol)?;
+    match parameters.cached(metadata.id).ok().flatten()? {
+        ParameterValue::U8(value) => Some(value),
+        _ => None,
+    }
+}
+
 fn cached_u32(parameters: &ParameterService, schema: &HostSchema, symbol: &str) -> Option<u32> {
     let metadata = schema.parameter_by_symbol(symbol)?;
     match parameters.cached(metadata.id).ok().flatten()? {
@@ -107,6 +147,7 @@ fn cached_u32(parameters: &ParameterService, schema: &HostSchema, symbol: &str) 
 fn update_record(
     state: &mut ProblemState,
     id: &str,
+    domain: ProblemDomain,
     severity: ProblemSeverity,
     summary: &str,
     description: &str,
@@ -134,7 +175,7 @@ fn update_record(
             state.records.insert(id.to_owned(), ProblemRecord {
                 id: id.to_owned(),
                 severity,
-                domain: ProblemDomain::Protection,
+                domain,
                 summary: summary.to_owned(),
                 description: format!("{description} Active mask: 0x{code:08X}."),
                 code,
@@ -189,4 +230,21 @@ mod tests {
         assert_eq!(snapshot.active.len(), 1);
         assert_eq!(snapshot.history.len(), 1);
     }
+    #[test]
+    fn encoder_health_problem_recovers_without_clearing_history() {
+        let service = ProblemService::default();
+        service.update_encoder_health(true, 1, 0, 0);
+        let invalid = service.snapshot();
+        assert_eq!(invalid.active.len(), 1);
+        assert_eq!(invalid.active[0].id, "encoder.valid");
+        assert_eq!(invalid.active[0].domain, ProblemDomain::Encoder);
+        service.update_encoder_health(true, 1, 1, 0);
+        assert!(service.snapshot().active.is_empty());
+        assert_eq!(service.snapshot().history.len(), 1);
+        service.update_encoder_health(true, 1, 0, 1);
+        assert_eq!(service.snapshot().active[0].id, "encoder.fault");
+        service.update_encoder_health(false, 0, 0, 0);
+        assert!(service.snapshot().active.is_empty());
+    }
+
 }
