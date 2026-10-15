@@ -177,11 +177,11 @@ test("Control Architecture and Tuning distinguish saved manual speed gains from 
   for (const page of [control, tuning]) {
     assert.match(page, /PARAM_CTRL_SPEED_KP_EFFECTIVE/);
     assert.match(page, /PARAM_CTRL_SPEED_KI_EFFECTIVE/);
-    assert.match(page, /Effective Kp/);
-    assert.match(page, /Effective Ki/);
+    assert.match(page, /ui\.effective\.kp/);
+    assert.match(page, /ui\.effective\.ki/);
   }
-  assert.match(control, /Manual Kp/);
-  assert.match(control, /Manual Id Kp/);
+  assert.match(control, /ui\.manual\.kp/);
+  assert.match(control, /ui\.manual\.id\.kp/);
 });
 
 
@@ -207,7 +207,7 @@ test("Connection readiness hides unfinished sessions from business pages but ret
   assert.match(shell, /readyConnection = connectionReady \? connection : undefined/);
   assert.match(shell, /<MotorPage connection=\{readyConnection\}/);
   assert.match(shell, /<ScopePage connection=\{readyConnection\}/);
-  assert.match(connection, /Retry initialization/);
+  assert.match(connection, /ui\.retry\.initialization/);
   assert.match(connection, /onRetry/);
   assert.match(shell, /stop-action" disabled=\{!connection \|\| globalStopBusy\}/);
 });

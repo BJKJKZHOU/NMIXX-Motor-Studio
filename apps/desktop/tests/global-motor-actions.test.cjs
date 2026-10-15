@@ -47,7 +47,7 @@ test("Stop acknowledgement never falsely claims controlled motion has finished",
   assert.match(h.read("motorActionNotice"),/Stop accepted; monitor firmware Motor State/);
   assert.equal(h.read("motorState"),"RUN");
   assert.doesNotMatch(h.read("motorActionNotice"),/motor stopped/i);
-  assert.match(source,/localize\("Motor", \$uiLanguage\)\} \{motorState \?\? "unknown"\}/);
+  assert.match(source,/translate\("ui\.motor", \$uiLanguage\)\} \{motorState \?\? "unknown"\}/);
 });
 test("device Stop rejection appears as an error and does not claim success",async()=>{
   const h=harness();
