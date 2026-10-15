@@ -5,9 +5,9 @@
   import { createParameterEditor } from "../parameters/editor";
   import { modifiedParameterIds } from "../parameters/persistence";
   import {
-    MOTION_ACCEL, MOTION_DECEL, MOTION_MAX_SPEED, MOTION_MODE, MOTION_PARAMETER_SYMBOLS,
+    MOTION_ACCEL, MOTION_DECEL, MOTION_MAX_SPEED, MOTION_MODE, MOTION_PROFILE, MOTION_PARAMETER_SYMBOLS,
     SENSORLESS_ENTRY_SPEED, SENSORLESS_STARTUP_CURRENT, TARGET_POSITION, TARGET_SPEED,
-    TARGET_TORQUE, TORQUE_RAMP, modeFromParameter, modeParameterValue, motionParameterText, motionParameterCodec,
+    TARGET_TORQUE, TORQUE_RAMP, modeFromParameter, modeParameterValue, motionProfileLabel, motionProfileOptions, motionParameterText, motionParameterCodec,
   } from "./parameters";
   import {
     executeMotion, initializeMotion, motionPreview, motionPreviewError, motionState,
@@ -31,6 +31,7 @@
   $: writing = $edits.writing;
   $: activeMode = modeFromParameter(metadata[MOTION_MODE], values[MOTION_MODE]);
   $: hasTrajectory = activeMode === "position" || activeMode === "speed" || activeMode === "sensorless-speed";
+  $: selectedProfile = motionProfileLabel(metadata[MOTION_PROFILE], values[MOTION_PROFILE]);
   let actionBusy = false;
   let stopBusy = false;
   let incrementalDraft = "1";
@@ -80,6 +81,10 @@
   function incrementalKeydown(event: KeyboardEvent) {
     if (event.key === "Enter") { event.preventDefault(); void commitIncremental(); (event.currentTarget as HTMLInputElement).blur(); }
     else if (event.key === "Escape") { event.preventDefault(); incrementalDraft = formatHostNumber($motionState.incrementalDeltaTurn); (event.currentTarget as HTMLInputElement).blur(); }
+  }
+  async function setProfile(value: number) {
+    if (motorState === "RUN" || locked(MOTION_PROFILE)) return;
+    try { await edits.select(MOTION_PROFILE, { type: "u8", value }); } catch (error) { onError(error); }
   }
   function canRun(): boolean {
     return !!capabilities?.run && !$parameters.saving && writing.size === 0 && (motorState === "ENABLED" || (motorState === "RUN" && activeMode === "position" && $motionState.repeat))
@@ -149,8 +154,16 @@
         {/if}
       </div></section>
       {#if hasTrajectory}
-        <section class="motion-panel"><div class="motion-panel-title">Trajectory · T / Trapezoidal</div><div class="motion-panel-body motion-grid">
+        <section class="motion-panel"><div class="motion-panel-title">Trajectory · {selectedProfile}</div><div class="motion-panel-body motion-grid">
 <label class="motion-field"><span>Acceleration</span><div class="unit-field"><input class:ramModified={!!metadata[MOTION_ACCEL] && $modifiedParameterIds.has(metadata[MOTION_ACCEL].id)} class:dirty={dirty(MOTION_ACCEL)} value={drafts[MOTION_ACCEL] ?? ""} disabled={locked(MOTION_ACCEL)} oninput={(event) => edits.edit(MOTION_ACCEL, event.currentTarget.value)} onkeydown={(event) => parameterKeydown(event, MOTION_ACCEL)} onblur={() => resetDraft(MOTION_ACCEL)} /><em>rad/s²</em></div></label>
+{#if (activeMode === "position" || activeMode === "speed") && motionProfileOptions(metadata[MOTION_PROFILE]).length > 0}
+<label class="motion-field span-2"><span>Profile</span><select class:ramModified={!!metadata[MOTION_PROFILE] && $modifiedParameterIds.has(metadata[MOTION_PROFILE].id)}
+  value={values[MOTION_PROFILE]?.type === "u8" ? values[MOTION_PROFILE]?.value : ""}
+  disabled={motorState === "RUN" || locked(MOTION_PROFILE)}
+  onchange={(event) => void setProfile(Number(event.currentTarget.value))}>
+  {#each motionProfileOptions(metadata[MOTION_PROFILE]) as option}<option value={option.value}>{option.label}</option>{/each}
+</select></label>
+{/if}
 <label class="motion-field"><span>Deceleration</span><div class="unit-field"><input class:ramModified={!!metadata[MOTION_DECEL] && $modifiedParameterIds.has(metadata[MOTION_DECEL].id)} class:dirty={dirty(MOTION_DECEL)} value={drafts[MOTION_DECEL] ?? ""} disabled={locked(MOTION_DECEL)} oninput={(event) => edits.edit(MOTION_DECEL, event.currentTarget.value)} onkeydown={(event) => parameterKeydown(event, MOTION_DECEL)} onblur={() => resetDraft(MOTION_DECEL)} /><em>rad/s²</em></div></label>
         </div></section>
       {/if}
@@ -160,7 +173,7 @@
       </div>
     </div>
     <div class="motion-simple-right">
-      <div class="motion-plot-header"><div><strong>{activeMode ? modeLabels[activeMode] : "—"}</strong>{#if hasTrajectory}<span>T / Trapezoidal</span>{/if}</div><div class="preview-target">{previewLabel()}</div></div>
+      <div class="motion-plot-header"><div><strong>{activeMode ? modeLabels[activeMode] : "—"}</strong>{#if hasTrajectory}<span>{selectedProfile}</span>{/if}</div><div class="preview-target">{previewLabel()}</div></div>
       <div class="motion-plot-area">
         {#if $motionPreview && $motionPreview.times.length > 1}<MotionTrajectoryPlot preview={$motionPreview} />
         {:else}<div class="motion-plot-empty">{$motionPreviewError ?? "No trajectory preview for this command mode."}</div>{/if}

@@ -8,8 +8,8 @@
   import { parameterEnumValue } from "../parameters/codec";
   import { initializeMotion, motionState, updateMotion, waitMotionUpdates } from "../motion/store";
   import {
-    MOTION_ACCEL, MOTION_DECEL, MOTION_MAX_SPEED, MOTION_MODE, TARGET_POSITION, TARGET_SPEED,
-    TARGET_TORQUE, TORQUE_RAMP, modeFromParameter, modeParameterValue, motionParameterCodec,
+    MOTION_ACCEL, MOTION_DECEL, MOTION_MAX_SPEED, MOTION_MODE, MOTION_PROFILE, TARGET_POSITION, TARGET_SPEED,
+    TARGET_TORQUE, TORQUE_RAMP, modeFromParameter, modeParameterValue, motionProfileOptions, motionParameterCodec,
   } from "../motion/parameters";
   import type { MotionMode, MotionState } from "../motion/types";
   import type { MotorState } from "../motor/state";
@@ -40,7 +40,7 @@
   ];
   const SYMBOLS = [CURRENT_BW, CURRENT_SOURCE, ID_KP, ID_KI, IQ_KP, IQ_KI, SPEED_BW, SPEED_SOURCE,
     SPEED_KP, SPEED_KI, SPEED_EFFECTIVE_KP, SPEED_EFFECTIVE_KI, POSITION_KP, ESO_BW, MOTION_MODE, MOTION_MAX_SPEED, MOTION_ACCEL, MOTION_DECEL,
-    TARGET_POSITION, TARGET_SPEED, TARGET_TORQUE, TORQUE_RAMP];
+    TARGET_POSITION, TARGET_SPEED, TARGET_TORQUE, TORQUE_RAMP, MOTION_PROFILE];
   const motionModeLabels: Record<MotionMode, string> = {
     position: "Position", speed: "Speed", "sensorless-speed": "Sensorless Speed", torque: "Torque",
   };
@@ -202,6 +202,10 @@
     const channel = connection?.channels.find((item) => item.id === id);
     if (!channel || experimentActive() || (rate === "fast" && !channel.supportsFast) || (rate === "normal" && !channel.supportsNormal)) return;
     tuningSelections = { ...tuningSelections, [id]: rate };
+  }
+  async function setMotionProfile(value: number) {
+    if (motionLocked() || locked(MOTION_PROFILE)) return;
+    try { await edits.select(MOTION_PROFILE, { type: "u8", value }); } catch (error) { onError(error); }
   }
   function setDisplayMultiplier(id: number, value: number) {
     if (Number.isFinite(value) && value > 0) displayMultipliers = { ...displayMultipliers, [id]: value };
@@ -365,6 +369,17 @@
             {#if activeMotionMode() === "position" || activeMotionMode() === "speed" || activeMotionMode() === "sensorless-speed"}
               <label class="copy-decel"><input type="checkbox" checked={copyAccelToDecel} disabled={motionLocked()} onchange={(event) => toggleCopyAccelToDecel(event.currentTarget.checked)} />Copy Accel to Decel</label>
             {:else}<span></span>{/if}
+            {#if (activeMotionMode() === "position" || activeMotionMode() === "speed") && motionProfileOptions(metadata[MOTION_PROFILE]).length > 0}
+              <label class="motion-profile"><span>Profile</span>
+                <select class="compact-select" value={values[MOTION_PROFILE]?.type === "u8" ? values[MOTION_PROFILE]?.value : ""}
+                  disabled={motionLocked() || locked(MOTION_PROFILE)}
+                  onchange={(event) => void setMotionProfile(Number(event.currentTarget.value))}>
+                  {#each motionProfileOptions(metadata[MOTION_PROFILE]) as option}
+                    <option value={option.value}>{option.label}</option>
+                  {/each}
+                </select>
+              </label>
+            {/if}
             <div class="motion-actions"><vscode-button disabled={!canRunMotion()}
               title={hasDirtyDraft() ? "Commit or discard tuning edits first" : experimentActive() ? "Tuning experiment is already running" : motorState !== "ENABLED" ? "Enable motor first" : "Run tuning experiment"}
               onclick={() => void runTuningMotion()}>Run</vscode-button>
