@@ -71,7 +71,7 @@ test('connection reset clears previous Automation task and permits the new initi
   h.s.taskError.set('old failure');
   h.s.clearAutomationProjection();
   assert.equal(h.s.taskState._get(),null);
-  assert.deepEqual(h.s.logs._get(),[]);
+  assert.equal(h.s.logs._get().length,0); // Cross-realm array from vm context.
   assert.equal(h.s.taskError._get(),'');
   h.setRead(async()=>task(0,'IDLE'));
   const stop=h.s.startAutomationTracking(()=>true);

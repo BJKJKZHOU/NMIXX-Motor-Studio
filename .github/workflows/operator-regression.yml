@@ -35,6 +35,12 @@ jobs:
     steps:
       - uses: actions/checkout@v4
       - uses: dtolnay/rust-toolchain@stable
+      - name: Install Linux WebKit / GTK and serial system dependencies
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y --no-install-recommends \
+            libgtk-3-dev libwebkit2gtk-4.1-dev libayatana-appindicator3-dev \
+            librsvg2-dev libudev-dev patchelf
       - uses: Swatinem/rust-cache@v2
       - name: Test Rust workspace
         run: cargo test --workspace --locked
