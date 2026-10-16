@@ -29,6 +29,7 @@ function motorHarness() {
     "identifyBusy","startIdentification","applyIdentification","handleActionCompleted"];
   let initial = config[0] + "\n" + functions.map(name => extract(page,name)).join("\n");
   let response = { status: "started", handle: {txn: 1,actionId:0x1101} };
+  let applyReadbackError;
   let confirmResult = false;
   const calls = [], errors = [];
   const context = vm.createContext({
@@ -46,14 +47,15 @@ function motorHarness() {
     },
     window:{confirm:(text)=>{calls.push(["confirm",text]);return confirmResult;}},
     startIdentificationAction:async (key,allowEnable)=>{calls.push(["identification_start",key,allowEnable]);return typeof response==="function"?response(key,allowEnable):response;},
-    applyIdentificationAction:async (key)=>{calls.push(["identification_apply",key]);return {txn:2,actionId:0x1104};},
+    applyIdentificationAction:async (key)=>{calls.push(["identification_apply",key]);return {txn:2,actionId:0x1104,readbackError:applyReadbackError};},
   });
   vm.runInContext(compile(initial),context);
   const get=(src)=>vm.runInContext(src,context);
   return {calls,errors,get,run:(key="rsLs")=>get(`startIdentification("${key}")`),
     complete:(event)=>{context.completed=event;return get("handleActionCompleted(completed)")},
     apply:(key="rsLs")=>get(`applyIdentification("${key}")`),
-    setResponse:(value)=>response=value,setConfirm:(value)=>confirmResult=value};
+    setResponse:(value)=>response=value,setConfirm:(value)=>confirmResult=value,
+    setApplyReadbackError:(value)=>applyReadbackError=value};
 }
 test("Motor Rs/Ls: user Start -> Action accepted -> Running -> valid completion -> Apply -> Applied",async()=>{
   const h=motorHarness();
@@ -70,6 +72,24 @@ test("Motor Rs/Ls: user Start -> Action accepted -> Running -> valid completion 
   assert.equal(h.get("identStates.rsLs.phase"),"applied");
 });
 
+test("Motor preserves an accepted identification handle when initial readback fails",async()=>{
+  const h=motorHarness();
+  h.setResponse({status:"started",handle:{txn:1,actionId:0x1101},readbackError:"cache unavailable"});
+  await h.run();
+  assert.equal(h.get("identStates.rsLs.phase"),"running");
+  assert.match(h.get("identStates.rsLs.message"),/cache unavailable/);
+  h.complete({txn:1,actionId:0x1101,operation:"identification.rsLs",status:"Ok",ok:true,readbackError:"cache unavailable"});
+  assert.equal(h.get("identStates.rsLs.phase"),"unverified");
+});
+test("Motor synchronous Apply stays unverified when accepted but cache synchronization fails",async()=>{
+  const h=motorHarness();
+  await h.run();
+  h.complete({txn:1,actionId:0x1101,operation:"identification.rsLs",status:"Ok",ok:true});
+  h.setApplyReadbackError("post-Apply readback failed");
+  await h.apply();
+  assert.equal(h.get("identStates.rsLs.phase"),"unverified");
+  assert.match(h.get("identStates.rsLs.message"),/post-Apply readback failed/);
+});
 test("Motor blocked preflight shows reasons without proposing false Running",async()=>{
   const h=motorHarness();
   h.setResponse({status:"blocked",issues:[{reason:"Encoder not valid"}]});
@@ -273,6 +293,27 @@ test("Action completion bridge forwards firmware result with readback error and 
   assert.equal(disposed,true);
 });
 
+test("accepted finite identification and Apply preserve their handles after readback failure",async()=>{
+  const ctx=vm.createContext({
+    exports:{},
+    require(name){
+      if(name==="@tauri-apps/api/core")return {invoke:async(name)=>name==="identification_start"
+        ?{status:"started",handle:{txn:4,actionId:0x1101}}:{txn:5,actionId:0x1104}};
+      if(name==="@tauri-apps/api/event")return {listen:async()=>()=>{}};
+      if(name==="svelte/store")return {get:state=>state};
+      if(name==="../parameters/state")return {parameterState:{epoch:1},synchronizeParameters:async()=>{throw Error("readback unavailable");}};
+      throw Error(name);
+    },
+  });
+  vm.runInContext(compile(source("actions/api.ts")),ctx);
+  const started=await ctx.exports.startIdentification("rsLs",false);
+  assert.equal(started.status,"started");
+  assert.equal(started.handle.txn,4);
+  assert.match(started.readbackError,/readback unavailable/);
+  const applied=await ctx.exports.applyIdentification("rsLs");
+  assert.equal(applied.txn,5);
+  assert.match(applied.readbackError,/readback unavailable/);
+});
 test("accepted Motor Stop with failed Parameter refresh reports ambiguous UI state, not rejected command",async()=>{
   const calls=[];
   const ctx=vm.createContext({

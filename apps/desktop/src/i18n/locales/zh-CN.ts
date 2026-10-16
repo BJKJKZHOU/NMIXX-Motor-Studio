@@ -399,5 +399,6 @@ export const zhCNMessages = {
   "automation.execution.notice": "脚本与界面共用 Application API 和设备连接，可修改参数并操作电机及 Scope。Motion 示例使用当前已提交的目标，运行前需要手动使能。脚本以当前操作系统用户权限运行，并非沙盒；仅运行可信文件。",
   "motor.firmware.default.tooltip": "固件 HostSchema 中定义的编译默认值",
   "actions.readback.unverified.label": "结果未确认",
+  "actions.readback.start.warning": "启动命令已接受，但参数读回失败；请观察电机状态。",
   "actions.readback.unverified.explanation": "固件操作已结束，但参数读回失败；请检查设备状态和参数后重试。",
 } satisfies Record<keyof typeof enMessages, string>;

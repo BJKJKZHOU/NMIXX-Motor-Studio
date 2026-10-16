@@ -197,7 +197,7 @@
         }
       }
       if (result.status !== "started") return;
-      setIdentState(identKey, "running");
+      setIdentState(identKey, "running", result.readbackError ?? "");
       pendingHandles = { ...pendingHandles, [handleKey(result.handle)]: { identKey, kind: "identify" } };
       if (earlyCompletion && handleKey(earlyCompletion) === handleKey(result.handle)) handleActionCompleted(earlyCompletion);
     } catch (error) {
@@ -211,9 +211,9 @@
         || identStates[identKey].phase !== "ready" || applyCandidate !== identKey) return;
     setIdentState(identKey, "applying");
     try {
-      await applyIdentificationAction(identKey);
+      const result = await applyIdentificationAction(identKey);
       applyCandidate = null;
-      setIdentState(identKey, "applied");
+      setIdentState(identKey, result.readbackError ? "unverified" : "applied", result.readbackError ?? "");
     }
     catch (error) { setIdentState(identKey, "failed", String(error)); onError(error); }
   }
@@ -308,6 +308,7 @@
 
                     {#if state.phase === "running"}
                       <span class="action-status state-running"><i class="codicon codicon-loading codicon-modifier-spin"></i> {translate("ui.running", $uiLanguage)}</span>
+                      {#if state.message}<span class="action-reason" role="alert">{translate("actions.readback.start.warning", $uiLanguage)} {localizeFeedback(state.message, $uiLanguage)}</span>{/if}
                     {:else if state.phase === "ready"}
                       <!-- svelte-ignore a11y_click_events_have_key_events a11y_no_static_element_interactions -->
                       <vscode-button class="apply-button" disabled={!connection?.commissioning?.identificationApply} onclick={() => void applyIdentification(row.identKey!)} title={translate("motor.identification.apply.tooltip", $uiLanguage)}>{translate("ui.apply", $uiLanguage)}</vscode-button>

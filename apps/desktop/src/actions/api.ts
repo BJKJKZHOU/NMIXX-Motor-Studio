@@ -10,7 +10,15 @@ function identificationWireKind(kind: IdentificationKind): string { return kind 
 export type IdentificationStartResult =
   | { status: "blocked"; issues: PreflightIssue[] }
   | { status: "requires_enable" }
-  | { status: "started"; handle: ActionHandle };
+  | { status: "started"; handle: ActionHandle; readbackError?: string };
+
+// A finite Action has an accepted handle even if its subsequent cache read fails.
+async function reflectedAccepted<T extends object>(operation: Promise<T>): Promise<T & { readbackError?: string }> {
+  const result = await operation;
+  try { await synchronizeParameters(); }
+  catch (error) { return { ...result, readbackError: String(error) }; }
+  return result;
+}
 
 async function reflected<T>(operation: Promise<T>): Promise<T> {
   const result = await operation;
@@ -47,12 +55,13 @@ export async function onActionCompleted(handler: (completion: ActionCompletion) 
   return () => { disposed = true; stop(); };
 }
 export function onMotorStopIssued(handler: () => void): Promise<UnlistenFn> { return listen("motor-stop-issued", () => handler()); }
-export function startIdentification(kind: IdentificationKind, allowEnable: boolean): Promise<IdentificationStartResult> {
-  return reflected(invoke<IdentificationStartResult>("identification_start", { kind: identificationWireKind(kind), allowEnable }));
+export async function startIdentification(kind: IdentificationKind, allowEnable: boolean): Promise<IdentificationStartResult> {
+  const result = await invoke<IdentificationStartResult>("identification_start", { kind: identificationWireKind(kind), allowEnable });
+  return result.status === "started" ? reflectedAccepted(Promise.resolve(result)) : result;
 }
 export function identificationApplyCandidate(): Promise<IdentificationKind | null> {
   return invoke<IdentificationKind | null>("identification_apply_candidate");
 }
-export function applyIdentification(kind: IdentificationKind): Promise<ActionHandle> {
-  return reflected(invoke<ActionHandle>("identification_apply", { kind: identificationWireKind(kind) }));
+export function applyIdentification(kind: IdentificationKind): Promise<ActionHandle & { readbackError?: string }> {
+  return reflectedAccepted(invoke<ActionHandle>("identification_apply", { kind: identificationWireKind(kind) }));
 }
