@@ -156,6 +156,7 @@
     identStates = next;
   }
   function identifyBusy() { return startingIdent !== null || Object.values(identStates).some((state) => state.phase === "running" || state.phase === "applying"); }
+  function hasPendingEdits() { return $edits.dirty.size > 0 || writing.size > 0; }
   async function commit(symbol: string) {
     if (!isWritable(symbol) || writing.has(symbol)) return;
     try {
@@ -178,7 +179,7 @@
   }
   async function startIdentification(identKey: IdentKey) {
     const config = IDENT_CONFIGS[identKey];
-    if (!identificationAvailable(identKey) || identifyBusy()) return;
+    if (!identificationAvailable(identKey) || identifyBusy() || hasPendingEdits()) return;
     const token = generation;
     startingIdent = identKey;
     earlyCompletion = undefined;
@@ -208,7 +209,7 @@
   }
   async function applyIdentification(identKey: IdentKey) {
     if (!connection?.commissioning?.identificationApply || identifyBusy()
-        || identStates[identKey].phase !== "ready" || applyCandidate !== identKey) return;
+        || identStates[identKey].phase !== "ready" || applyCandidate !== identKey || hasPendingEdits()) return;
     setIdentState(identKey, "applying");
     try {
       const result = await applyIdentificationAction(identKey);
@@ -259,6 +260,7 @@
     {:else}
       <div class="motor-sheet">
         {#if motorState !== "DISABLED"}<div class="state-note">{translate("ui.disable.the.motor.before.editing.its.model.identification.currents.or.commis", $uiLanguage)}</div>{/if}
+        {#if $edits.dirty.size > 0}<div class="state-note" role="status">{translate("commissioning.uncommitted.settings", $uiLanguage)}</div>{/if}
         <section class="motor-section">
           <div class="section-title">{translate("ui.motor.parameters", $uiLanguage)}</div>
 
@@ -301,7 +303,7 @@
                     <!-- svelte-ignore a11y_click_events_have_key_events a11y_no_static_element_interactions -->
                     <vscode-button
                       secondary
-                      disabled={!identificationAvailable(row.identKey) || identifyBusy()}
+                      disabled={!identificationAvailable(row.identKey) || identifyBusy() || hasPendingEdits()}
                       title={identificationAvailable(row.identKey) ? `Start ${startLabel}` : `${startLabel} is not exposed by this firmware`}
                       onclick={() => void startIdentification(row.identKey!)}
                     >{startLabel}</vscode-button>
@@ -311,7 +313,7 @@
                       {#if state.message}<span class="action-reason" role="alert">{translate("actions.readback.start.warning", $uiLanguage)} {localizeFeedback(state.message, $uiLanguage)}</span>{/if}
                     {:else if state.phase === "ready"}
                       <!-- svelte-ignore a11y_click_events_have_key_events a11y_no_static_element_interactions -->
-                      <vscode-button class="apply-button" disabled={!connection?.commissioning?.identificationApply} onclick={() => void applyIdentification(row.identKey!)} title={translate("motor.identification.apply.tooltip", $uiLanguage)}>{translate("ui.apply", $uiLanguage)}</vscode-button>
+                      <vscode-button class="apply-button" disabled={!connection?.commissioning?.identificationApply || hasPendingEdits()} onclick={() => void applyIdentification(row.identKey!)} title={translate("motor.identification.apply.tooltip", $uiLanguage)}>{translate("ui.apply", $uiLanguage)}</vscode-button>
                     {:else if state.phase === "applying"}
                       <span class="action-status state-running"><i class="codicon codicon-loading codicon-modifier-spin"></i> {translate("ui.applying", $uiLanguage)}</span>
                     {:else if state.phase === "applied"}

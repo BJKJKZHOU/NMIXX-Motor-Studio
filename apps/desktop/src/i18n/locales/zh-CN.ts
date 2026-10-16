@@ -390,6 +390,7 @@ export const zhCNMessages = {
   "ui.encoder.feedback.protocol": "编码器反馈协议",
   "motor.parameters.aria": "电机参数",
   "motor.identification.settings.aria": "辨识配置",
+  "commissioning.uncommitted.settings": "存在未提交的参数修改，请先按 Enter 写入或按 Esc 放弃，然后再启动操作。",
   "motor.identification.apply.tooltip": "将最近一次有效辨识结果写入当前参数",
   "automation.task.id.label": "任务",
   "automation.task.exit.code.label": "退出码",

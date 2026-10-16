@@ -389,6 +389,7 @@ export const enMessages = {
   "ui.encoder.feedback.protocol": "Encoder feedback protocol",
   "motor.parameters.aria": "Motor parameters",
   "motor.identification.settings.aria": "Identification settings",
+  "commissioning.uncommitted.settings": "Commit or discard edited settings (Enter to write, Esc to discard) before starting an operation.",
   "motor.identification.apply.tooltip": "Apply the latest valid identification result to Active parameters",
   "automation.task.id.label": "task",
   "automation.task.exit.code.label": "exit",

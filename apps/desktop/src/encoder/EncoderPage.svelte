@@ -90,6 +90,7 @@
   function unitFor(symbol: string): string { return metadata[symbol]?.unit ?? ""; }
   function parameterLabel(symbol: string, fallback?: string): string { return localize(metadata[symbol]?.label ?? fallback ?? "Unavailable", $uiLanguage); }
   function isWritable(symbol: string): boolean { return !$parameters.loading && !$parameters.saving && canWriteInMotorState(metadata[symbol], motorState); }
+  function hasPendingEdits() { return $edits.dirty.size > 0 || writing.size > 0; }
   function phaseSearchAvailable(): boolean { return connection?.commissioning?.phaseSearch ?? false; }
   function setZeroAvailable(): boolean { return connection?.commissioning?.positionSetZero ?? false; }
   function homingAvailable(): boolean { return connection?.commissioning?.homing ?? false; }
@@ -121,7 +122,7 @@
   function handleKeydown(event: KeyboardEvent, symbol: string) { edits.keydown(event, symbol, onError); }
 
   async function startPhaseSearch() {
-    if (!connection || !phaseSearchAvailable() || phaseState === "running") return;
+    if (!connection || !phaseSearchAvailable() || phaseState === "running" || hasPendingEdits()) return;
     const request = ++phaseRequestGeneration;
     phaseState = "running"; phaseMessage = ""; pendingPhaseHandle = null; earlyPhaseCompletion = undefined;
     try {
@@ -162,7 +163,7 @@
     catch (error) { onError(error); } finally { zeroActionBusy = false; }
   }
   async function startHoming() {
-    if (!homingAvailable() || homingState === "running") return;
+    if (!homingAvailable() || homingState === "running" || hasPendingEdits()) return;
     const request = ++homingRequestGeneration;
     homingState = "running"; homingMessage = ""; pendingHomingHandle = null; earlyHomingCompletion = undefined;
     try {
@@ -187,6 +188,7 @@
       <div class="empty-state"><i class="codicon codicon-plug"></i><div>{translate("ui.connect.a.device.to.configure.encoder.feedback", $uiLanguage)}</div></div>
     {:else}
       <div class="encoder-sheet">
+        {#if $edits.dirty.size > 0}<div class="state-note" role="status">{translate("commissioning.uncommitted.settings", $uiLanguage)}</div>{/if}
         <div class="encoder-columns">
           <div class="primary-column">
             <section class="encoder-section">
@@ -242,7 +244,7 @@
                 <div class="field-label">{translate("ui.phase.search", $uiLanguage)}</div>
                 <div class="action-line">
                   <!-- svelte-ignore a11y_click_events_have_key_events a11y_no_static_element_interactions -->
-                  <vscode-button secondary disabled={!phaseSearchAvailable() || phaseState === "running"}
+                  <vscode-button secondary disabled={!phaseSearchAvailable() || phaseState === "running" || hasPendingEdits()}
                     title={phaseSearchAvailable() ? "Start phase search" : "Required phase-search capabilities are not exposed by this firmware"}
                     onclick={() => void startPhaseSearch()}>{translate("ui.start", $uiLanguage)}</vscode-button>
                   {#if phaseState === "running"}<span class="action-status state-running"><i class="codicon codicon-loading codicon-modifier-spin"></i> {translate("ui.running", $uiLanguage)}</span>
@@ -273,7 +275,7 @@
                 <vscode-button secondary disabled={!setZeroAvailable() || zeroActionBusy}
                   title={setZeroAvailable() ? "Set current position as mechanical zero" : "Position-zero operation is not exposed by this firmware"}
                   onclick={() => void setCurrentAsZero()}>{translate("ui.set.current.as.zero", $uiLanguage)}</vscode-button>
-                <vscode-button secondary disabled={!homingAvailable() || homingState === "running"}
+                <vscode-button secondary disabled={!homingAvailable() || homingState === "running" || hasPendingEdits()}
                   title={homingAvailable() ? "Start software homing" : "Homing operation is not exposed by this firmware"}
                   onclick={() => void startHoming()}>{translate("ui.software.homing", $uiLanguage)}</vscode-button>
               </div>

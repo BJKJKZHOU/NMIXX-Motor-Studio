@@ -256,7 +256,7 @@
       </aside><div class="control-domain-page"><ControlPage connection={readyConnection} {motorState} loop={activeControlLoop} onError={setError} /></div></div>
     {:else if activePage === "tuning"}<div class="domain-page-container"><ControlTuningPage connection={readyConnection} {motorState} onError={setError} /></div>
     {:else if activePage === "motion"}<div class="domain-page-container"><MotionPage capabilities={readyConnection?.motion} {motorState} onError={setError} /></div>
-    {:else if activePage === "parameters"}<div class="domain-page-container"><ParameterTablePage connection={readyConnection} onError={setError} /></div>
+    {:else if activePage === "parameters"}<div class="domain-page-container"><ParameterTablePage connection={readyConnection} {motorState} onError={setError} /></div>
     {:else if activePage === "events"}<div class="domain-page-container"><EventsPage connection={readyConnection} onNavigate={(page) => activePage = page} onError={setError} /></div>
     {:else if activePage === "automation"}<div class="domain-page-container"><AutomationHost connected={!!readyConnection} /></div>
     {:else if activePage !== "analysis"}
