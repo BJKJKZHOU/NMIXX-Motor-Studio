@@ -34,6 +34,28 @@ jobs:
       - name: Compile Svelte UI and verify types
         run: npm run build
 
+  browser:
+    name: Browser operator simulation (mock IPC)
+    runs-on: ubuntu-latest
+    defaults:
+      run:
+        working-directory: apps/desktop
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: "22"
+          cache: npm
+          cache-dependency-path: apps/desktop/package-lock.json
+      - run: npm ci
+      - name: Install Playwright and Chromium
+        run: |
+          python3 -m venv .venv-ui
+          .venv-ui/bin/pip install -r scripts/requirements-startup.txt
+          .venv-ui/bin/python -m playwright install --with-deps chromium
+      - name: Exercise real Svelte UI with mocked Tauri IPC
+        run: .venv-ui/bin/python scripts/test-startup.py --browser chromium
+
   application:
     name: Rust Application and simulated protocol
     runs-on: ubuntu-latest

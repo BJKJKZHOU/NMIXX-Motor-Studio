@@ -155,6 +155,23 @@ Examples include:
 
 The GUI may request/display structured preflight information and navigate the user to another domain such as Limits / Safety, but the authoritative check is repeated when the Action starts.
 
+Clicking Rs/Ls, Flux, or J/B Start is one explicit operation. The desktop sends a
+single semantic identification request with permission for Application-owned
+mode/Enable sequencing. It does not ask for a second confirmation, re-send the
+request after a modal dialog, or require the operator to expose the firmware's
+internal IDENT mode. Application performs preflight, selects IDENT while
+DISABLED, and enables if required before dispatching the finite Action; an
+already ENABLED motor in a different mode may be disabled and re-enabled by
+Application, as with Encoder Phase Search. Starting from RUN remains rejected.
+
+The Motor page displays this behavior and possible motor rotation as an
+informational note, not an interactive modal. Blocked preflight appears as
+"Prerequisites not met" with reasons, separately from an Action that actually
+started and failed. The global Stop control remains the way to interrupt an
+operation. Identification completion does **not** automatically disable the
+motor, and Apply remains a separate user action. Automation and CLI may still
+use the explicit allowEnable option to constrain their own scripts.
+
 ## Global motor controls
 
 Motor identification actions are domain actions; global motor state controls remain in the application shell.

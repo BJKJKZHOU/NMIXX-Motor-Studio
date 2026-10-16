@@ -89,6 +89,7 @@ def main() -> int:
                 try:
                     for locale in LOCALES:
                         context = browser.new_context(viewport={"width": 1400, "height": 900})
+                        context.add_init_script("localStorage.setItem('nmixx.ui.language', 'en')")
                         # Test-scoped POSIX-locale injection before application imports.
                         # Production code does not modify Navigator or Intl.
                         context.add_init_script("""
@@ -120,7 +121,7 @@ def main() -> int:
                                     expect(page.locator(".scope-echarts-view canvas")).to_be_visible()
                                 assert not errors, f"{locale} / {title}: {errors}"
                             calls = page.evaluate("window.__nmixxStartupRequests")
-                            allowed = {"device_list", "device_disconnect", "action_list", "motion_get"}
+                            allowed = {"device_list", "device_disconnect", "action_list", "motion_get", "automation_snapshot"}
                             assert set(calls) <= allowed, f"Unexpected IPC: {calls}"
                             page.goto(url + "?preview=1", wait_until="networkidle")
                             expect(page.locator(".motion-trajectory-host canvas")).to_be_visible()
@@ -128,6 +129,124 @@ def main() -> int:
                             print(f"PASS {args.browser} / {locale}: workbench, eight pages, Scope and Motion preview")
                         finally:
                             context.close()
+                    # Real Svelte/VSCode Elements event test. Synthetic Tauri IPC replies,
+                    # but the user clicks actual Web Components in Chromium.
+                    context = browser.new_context(viewport={"width": 1400, "height": 900})
+                    context.add_init_script("localStorage.setItem('nmixx.ui.language', 'en')")
+                    page = context.new_page()
+                    errors = []
+                    page.on("pageerror", lambda error: errors.append(str(error)))
+                    try:
+                        page.goto(url + "?tuning-tabs=1", wait_until="networkidle")
+                        tabs = page.locator("vscode-tab-header")
+                        expect(tabs).to_have_count(3)
+                        expect(page.locator(".scope-echarts-view canvas")).to_be_visible()
+                        tabs.nth(1).click()
+                        expect(page.locator("vscode-tabs")).to_have_attribute("selected-index", "1")
+                        expect(page.locator(".tuning-channel-list")).to_be_visible()
+                        page.locator(".tuning-channel-row input[type=checkbox]").check()
+                        expect(page.locator(".tuning-channel-row input[type=checkbox]")).to_be_checked()
+                        tabs.nth(2).click()
+                        expect(page.locator("vscode-tabs")).to_have_attribute("selected-index", "2")
+                        expect(page.locator(".tuning-scale-list")).to_be_visible()
+                        tabs.nth(0).click()
+                        expect(page.locator(".scope-echarts-view canvas")).to_be_visible()
+                        # Keyboard-driven selection belongs to VSCode Elements, not
+                        # application-authored extra keydown handlers.
+                        tabs.nth(0).focus()
+                        page.keyboard.press("ArrowRight")
+                        page.keyboard.press("Enter")
+                        expect(page.locator("vscode-tabs")).to_have_attribute("selected-index", "1")
+                        assert not errors, f"Tuning tab browser errors: {errors}"
+                        assert page.evaluate("window.__nmixxUIErrors") == []
+                        print("PASS chromium: Tuning Waveform/Channels/Scale clicks, keyboard and chart return")
+                    finally:
+                        context.close()
+
+                    # Script text stays editable. Run dispatches only the current editor
+                    # snapshot, and Cancel uses the shared Automation task API.
+                    context = browser.new_context(viewport={"width": 1400, "height": 900})
+                    context.add_init_script("localStorage.setItem('nmixx.ui.language', 'en')")
+                    page = context.new_page()
+                    errors = []
+                    page.on("pageerror", lambda error: errors.append(str(error)))
+                    try:
+                        page.goto(url + "?automation-script=1", wait_until="networkidle")
+                        expect(page.locator(".automation-workspace")).to_be_visible()
+                        assert not errors, f"Automation mount errors: {errors}"
+                        page.locator(".toolbar-actions button:has(.codicon-new-file)").click()
+                        expect(page.locator(".script-tab")).to_have_count(1)
+                        expect(page.locator(".monaco-editor")).to_be_visible(timeout=15000)
+                        page.locator(".monaco-editor").click()
+                        page.keyboard.insert_text("\\nprint('browser-edited')\\n")
+                        expect(page.locator(".script-tab .dirty-mark")).to_be_visible()
+                        page.locator(".toolbar-actions button:has(.codicon-new-file)").click()
+                        expect(page.locator(".script-tab")).to_have_count(2)
+                        # The edited first model must survive a switch to the
+                        # second tab before Run captures its source.
+                        page.locator(".script-tab").first.locator(".tab-name").click()
+                        expect(page.locator(".script-tab.active")).to_contain_text("Untitled-1.py")
+                        page.locator(".run-button").click()
+                        expect(page.locator(".output-state")).to_contain_text("RUNNING")
+                        commands = page.evaluate("window.__nmixxStartupArgs")
+                        starts = [entry for entry in commands if entry["command"] == "automation_start"]
+                        assert len(starts) == 1, starts
+                        assert "browser-edited" in starts[0]["args"]["spec"]["source"], starts
+                        # Locate the domain Cancel control by its stable icon:
+                        # language labels and accessible names may vary with locale.
+                        page.locator(".toolbar-actions button:has(.codicon-debug-stop)").click()
+                        expect(page.locator(".output-state")).to_contain_text("CANCELLED")
+                        assert not errors, f"Automation browser errors: {errors}"
+                        print("PASS chromium: Monaco editing, current-source Run IPC, Cancel feedback")
+                    finally:
+                        context.close()
+                    # Full App shell with a connected, simulated device:
+                    # the displayed Enable/Disable state must come from the
+                    # same Parameter readbacks observed by the business pages.
+                    context = browser.new_context(viewport={"width": 1400, "height": 900})
+                    context.add_init_script("localStorage.setItem('nmixx.ui.language', 'en')")
+                    page = context.new_page()
+                    errors = []
+                    page.on("pageerror", lambda error: errors.append(str(error)))
+                    try:
+                        page.goto(url + "?motor-controls=1", wait_until="networkidle")
+                        expect(page.locator("#connection-port")).to_have_value("COM7")
+                        power = page.locator(".global-actions > button").first
+                        expect(power).to_contain_text("UNKNOWN")
+                        page.locator(".connection-actions vscode-button").click()
+                        expect(page.locator(".connection-status")).to_contain_text("AxDr_L")
+                        expect(power).to_contain_text("DISABLED")
+                        expect(page.locator(".global-actions > button.motor-disabled")).to_have_count(1)
+                        # Starting identification has its own semantic API. Blocked
+                        # preflight reports in-page text without an Enable modal.
+                        dialogs = []
+                        page.on("dialog", lambda dialog: (dialogs.append(dialog.message), dialog.dismiss()))
+                        page.locator('nav.activity-bar button[title="Motor"]').click()
+                        page.locator('vscode-button[title="Start Rs/Ls"]').click()
+                        expect(page.locator(".action-status").filter(has_text="Prerequisites not met")).to_have_count(1)
+                        ids = [entry for entry in page.evaluate("window.__nmixxStartupArgs")
+                          if entry["command"] == "identification_start"]
+                        assert len(ids) == 1 and ids[0]["args"]["allowEnable"] is True, ids
+                        assert not dialogs, dialogs
+                        assert page.evaluate("window.__nmixxStartupRequests").count("motor_enable") == 0
+                        page.locator('nav.activity-bar button[title="Connection"]').click()
+                        power.click()
+                        expect(power).to_contain_text("ENABLED")
+                        expect(page.locator(".global-actions > button.motor-enabled")).to_have_count(1)
+                        page.locator(".global-actions .stop-action").click()
+                        expect(power).to_contain_text("ENABLED")
+                        power.click()
+                        expect(power).to_contain_text("DISABLED")
+                        commands = page.evaluate("window.__nmixxStartupRequests")
+                        for command in ("motor_enable", "motor_stop", "motor_disable"):
+                            assert commands.count(command) == 1, commands
+                        page.locator(".connection-actions vscode-button").click()
+                        expect(page.locator(".connection-status")).to_contain_text("Disconnected")
+                        expect(power).to_contain_text("UNKNOWN")
+                        assert not errors, f"Global control browser errors: {errors}"
+                        print("PASS chromium: Connect, modal-free blocked identification, Motor Enable/Stop/Disable and Disconnect")
+                    finally:
+                        context.close()
                 finally:
                     browser.close()
             return 0
