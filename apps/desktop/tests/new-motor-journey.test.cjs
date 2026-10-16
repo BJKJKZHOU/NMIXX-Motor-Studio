@@ -310,7 +310,7 @@ test("new motor from USB connection through three identifications, phase search 
     stopActionBusy:false,experimentCommandRevision:0,experimentState:"IDLE",experimentMessage:"",
     experimentSnapshot:undefined,experimentRefreshBusy:false,generation:0,
     waveformTab:"channels",tuningTimePerDiv:0.02,
-    tuningSelections:{},displayMultipliers:{},writing:new Set(),
+    tuningSelections:{},displayMultipliers:{},tuningSelectionRevision:0,writing:new Set(),
     $parameters:{loading:false,saving:false},$edits:{dirty:new Set()},
     $motionState:{incrementalDeltaTurn:1},incrementalDraft:"1",
     activeMotionMode:()=>device.mode==="POSITION"?"position":undefined,
