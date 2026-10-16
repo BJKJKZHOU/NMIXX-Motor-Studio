@@ -70,19 +70,44 @@ Disconnect revokes script access to the old session and performs existing device
 teardown. Killing an interpreter alone is not device cleanup. A stopped or failed
 task cannot send a delayed Run after cancellation or reconnection.
 
-## Desktop page
+## Desktop script workspace
 
-The Automation page provides script loading, execution, cancellation, progress,
-output, error and exit status, and log export. A selected script is never run just
-because the page was opened or a device connected. The same script contents shown
-for the run must be the contents executed.
+Automation is a general-purpose Python scripting workspace, not a list of fixed
+device tests. The normal layout is a collapsible script explorer, file/editor
+tabs, a writable Python code editor, and an output panel underneath.
 
-Script editing and terminal emulation are presentation tools, not the automation
-architecture. Use the already approved Monaco/xterm infrastructure when those
-interactive features are implemented; do not build a replacement editor or shell.
-A plain read-only source preview and log is not to be described as an IDE/terminal.
-Load page-only presentation dependencies lazily so Automation cannot prevent the
-Connection workspace from mounting.
+- **New / Open / Save / Save As:** users can create and edit multiple documents;
+  the active tab is the current script. Opening the same path again must not
+  discard an existing tab's uncommitted changes. Dirty tabs are identified
+  visibly and prompt before closing.
+- **Examples:** runtime, encoder, and motion examples are files in the explorer,
+  not separate operations in the primary toolbar. Opening a bundled example
+  creates an editable tab; the example asset cannot be overwritten by Save.
+- **Run / Cancel:** the toolbar has one generic Run for the active tab, and one
+  Cancel for the current Application task. Running a script does not implicitly
+  Enable, Run or Stop the motor: those are explicit calls inside the Python API.
+- **Live editing:** users can keep changing the source while an earlier run is
+  active. Each Run captures the exact editor contents at dispatch time; later
+  edits affect the *next* run only. No implicit save occurs on Run.
+- **State ownership:** tabs and text drafts are frontend host state and survive
+  navigation. Execution, output, task IDs, cancellation, resource arbitration,
+  and connection ownership remain in Rust Application. Multiple tabs do not
+  create multiple concurrent motor-control tasks.
+- **Output:** task log and final status remain visible even when the user switches
+  script tabs. It is a log viewer, not a second command terminal.
+- **Settings:** interpreter and script timeout are secondary controls, not
+  permanent toolbar fields.
+
+Use the approved local Monaco Editor for live Python editing, lazy-loaded when
+Automation is entered. A simple text editor may be used if Monaco cannot load,
+but editing itself must remain available. Do not load an editor from a CDN or
+instantiate another shell/device transport.
+
+Local file Open reads UTF-8 source into a document. Explicit Save writes the
+current source to the chosen local file; Save As must not silently overwrite an
+existing path. The backend still runs the source snapshot in its own temporary
+script and uses its private standard-input/output API channel. The interactive
+code editor does not replace that protocol.
 
 Run only trusted local scripts. A restricted Application API is not an operating
 system sandbox: the selected interpreter still has the user's normal OS access.
