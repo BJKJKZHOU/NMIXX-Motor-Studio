@@ -84,3 +84,25 @@ test("Run uses current editor text and no feature-specific top-level script laun
   assert.doesNotMatch(page,/selectBuiltin\("motion"\)/);
   assert.match(source("automation/ScriptEditor.svelte"),/onEdit\(tab\.id, value\)/);
 });
+
+test("editing a script changes the next Run source but never dispatches a device command by itself",async()=>{
+  const page=source("automation/AutomationPage.svelte");
+  const handler=page.match(/^  function runCurrent\(\) \{[\s\S]*?^  \}/m)?.[0];
+  assert.ok(handler);
+  const snapshots=[],ctx=vm.createContext({
+    connected:true,activeTask:false,busy:false,
+    $activeScript:{name:"motor.py",source:"print('first')",workingDirectory:null},
+    perform:async operation=>operation(),
+    runSelected:async document=>{snapshots.push({...document});},
+  });
+  const compiled=ts.transpileModule(handler,{compilerOptions:{target:ts.ScriptTarget.ES2022,module:ts.ModuleKind.None}}).outputText;
+  vm.runInContext(compiled,ctx);
+  vm.runInContext("runCurrent()",ctx);
+  ctx.$activeScript.source="from nmixx import client\\nclient.run()";
+  assert.equal(snapshots.length,1);
+  assert.equal(snapshots[0].source,"print('first')");
+  vm.runInContext("runCurrent()",ctx);
+  assert.equal(snapshots.length,2);
+  assert.match(snapshots[1].source,/client.run/);
+  assert.equal(snapshots[0].source,"print('first')");
+});
