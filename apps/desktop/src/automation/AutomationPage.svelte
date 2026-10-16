@@ -35,7 +35,7 @@
     if (!file) return;
     input.value = "";
     if (file.size > 262144) { error = "Script must not exceed 262144 bytes"; return; }
-    try { importScript(file.name, await file.text()); }
+    try { importScript(file.name, await file.text()); saveAsVisible = false; }
     catch (failure) { error = String(failure); }
   }
   async function openFile() {
@@ -43,8 +43,14 @@
     if (!path) throw new Error("Enter the script path");
     await openLocalScript(path);
     openPath = "";
+    saveAsVisible = false;
   }
   function createFile() { newScript(); saveAsVisible = false; }
+  function activateTab(id: string) { selectScript(id); saveAsVisible = false; }
+  async function selectExample(kind: "diagnosis" | "encoder" | "motion") {
+    await openExample(kind);
+    saveAsVisible = false;
+  }
   function closeTab(id: string) {
     const tab = $scriptTabs.find((item) => item.id === id);
     if (!tab) return;
@@ -167,7 +173,7 @@
         <div class="explorer-section">
           <div class="explorer-section-title">{translate("automation.workspace.opened", $uiLanguage)}</div>
           {#each $scriptTabs as tab (tab.id)}
-            <button class:selected={$activeScriptId === tab.id} class="explorer-file" onclick={() => selectScript(tab.id)}>
+            <button class:selected={$activeScriptId === tab.id} class="explorer-file" onclick={() => activateTab(tab.id)}>
               <i class="codicon codicon-file-code"></i>
               <span>{tab.name}</span>{#if isDirty(tab)}<span class="dirty-mark">●</span>{/if}
             </button>
@@ -175,9 +181,9 @@
         </div>
         <div class="explorer-section">
           <div class="explorer-section-title">{translate("automation.workspace.examples", $uiLanguage)}</div>
-          <button class="explorer-file" onclick={() => void perform(() => openExample("diagnosis"))}><i class="codicon codicon-file-code"></i> runtime_diagnosis.py</button>
-          <button class="explorer-file" onclick={() => void perform(() => openExample("encoder"))}><i class="codicon codicon-file-code"></i> encoder_turn_diagnosis.py</button>
-          <button class="explorer-file" onclick={() => void perform(() => openExample("motion"))}><i class="codicon codicon-file-code"></i> motion_workflow.py</button>
+          <button class="explorer-file" onclick={() => void perform(() => selectExample("diagnosis"))}><i class="codicon codicon-file-code"></i> runtime_diagnosis.py</button>
+          <button class="explorer-file" onclick={() => void perform(() => selectExample("encoder"))}><i class="codicon codicon-file-code"></i> encoder_turn_diagnosis.py</button>
+          <button class="explorer-file" onclick={() => void perform(() => selectExample("motion"))}><i class="codicon codicon-file-code"></i> motion_workflow.py</button>
         </div>
       </aside>
     {/if}
@@ -189,7 +195,7 @@
         {/if}
         {#each $scriptTabs as tab (tab.id)}
           <div class:active={$activeScriptId === tab.id} class="script-tab">
-            <button class="tab-name" title={tab.path ?? tab.name} onclick={() => selectScript(tab.id)}>
+            <button class="tab-name" title={tab.path ?? tab.name} onclick={() => activateTab(tab.id)}>
               <i class="codicon codicon-file-code"></i> {tab.name}{#if isDirty(tab)} <span class="dirty-mark">●</span>{/if}
             </button>
             <button class="tab-close" aria-label={translate("automation.workspace.close", $uiLanguage)}
