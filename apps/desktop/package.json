@@ -22,7 +22,8 @@
     "@vscode-elements/elements": "2.5.1",
     "@vscode/codicons": "0.0.45",
     "echarts": "6.1.0",
-    "monaco-editor": "0.57.0"
+    "monaco-editor": "0.57.0",
+    "@tauri-apps/plugin-dialog": "2.7.3"
   },
   "devDependencies": {
     "@sveltejs/vite-plugin-svelte": "7.3.0",

@@ -2,9 +2,10 @@
   import { uiLanguage, localize, localizeFeedback, translate } from "../i18n";
   import { onMount } from "svelte";
   import { cancelTask, exportLog } from "./api";
+  import { open as openFileDialog, save as saveFileDialog } from "@tauri-apps/plugin-dialog";
   import {
     activeScript, activeScriptId, closeScript, editScript, isDirty, newScript,
-    importScript, openExample, openLocalScript, saveCurrentScript, scriptTabs, selectScript,
+    openExample, openLocalScript, saveCurrentScript, scriptTabs, selectScript,
   } from "./documents";
   import { isActive, logs, refreshTask, runSelected, scriptSettings, taskError, taskState } from "./state";
   import ScriptEditor from "./ScriptEditor.svelte";
@@ -15,11 +16,6 @@
   let feedback = "";
   let explorerVisible = true;
   let settingsVisible = false;
-  let saveAsVisible = false;
-  let logExportVisible = false;
-  let openPath = "";
-  let savePath = "";
-  let filePicker: HTMLInputElement;
   $: activeTask = isActive($taskState?.state);
   $: output = $logs.map((line) => `[${(line.elapsedMs / 1000).toFixed(3)}s ${line.source}] ${line.text}`).join("\n");
 
@@ -29,27 +25,17 @@
     try { await operation(); } catch (failure) { error = String(failure); }
     finally { busy = false; }
   }
-  async function chooseFile(event: Event) {
-    const input = event.currentTarget as HTMLInputElement;
-    const file = input.files?.[0];
-    if (!file) return;
-    input.value = "";
-    if (file.size > 262144) { error = "Script must not exceed 262144 bytes"; return; }
-    try { importScript(file.name, await file.text()); saveAsVisible = false; }
-    catch (failure) { error = String(failure); }
-  }
   async function openFile() {
-    const path = openPath.trim();
-    if (!path) throw new Error("Enter the script path");
-    await openLocalScript(path);
-    openPath = "";
-    saveAsVisible = false;
+    const path = await openFileDialog({
+      multiple: false, directory: false,
+      filters: [{ name: "Python", extensions: ["py"] }],
+    });
+    if (typeof path === "string") await openLocalScript(path);
   }
-  function createFile() { newScript(); saveAsVisible = false; }
-  function activateTab(id: string) { selectScript(id); saveAsVisible = false; }
+  function createFile() { newScript(); }
+  function activateTab(id: string) { selectScript(id); }
   async function selectExample(kind: "diagnosis" | "encoder" | "motion") {
     await openExample(kind);
-    saveAsVisible = false;
   }
   function closeTab(id: string) {
     const tab = $scriptTabs.find((item) => item.id === id);
@@ -57,20 +43,24 @@
     if (isDirty(tab) && !window.confirm(translate("automation.workspace.discard.prompt", $uiLanguage))) return;
     closeScript(id);
   }
-  function promptSaveAs() {
-    if (!$activeScript) return;
-    savePath = $activeScript.path ?? "";
-    saveAsVisible = true;
+  async function saveAs() {
+    const current = $activeScript;
+    if (!current) return;
+    const path = await saveFileDialog({
+      defaultPath: current.path ?? current.name,
+      filters: [{ name: "Python", extensions: ["py"] }],
+    });
+    if (path) {
+      // The native Save dialog confirms replacement of an existing target.
+      await saveCurrentScript(path, true);
+    }
   }
   function saveCurrent() {
-    if (!$activeScript || busy) return;
-    if (!$activeScript.path || $activeScript.example) { promptSaveAs(); return; }
-    void perform(() => saveCurrentScript());
-  }
-  async function saveAs() {
-    if (!savePath.trim()) throw Error("Enter a script file path");
-    await saveCurrentScript(savePath.trim());
-    saveAsVisible = false;
+    const current = $activeScript;
+    if (!current || busy) return;
+    void perform(current.path && !current.example
+      ? () => saveCurrentScript()
+      : saveAs);
   }
   function runCurrent() {
     if (!connected || activeTask || busy || !$activeScript) return;
@@ -88,8 +78,12 @@
     void perform(async () => { await cancelTask($taskState!.taskId); await refreshTask(); });
   }
   async function saveLog() {
-    if (!$scriptSettings.logPath.trim()) throw new Error("Enter a new output file path");
-    await exportLog($scriptSettings.logPath);
+    const path = await saveFileDialog({
+      defaultPath: "script.log",
+      filters: [{ name: "Log", extensions: ["log", "txt"] }],
+    });
+    if (!path) return;
+    await exportLog(path);
     feedback = "Log saved. Existing files are never overwritten.";
   }
 
@@ -100,21 +94,19 @@
 </script>
 
 <div class="automation-workspace">
-  <input class="hidden-file-picker" type="file" accept=".py,.txt" bind:this={filePicker}
-    aria-label={translate("automation.workspace.choose.file", $uiLanguage)} onchange={(event) => void chooseFile(event)} />
   <header class="page-toolbar">
     <div class="page-title">{translate("automation.workspace.title", $uiLanguage)}</div>
     <div class="toolbar-actions">
       <button class="tool-button" title={translate("automation.workspace.new", $uiLanguage)} onclick={createFile}>
         <i class="codicon codicon-new-file"></i> {translate("automation.workspace.new", $uiLanguage)}
       </button>
-      <button class="tool-button" title={translate("automation.workspace.open", $uiLanguage)} onclick={() => filePicker?.click()}>
+      <button class="tool-button" title={translate("automation.workspace.open", $uiLanguage)} onclick={() => void perform(openFile)}>
         <i class="codicon codicon-folder-opened"></i> {translate("automation.workspace.open", $uiLanguage)}
       </button>
       <button class="tool-button" disabled={!$activeScript || busy} onclick={saveCurrent}>
         <i class="codicon codicon-save"></i> {translate("automation.workspace.save", $uiLanguage)}
       </button>
-      <button class="tool-button" disabled={!$activeScript || busy} onclick={promptSaveAs}>
+      <button class="tool-button" disabled={!$activeScript || busy} onclick={() => void perform(saveAs)}>
         {translate("automation.workspace.save.as", $uiLanguage)}
       </button>
       <span class="toolbar-separator"></span>
@@ -141,15 +133,6 @@
       <span>{translate("automation.execution.notice", $uiLanguage)}</span>
     </div>
   {/if}
-  {#if saveAsVisible && $activeScript}
-    <div class="save-as-strip">
-      <label>{translate("automation.workspace.save.as", $uiLanguage)}
-        <input class="compact-input" bind:value={savePath} placeholder="/home/user/scripts/motor_test.py" onkeydown={(event) => { if (event.key === "Enter") void perform(saveAs); }} />
-      </label>
-      <button class="tool-button" disabled={busy || !savePath.trim()} onclick={() => void perform(saveAs)}>{translate("automation.workspace.save", $uiLanguage)}</button>
-      <button class="tool-button" onclick={() => saveAsVisible = false}>{translate("automation.workspace.cancel", $uiLanguage)}</button>
-    </div>
-  {/if}
   {#if error || $taskError}
     <div class="editor-error" role="alert">{localizeFeedback(error || $taskError, $uiLanguage)}</div>
   {/if}
@@ -163,15 +146,6 @@
         <div class="explorer-heading">
           <span>{translate("automation.workspace.explorer", $uiLanguage)}</span>
           <button class="icon-tool" aria-label={translate("automation.workspace.hide.explorer", $uiLanguage)} onclick={() => explorerVisible = false}><i class="codicon codicon-chevron-left"></i></button>
-        </div>
-        <div class="explorer-section">
-          <div class="explorer-section-title">{translate("automation.workspace.local.files", $uiLanguage)}</div>
-          <input class="compact-input file-path" aria-label={translate("automation.workspace.path", $uiLanguage)}
-            placeholder="/home/user/scripts/test.py" bind:value={openPath}
-            onkeydown={(event) => { if (event.key === "Enter") void perform(openFile); }}/>
-          <button class="explorer-command" disabled={busy || !openPath.trim()} onclick={() => void perform(openFile)}>
-            <i class="codicon codicon-folder-opened"></i> {translate("automation.workspace.open", $uiLanguage)}
-          </button>
         </div>
         <div class="explorer-section">
           <div class="explorer-section-title">{translate("automation.workspace.opened", $uiLanguage)}</div>
@@ -235,14 +209,8 @@
         {/if}
       </span>
       <button class="icon-tool" title={translate("ui.save.log", $uiLanguage)} disabled={!$taskState?.taskId}
-        onclick={() => logExportVisible = !logExportVisible}><i class="codicon codicon-save"></i></button>
+        onclick={() => void perform(saveLog)}><i class="codicon codicon-save"></i></button>
     </div>
-    {#if logExportVisible}
-      <div class="log-export">
-        <input class="compact-input" bind:value={$scriptSettings.logPath} placeholder="/home/user/logs/script.log"/>
-        <button class="tool-button" disabled={busy || !$taskState?.taskId} onclick={() => void perform(saveLog)}>{translate("ui.save.log", $uiLanguage)}</button>
-      </div>
-    {/if}
     {#if $taskState?.message}<div class="output-message">{localizeFeedback($taskState.message, $uiLanguage)}</div>{/if}
     {#if ($taskState?.firstSequence ?? 1) > 1}<div class="output-message">{translate("ui.old.output.was.truncated.by.the.bounded.log.buffer", $uiLanguage)}</div>{/if}
     <pre class="output-content" aria-label={translate("automation.output.aria", $uiLanguage)}>{output || translate("ui.no.output.yet", $uiLanguage)}</pre>
@@ -252,18 +220,16 @@
 </div>
 
 <style>
-  .hidden-file-picker { display: none; }
   .automation-workspace { display: flex; flex-direction: column; min-width: 0; min-height: 0; height: 100%; background: var(--vscode-editor-background, #1e1e1e); }
   .page-toolbar { flex: 0 0 36px; min-width: 0; }
   .toolbar-actions { display: flex; align-items: center; gap: 5px; }
   .toolbar-actions .tool-button { display: flex; align-items: center; gap: 6px; }
   .toolbar-separator { height: 18px; width: 1px; background: var(--vscode-panel-border); margin: 0 3px; }
   .run-button:not(:disabled) { color: var(--vscode-testing-iconPassed, #3fb950); }
-  .settings-strip, .save-as-strip { display: flex; gap: 12px; align-items: center; padding: 8px 12px; border-bottom: 1px solid var(--vscode-panel-border); }
-  .settings-strip label, .save-as-strip label { display: flex; align-items: center; gap: 6px; font-size: 11px; }
+  .settings-strip { display: flex; gap: 12px; align-items: center; padding: 8px 12px; border-bottom: 1px solid var(--vscode-panel-border); }
+  .settings-strip label { display: flex; align-items: center; gap: 6px; font-size: 11px; }
   .settings-strip span { color: var(--vscode-descriptionForeground); font-size: 11px; }
   .settings-strip input { width: 105px; } .settings-strip .timeout { width: 70px; }
-  .save-as-strip label { flex: 1; } .save-as-strip input { flex: 1; min-width: 130px; }
   .editor-error { padding: 7px 12px; color: var(--vscode-errorForeground); background: var(--vscode-inputValidation-errorBackground, #402222); font-size: 11px; }
   .workspace-split { display: block; flex: 1 1 auto; min-width: 0; min-height: 0; }
   .workspace-body { display: flex; width: 100%; height: 100%; min-width: 0; min-height: 0; }
@@ -271,9 +237,8 @@
   .explorer-heading { height: 32px; padding: 0 10px; display: flex; align-items: center; justify-content: space-between; font-size: 11px; font-weight: 600; }
   .explorer-section { margin: 8px 0 16px; min-width: 0; }
   .explorer-section-title { padding: 4px 10px; color: var(--vscode-descriptionForeground); font-size: 10px; font-weight: 600; }
-  .file-path { width: calc(100% - 16px); margin: 4px 8px; box-sizing: border-box; }
-  .explorer-command, .explorer-file { display: flex; align-items: center; gap: 7px; width: 100%; min-width: 0; border: 0; background: transparent; color: inherit; text-align: left; font: inherit; font-size: 11px; cursor: pointer; padding: 6px 10px; }
-  .explorer-file:hover, .explorer-command:hover, .explorer-file.selected { background: var(--vscode-list-hoverBackground, #343434); }
+  .explorer-file { display: flex; align-items: center; gap: 7px; width: 100%; min-width: 0; border: 0; background: transparent; color: inherit; text-align: left; font: inherit; font-size: 11px; cursor: pointer; padding: 6px 10px; }
+  .explorer-file:hover, .explorer-file.selected { background: var(--vscode-list-hoverBackground, #343434); }
   .explorer-file span:not(.dirty-mark) { overflow: hidden; text-overflow: ellipsis; }
   .dirty-mark { color: var(--vscode-notificationsInfoIcon-foreground, #75beff); font-size: 10px; }
   .editor-column { flex: 1 1 auto; min-width: 0; min-height: 0; display: flex; flex-direction: column; }
@@ -292,8 +257,6 @@
   .script-output { display: flex; flex-direction: column; width: 100%; height: 100%; min-width: 0; min-height: 0; }
   .output-heading { display: flex; gap: 10px; align-items: center; min-height: 29px; padding: 0 12px; border-bottom: 1px solid var(--vscode-panel-border); font-size: 11px; font-weight: 600; }
   .output-state { flex: 1; text-align: right; color: var(--vscode-descriptionForeground); font-weight: 400; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
-  .log-export { display: flex; gap: 8px; padding: 6px 10px; border-bottom: 1px solid var(--vscode-panel-border); }
-  .log-export input { flex: 1; min-width: 100px; }
   .output-content { flex: 1; min-height: 0; margin: 0; overflow: auto; padding: 9px 12px; font: 11px/1.6 "SFMono-Regular", Consolas, monospace; white-space: pre-wrap; overflow-wrap: anywhere; }
   .output-message { padding: 4px 12px; font-size: 11px; color: var(--vscode-descriptionForeground); }
   @media(max-width: 850px) {

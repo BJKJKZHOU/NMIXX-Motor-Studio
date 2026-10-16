@@ -33,10 +33,6 @@ export function newScript(): ScriptTab {
     workingDirectory: null, path: null,
   }, false, `editor-${number}`);
 }
-/** Browser-selected files are imported as editable tabs. Save As assigns a path. */
-export function importScript(name: string, source: string): ScriptTab {
-  return add({ name, source, path: null, workingDirectory: null });
-}
 export async function openLocalScript(path: string): Promise<ScriptTab> {
   const existing = get(scriptTabs).find((tab) => tab.path === path);
   if (existing) { activeScriptId.set(existing.id); return existing; }
@@ -67,12 +63,12 @@ export function closeScript(id: string) {
 export function isDirty(tab: ScriptTab): boolean {
   return (!tab.path && !tab.example) || tab.source !== tab.savedSource;
 }
-export async function saveCurrentScript(path?: string): Promise<ScriptTab> {
+export async function saveCurrentScript(path?: string, confirmedOverwrite = false): Promise<ScriptTab> {
   const current = get(activeScript);
   if (!current) throw new Error("Open a script first");
   const target = path?.trim() || current.path;
   if (!target) throw new Error("Choose a file path for Save As");
-  const overwrite = !current.example && current.path === target;
+  const overwrite = confirmedOverwrite || (!current.example && current.path === target);
   const saved = await saveScript(target, current.source, overwrite);
   // Preserve user edits made while disk I/O was in flight.
   const next: ScriptTab = { ...current, ...saved, source: current.source,

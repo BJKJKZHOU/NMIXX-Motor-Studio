@@ -558,7 +558,7 @@ fn scope_snapshot(state: State<'_, Mutex<DesktopState>>, window_seconds: Option<
     })
 }
 fn main() {
-    tauri::Builder::default().manage(Mutex::new(DesktopState::default()))
+    tauri::Builder::default().plugin(tauri_plugin_dialog::init()).manage(Mutex::new(DesktopState::default()))
         .invoke_handler(tauri::generate_handler![
             automation_commands::automation_builtin, automation_commands::automation_open_script,
             automation_commands::automation_save_script,

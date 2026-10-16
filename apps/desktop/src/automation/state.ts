@@ -9,7 +9,7 @@ import * as api from "./api";
 import type { LogLine, ScriptDocument, TaskSnapshot } from "./api";
 
 // Script selection is view state. Execution, ownership and logs remain in Rust.
-export const scriptSettings = writable({ logPath: "", program: "python3", timeoutSeconds: 300 });
+export const scriptSettings = writable({ program: "python3", timeoutSeconds: 300 });
 export const taskState = writable<TaskSnapshot | null>(null);
 export const logs = writable<LogLine[]>([]);
 export const taskError = writable("");
