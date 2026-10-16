@@ -181,7 +181,7 @@ test("Tuning, commissioning and Automation copy uses domain keys instead of numb
 test("Automation notice and accessibility text are separate language resources",()=>{
   const page=source("automation/AutomationPage.svelte");
   assert.match(page,/translate\("automation\.execution\.notice", \$uiLanguage\)/);
-  assert.match(source("automation/ScriptEditor.svelte"),/aria-label="Python script editor"/);
+  assert.match(source("automation/ScriptEditor.svelte"),/translate\("automation\.workspace\.editor\.aria", \$uiLanguage\)/);
   assert.doesNotMatch(page,/\$uiLanguage === "zh-CN"/);
   assert.match(source("motor/MotorPage.svelte"),/translate\("motor\.firmware\.default\.tooltip", \$uiLanguage\)/);
 });

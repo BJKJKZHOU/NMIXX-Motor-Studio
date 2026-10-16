@@ -1,5 +1,6 @@
 <script lang="ts">
   import { onMount } from "svelte";
+  import { uiLanguage, translate } from "../i18n";
   import type { ScriptTab } from "./documents";
 
   export let tab: ScriptTab;
@@ -89,13 +90,13 @@
   {#if !loaded}
     <textarea
       class="fallback-editor"
-      aria-label="Python script editor"
+      aria-label={translate("automation.workspace.editor.aria", $uiLanguage)}
       value={tab.source}
       oninput={(event) => onEdit(tab.id, event.currentTarget.value)}
       onkeydown={keyboard}
       spellcheck="false"
     ></textarea>
-    {#if fallbackReason}<div class="editor-fallback-notice">Monaco unavailable; plain text editing remains available.</div>{/if}
+    {#if fallbackReason}<div class="editor-fallback-notice">{translate("automation.workspace.monaco.unavailable", $uiLanguage)}</div>{/if}
   {/if}
 </div>
 

@@ -409,6 +409,8 @@ export const enMessages = {
   "automation.workspace.hide.explorer": "Hide explorer",
   "automation.workspace.local.files": "Local scripts",
   "automation.workspace.choose.file": "Choose a script file",
+  "automation.workspace.editor.aria": "Python script editor",
+  "automation.workspace.monaco.unavailable": "Monaco could not load; plain text editing is available.",
   "automation.workspace.path": "Script file path",
   "automation.workspace.opened": "Open editors",
   "automation.workspace.examples": "Example scripts",
