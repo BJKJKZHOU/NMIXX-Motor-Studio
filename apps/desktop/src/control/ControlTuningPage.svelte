@@ -300,6 +300,7 @@
           {#if experimentMessage}<div class="experiment-message">{localizeFeedback(experimentMessage, $uiLanguage)}</div>{/if}
           <!-- VSCode Elements owns tab selection, ARIA roles and keyboard navigation. -->
           <vscode-tabs class="waveform-tabs"
+            aria-label={translate("tuning.experiment.waveform.aria", $uiLanguage)}
             selected-index={["waveform", "channels", "scale"].indexOf(waveformTab)}
             onvsc-tabs-select={(event: CustomEvent<{ selectedIndex: number }>) => {
               waveformTab = (["waveform", "channels", "scale"] as const)[event.detail.selectedIndex] ?? "waveform";
