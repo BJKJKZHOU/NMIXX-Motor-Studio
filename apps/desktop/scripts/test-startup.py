@@ -172,6 +172,8 @@ def main() -> int:
                     page.on("pageerror", lambda error: errors.append(str(error)))
                     try:
                         page.goto(url + "?automation-script=1", wait_until="networkidle")
+                        expect(page.locator(".automation-workspace")).to_be_visible()
+                        assert not errors, f"Automation mount errors: {errors}"
                         page.get_by_role("button", name="New", exact=True).click()
                         expect(page.locator(".script-tab")).to_have_count(1)
                         expect(page.locator(".monaco-editor")).to_be_visible(timeout=15000)

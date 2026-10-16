@@ -60,6 +60,10 @@ if (fixture.has("tuning-tabs")) {
     },
   });
 } else if (fixture.has("automation-script")) {
+  // Standalone page fixtures do not mount App.svelte, which normally restores
+  // the persisted language. Set English explicitly for stable button labels.
+  const { setUiLanguage } = await import("../src/i18n");
+  setUiLanguage("en");
   await import("@vscode-elements/elements/dist/bundled.js");
   await import("../src/theme.css");
   const { mount } = await import("svelte");
