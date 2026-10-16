@@ -106,3 +106,25 @@ test("editing a script changes the next Run source but never dispatches a device
   assert.match(snapshots[1].source,/client.run/);
   assert.equal(snapshots[0].source,"print('first')");
 });
+
+test("native Dialog is the only script file chooser and Save As entry",()=>{
+  const page=source("automation/AutomationPage.svelte");
+  assert.match(page, /from "@tauri-apps\/plugin-dialog"/);
+  assert.match(page, /await openFileDialog\(/);
+  assert.match(page, /await saveFileDialog\(/);
+  assert.match(page, /await openLocalScript\(path\)/);
+  assert.match(page, /await saveCurrentScript\(path, true\)/);
+  assert.doesNotMatch(page, /type="file"|saveAsVisible|openPath|filePicker/);
+  const config=readFileSync(join(__dirname,"..","src-tauri","capabilities","default.json"),"utf8");
+  assert.match(config, /dialog:allow-open/);
+  assert.match(config, /dialog:allow-save/);
+});
+
+test("a native Save As choice may overwrite only after the OS dialog confirmed", async()=>{
+  const {d,writes}=setup();
+  const example=await d.openExample("encoder");
+  d.editScript(example.id,"print('updated')");
+  await d.saveCurrentScript("/scripts/existing.py",true);
+  assert.equal(writes.length,1);
+  assert.equal(writes[0].overwrite,true);
+});

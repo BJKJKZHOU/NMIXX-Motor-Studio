@@ -106,8 +106,13 @@ Use existing VSCode Elements controls (including split layout) rather than
 writing generic UI interaction mechanisms. A plain textarea may provide a
 failure-only fallback when Monaco cannot load.
 
-Desktop file selection should use Tauri's maintained dialog integration when
-available, not another handwritten file browser or OS-specific selector.
+File Open, Save As and output-log export use the official Tauri Dialog plugin,
+which supplies native Windows/Linux/macOS paths and confirmation UX. No custom
+path input form or browser-only file import is required. The selected script
+path is read by the existing Application bridge; a native Save As dialog
+confirms replacement before the explicitly chosen path may be overwritten.
+Direct Save writes back to the document's previously opened path.
+
 The small existing file IPC is responsible only for reading/writing explicitly
 chosen paths; it is not a general file manager. Avoid introducing Dockview,
 xterm or a new framework unless an actual feature requires them.

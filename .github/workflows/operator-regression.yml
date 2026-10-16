@@ -28,13 +28,7 @@ jobs:
           node-version: "22"
           cache: npm
           cache-dependency-path: apps/desktop/package-lock.json
-      - name: Resolve npm dialog dependency (one-time lock synchronization)
-        run: npm install --package-lock-only && npm ci
-      - name: Publish generated npm lock for repository synchronization
-        run: |
-          echo '__NMIXX_NPM_LOCK_START__'
-          cat package-lock.json
-          echo '__NMIXX_NPM_LOCK_END__'
+      - run: npm ci
       - name: Test user operations, parameter state and Scope components
         run: npm run test:all
       - name: Compile Svelte UI and verify types
@@ -53,9 +47,5 @@ jobs:
             libgtk-3-dev libwebkit2gtk-4.1-dev libayatana-appindicator3-dev \
             librsvg2-dev libudev-dev patchelf
       - uses: Swatinem/rust-cache@v2
-      - name: Test Rust workspace and resolve dialog dependency (one-time)
-        run: |
-          cargo test --workspace
-          echo '__NMIXX_CARGO_LOCK_START__'
-          cat Cargo.lock
-          echo '__NMIXX_CARGO_LOCK_END__'
+      - name: Test Rust workspace
+        run: cargo test --workspace --locked
