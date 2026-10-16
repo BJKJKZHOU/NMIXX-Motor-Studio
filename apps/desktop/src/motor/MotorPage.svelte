@@ -300,7 +300,7 @@
                   {#if row.identKey}
                     {@const state = identStates[row.identKey]}
                     {@const startLabel = IDENT_CONFIGS[row.identKey].label}
-                    <!-- svelte-ignore a11y_click_events_have_key_events a11y_no_static_element_interactions -->
+                    <!-- svelte-ignore a11y_click_events_have_key_events, a11y_no_static_element_interactions (vscode-button provides button semantics and keyboard handling) -->
                     <vscode-button
                       secondary
                       disabled={!identificationAvailable(row.identKey) || identifyBusy() || hasPendingEdits()}
@@ -312,7 +312,7 @@
                       <span class="action-status state-running"><i class="codicon codicon-loading codicon-modifier-spin"></i> {translate("ui.running", $uiLanguage)}</span>
                       {#if state.message}<span class="action-reason" role="alert">{translate("actions.readback.start.warning", $uiLanguage)} {localizeFeedback(state.message, $uiLanguage)}</span>{/if}
                     {:else if state.phase === "ready"}
-                      <!-- svelte-ignore a11y_click_events_have_key_events a11y_no_static_element_interactions -->
+                      <!-- svelte-ignore a11y_click_events_have_key_events, a11y_no_static_element_interactions (vscode-button provides button semantics and keyboard handling) -->
                       <vscode-button class="apply-button" disabled={!connection?.commissioning?.identificationApply || hasPendingEdits()} onclick={() => void applyIdentification(row.identKey!)} title={translate("motor.identification.apply.tooltip", $uiLanguage)}>{translate("ui.apply", $uiLanguage)}</vscode-button>
                     {:else if state.phase === "applying"}
                       <span class="action-status state-running"><i class="codicon codicon-loading codicon-modifier-spin"></i> {translate("ui.applying", $uiLanguage)}</span>

@@ -398,9 +398,12 @@
                 </select>
               </label>
             {/if}
-            <div class="motion-actions"><vscode-button disabled={!canRunMotion()}
+            <div class="motion-actions">
+              <!-- svelte-ignore a11y_click_events_have_key_events, a11y_no_static_element_interactions (vscode-button provides button semantics and keyboard handling) -->
+              <vscode-button disabled={!canRunMotion()}
               title={localize(hasDirtyDraft() ? "Commit or discard tuning edits first" : experimentActive() ? "Tuning experiment is already running" : motorState !== "ENABLED" ? "Enable motor first" : "Run tuning experiment", $uiLanguage)}
               onclick={() => void runTuningMotion()}>{translate("ui.run", $uiLanguage)}</vscode-button>
+              <!-- svelte-ignore a11y_click_events_have_key_events, a11y_no_static_element_interactions (vscode-button provides button semantics and keyboard handling) -->
               <vscode-button secondary disabled={!canStopMotion()} title={translate("ui.stop.the.active.tuning.experiment.and.retain.its.waveform", $uiLanguage)} onclick={() => void stopTuningMotion()}>{translate("ui.stop", $uiLanguage)}</vscode-button>
             </div>
           </div>

@@ -243,7 +243,7 @@
                 </div>
                 <div class="field-label">{translate("ui.phase.search", $uiLanguage)}</div>
                 <div class="action-line">
-                  <!-- svelte-ignore a11y_click_events_have_key_events a11y_no_static_element_interactions -->
+                  <!-- svelte-ignore a11y_click_events_have_key_events, a11y_no_static_element_interactions (vscode-button provides button semantics and keyboard handling) -->
                   <vscode-button secondary disabled={!phaseSearchAvailable() || phaseState === "running" || hasPendingEdits()}
                     title={phaseSearchAvailable() ? "Start phase search" : "Required phase-search capabilities are not exposed by this firmware"}
                     onclick={() => void startPhaseSearch()}>{translate("ui.start", $uiLanguage)}</vscode-button>
@@ -272,9 +272,11 @@
               <div class="section-title">{translate("ui.mechanical.reference", $uiLanguage)}</div>
               <div class="reference-row"><span class="field-label">{parameterLabel(ZERO_VALID_SYMBOL, "Zero reference")}</span><span class="readonly-value">{localize(zeroReferenceText(), $uiLanguage)}</span></div>
               <div class="reference-actions">
+                <!-- svelte-ignore a11y_click_events_have_key_events, a11y_no_static_element_interactions (vscode-button provides button semantics and keyboard handling) -->
                 <vscode-button secondary disabled={!setZeroAvailable() || zeroActionBusy}
                   title={setZeroAvailable() ? "Set current position as mechanical zero" : "Position-zero operation is not exposed by this firmware"}
                   onclick={() => void setCurrentAsZero()}>{translate("ui.set.current.as.zero", $uiLanguage)}</vscode-button>
+                <!-- svelte-ignore a11y_click_events_have_key_events, a11y_no_static_element_interactions (vscode-button provides button semantics and keyboard handling) -->
                 <vscode-button secondary disabled={!homingAvailable() || homingState === "running" || hasPendingEdits()}
                   title={homingAvailable() ? "Start software homing" : "Homing operation is not exposed by this firmware"}
                   onclick={() => void startHoming()}>{translate("ui.software.homing", $uiLanguage)}</vscode-button>

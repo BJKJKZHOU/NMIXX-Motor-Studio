@@ -80,18 +80,21 @@
       <div class="field-row">
         <input id="connection-port" bind:value={port} class="compact-input" list="device-ports" placeholder={translate("ui.no.usb.cdc.device.detected", $uiLanguage)} />
         <datalist id="device-ports">{#each ports as item}<option value={item}></option>{/each}</datalist>
-        <!-- svelte-ignore a11y_click_events_have_key_events a11y_no_static_element_interactions -->
+        <!-- svelte-ignore a11y_click_events_have_key_events, a11y_no_static_element_interactions (vscode-button provides button semantics and keyboard handling) -->
         <vscode-button secondary onclick={refreshPorts} title={translate("ui.refresh.ports", $uiLanguage)}><i class="codicon codicon-refresh"></i></vscode-button>
       </div>
       <label for="connection-schema">HostSchema</label>
       <input id="connection-schema" bind:value={schemaPath} class="compact-input mono" onchange={() => onSchemaPathChanged(schemaPath)} />
       <div class="connection-actions">
         {#if connection}
-          {#if !ready && !initializing}<vscode-button secondary disabled={busy} onclick={onRetry}>{translate("ui.retry.initialization", $uiLanguage)}</vscode-button>{/if}
-          <!-- svelte-ignore a11y_click_events_have_key_events a11y_no_static_element_interactions -->
+          {#if !ready && !initializing}
+            <!-- svelte-ignore a11y_click_events_have_key_events, a11y_no_static_element_interactions (vscode-button provides button semantics and keyboard handling) -->
+            <vscode-button secondary disabled={busy} onclick={onRetry}>{translate("ui.retry.initialization", $uiLanguage)}</vscode-button>
+          {/if}
+          <!-- svelte-ignore a11y_click_events_have_key_events, a11y_no_static_element_interactions (vscode-button provides button semantics and keyboard handling) -->
           <vscode-button secondary disabled={busy} onclick={disconnect}>{translate("ui.disconnect", $uiLanguage)}</vscode-button>
         {:else}
-          <!-- svelte-ignore a11y_click_events_have_key_events a11y_no_static_element_interactions -->
+          <!-- svelte-ignore a11y_click_events_have_key_events, a11y_no_static_element_interactions (vscode-button provides button semantics and keyboard handling) -->
           <vscode-button disabled={busy || !port} onclick={connect}>{translate("ui.connect", $uiLanguage)}</vscode-button>
         {/if}
       </div>
