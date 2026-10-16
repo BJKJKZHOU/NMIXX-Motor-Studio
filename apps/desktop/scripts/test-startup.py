@@ -217,6 +217,19 @@ def main() -> int:
                         expect(page.locator(".connection-status")).to_contain_text("AxDr_L")
                         expect(power).to_contain_text("DISABLED")
                         expect(page.locator(".global-actions > button.motor-disabled")).to_have_count(1)
+                        # Starting identification has its own semantic API. Blocked
+                        # preflight reports in-page text without an Enable modal.
+                        dialogs = []
+                        page.on("dialog", lambda dialog: (dialogs.append(dialog.message), dialog.dismiss()))
+                        page.locator('nav.activity-bar button[title="Motor"]').click()
+                        page.locator('vscode-button[title="Start Rs/Ls"]').click()
+                        expect(page.locator(".action-status").filter(has_text="Prerequisites not met")).to_have_count(1)
+                        ids = [entry for entry in page.evaluate("window.__nmixxStartupArgs")
+                          if entry["command"] == "identification_start"]
+                        assert len(ids) == 1 and ids[0]["args"]["allowEnable"] is True, ids
+                        assert not dialogs, dialogs
+                        assert page.evaluate("window.__nmixxStartupRequests").count("motor_enable") == 0
+                        page.locator('nav.activity-bar button[title="Connection"]').click()
                         power.click()
                         expect(power).to_contain_text("ENABLED")
                         expect(page.locator(".global-actions > button.motor-enabled")).to_have_count(1)
@@ -231,7 +244,7 @@ def main() -> int:
                         expect(page.locator(".connection-status")).to_contain_text("Disconnected")
                         expect(power).to_contain_text("UNKNOWN")
                         assert not errors, f"Global control browser errors: {errors}"
-                        print("PASS chromium: Connect, Motor State red/green, Enable/Stop/Disable and Disconnect")
+                        print("PASS chromium: Connect, modal-free blocked identification, Motor Enable/Stop/Disable and Disconnect")
                     finally:
                         context.close()
                 finally:

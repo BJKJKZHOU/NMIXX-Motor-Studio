@@ -36,8 +36,11 @@ mockIPC((command, args) => {
       channels: [], runtimeChannelIds: [],
       motion: { run: true, stop: true, enable: true, disable: true,
         position: true, speed: true, sensorlessSpeed: false, torque: true },
-      commissioning: {},
+      commissioning: { identificationRsLs: true, identificationFlux: true, identificationJb: true, identificationApply: true },
     };
+    if (command === "identification_apply_candidate") return null;
+    if (command === "identification_start")
+      return { status: "blocked", issues: [{ reason: "Current limit must be configured", parameterId: null, suggestedDomain: "limits" }] };
     if (command === "parameter_list") return [motorMeta];
     if (command === "parameter_cached_many" || command === "parameter_read_many")
       return motorReadback(args.ids);
