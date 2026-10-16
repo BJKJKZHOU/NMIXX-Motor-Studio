@@ -280,7 +280,8 @@ test("accepted Motor Stop with failed Parameter refresh reports ambiguous UI sta
     require(name){
       if(name==="@tauri-apps/api/core")return {invoke:async(name)=>{calls.push(name);return {txn:1,actionId:0x1003};}};
       if(name==="@tauri-apps/api/event")return {listen:async()=>()=>{}};
-      if(name==="../parameters/state")return {synchronizeParameters:async()=>{throw new Error("cable unavailable");}};
+      if(name==="svelte/store")return {get:state=>state};
+      if(name==="../parameters/state")return {parameterState:{epoch:1},synchronizeParameters:async()=>{throw new Error("cable unavailable");}};
       throw new Error(name);
     },
   });

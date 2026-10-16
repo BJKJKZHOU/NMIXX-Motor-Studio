@@ -239,8 +239,9 @@ test("new motor identification and encoder preflight errors are visible, not onl
   const motor = source("motor/MotorPage.svelte");
   const encoder = source("encoder/EncoderPage.svelte");
   assert.match(motor, /role="alert">\{localizeFeedback\(state\.message, \$uiLanguage\)\}/);
-  assert.match(encoder, /role="alert">\{localizeFeedback\(phaseMessage, \$uiLanguage\)\}/);
-  assert.match(encoder, /role="alert">\{localizeFeedback\(homingMessage, \$uiLanguage\)\}/);
+  assert.match(encoder, /class="action-reason" role="alert"/);
+  assert.match(encoder, /localizeFeedback\(phaseMessage, \$uiLanguage\)/);
+  assert.match(encoder, /localizeFeedback\(homingMessage, \$uiLanguage\)/);
   assert.match(motor, /PARAM_MOTOR_RL_I_PEAK/);
   assert.match(motor, /PARAM_MOTOR_ALIGN_CURRENT/);
 });
