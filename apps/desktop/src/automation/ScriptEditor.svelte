@@ -37,7 +37,6 @@
 
   onMount(() => {
     let disposed = false;
-    let observer: ResizeObserver | undefined;
     void (async () => {
       try {
         // Monaco and its worker are bundled locally, and load only in Automation.
@@ -61,28 +60,18 @@
         editor.addCommand(monaco.KeyMod.CtrlCmd | monaco.KeyCode.Enter, onRun);
         show(tab);
         loaded = true;
-        observer = new ResizeObserver(() => editor?.layout());
-        observer.observe(host);
       } catch (error) {
         if (!disposed) fallbackReason = String(error);
       }
     })();
     return () => {
       disposed = true;
-      observer?.disconnect();
       editor?.dispose();
       for (const model of models.values()) model.dispose();
       models.clear();
     };
   });
 
-  function keyboard(event: KeyboardEvent) {
-    if ((event.ctrlKey || event.metaKey) && event.key.toLowerCase() === "s") {
-      event.preventDefault(); onSave();
-    } else if ((event.ctrlKey || event.metaKey) && event.key === "Enter") {
-      event.preventDefault(); onRun();
-    }
-  }
 </script>
 
 <div class="script-editor">
@@ -93,7 +82,6 @@
       aria-label={translate("automation.workspace.editor.aria", $uiLanguage)}
       value={tab.source}
       oninput={(event) => onEdit(tab.id, event.currentTarget.value)}
-      onkeydown={keyboard}
       spellcheck="false"
     ></textarea>
     {#if fallbackReason}<div class="editor-fallback-notice">{translate("automation.workspace.monaco.unavailable", $uiLanguage)}</div>{/if}
@@ -105,10 +93,11 @@
   .monaco-host { position: absolute; inset: 0; }
   .monaco-host.editor-hidden { visibility: hidden; }
   .fallback-editor {
-    position: absolute; inset: 0; width: 100%; height: 100%; resize: none;
-    box-sizing: border-box; border: 0; outline: 0; padding: 14px 18px;
-    background: #1e1e1e; color: #d4d4d4; font: 12px/1.6 "SFMono-Regular", Consolas, monospace;
-    tab-size: 4; white-space: pre; overflow: auto;
+    position: absolute; inset: 0; width: 100%; height: 100%; box-sizing: border-box;
+    resize: none; border: 0; padding: 14px 18px; outline: 0; tab-size: 4;
+    color: var(--vscode-editor-foreground, #d4d4d4);
+    background: var(--vscode-editor-background, #1e1e1e);
+    font: 12px/1.6 "SFMono-Regular", Consolas, monospace;
   }
   .editor-fallback-notice {
     position: absolute; right: 8px; bottom: 8px;
