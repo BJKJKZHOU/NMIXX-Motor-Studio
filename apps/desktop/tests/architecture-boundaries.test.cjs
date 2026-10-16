@@ -239,8 +239,52 @@ test("new motor identification and encoder preflight errors are visible, not onl
   const motor = source("motor/MotorPage.svelte");
   const encoder = source("encoder/EncoderPage.svelte");
   assert.match(motor, /role="alert">\{localizeFeedback\(state\.message, \$uiLanguage\)\}/);
-  assert.match(encoder, /role="alert">\{localizeFeedback\(phaseMessage, \$uiLanguage\)\}/);
-  assert.match(encoder, /role="alert">\{localizeFeedback\(homingMessage, \$uiLanguage\)\}/);
+  assert.match(encoder, /class="action-reason" role="alert"/);
+  assert.match(encoder, /localizeFeedback\(phaseMessage, \$uiLanguage\)/);
+  assert.match(encoder, /localizeFeedback\(homingMessage, \$uiLanguage\)/);
   assert.match(motor, /PARAM_MOTOR_RL_I_PEAK/);
   assert.match(motor, /PARAM_MOTOR_ALIGN_CURRENT/);
+});
+
+test("finite Action completion workers are connection-scoped", () => {
+  const tauri = readFileSync(join(desktop, "src-tauri/src/main.rs"), "utf8");
+  assert.match(tauri, /fn action_session_current\(/);
+  assert.match(tauri, /app\.is_same_session\(expected\)/);
+  assert.match(tauri, /!guard\.disconnecting/);
+  assert.match(tauri, /completion\.wait\(handle, Some\(Duration::from_millis\(100\)\)\)/);
+  assert.doesNotMatch(tauri, /completion\.wait\(handle, None\)/);
+});
+
+test("accepted finite and immediate Actions retain handles when readback fails", () => {
+  const app = readFileSync(join(repo, "crates/nmixx-app/src/application.rs"), "utf8");
+  const slice = (start, end) => {
+    const a=app.indexOf(start);
+    assert.notEqual(a,-1);
+    const b=app.indexOf(end,a+start.length);
+    assert.notEqual(b,-1);
+    return app.slice(a,b);
+  };
+  for (const [start,end] of [
+    ["pub fn identification_start(", "pub fn identification_apply_candidate("],
+    ["pub fn identification_apply_kind(", "pub fn motor_enable("],
+    ["pub fn phase_search_start(", "pub fn is_same_session("],
+    ["fn stop_motor_command(", "pub fn motor_disable("],
+  ]) {
+    const operation=slice(start,end);
+    assert.match(operation,/let _ = self\.refresh_(?:motor_context|after_immediate_action)\(\);/);
+    assert.doesNotMatch(operation,/self\.refresh_(?:motor_context|after_immediate_action)\(\)\?/);
+  }
+});
+
+test("commissioning pages stay mounted while navigating to preserve finite Action state", () => {
+  const shell = source("App.svelte");
+  assert.match(shell, /class:inactive=\{activePage !== "motor"\} class="domain-page-container"><MotorPage/);
+  assert.match(shell, /class:inactive=\{activePage !== "encoder"\} class="domain-page-container"><EncoderPage/);
+  assert.match(shell, /\.domain-page-container\.inactive \{ display: none; \}/);
+  assert.doesNotMatch(shell, /\{:else if activePage === "motor"\}/);
+  assert.doesNotMatch(shell, /\{:else if activePage === "encoder"\}/);
+  const motor = source("motor/MotorPage.svelte");
+  const encoder = source("encoder/EncoderPage.svelte");
+  assert.match(motor, /onActionCompleted\(\(completion\) => handleActionCompleted\(completion\)\)/);
+  assert.match(encoder, /register\(onActionCompleted\(handleActionCompleted\)\)/);
 });

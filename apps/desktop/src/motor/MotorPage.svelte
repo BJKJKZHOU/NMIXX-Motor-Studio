@@ -14,7 +14,7 @@
 
   type Props = { connection: ConnectionInfo | undefined; motorState: MotorState | null; onError?: (error: unknown) => void };
   type IdentKey = "rsLs" | "flux" | "jb";
-  type IdentPhase = "idle" | "running" | "ready" | "applying" | "applied" | "failed";
+  type IdentPhase = "idle" | "running" | "ready" | "applying" | "applied" | "failed" | "unverified";
   type IdentState = { phase: IdentPhase; message: string };
   type IdentConfig = { label: string; operation: string; validSymbol: string; resultSymbols: string[]; activeSymbols: string[] };
   type RowSpec = { activeSymbol: string; identifiedSymbol?: string; identifiedValidSymbol?: string; identKey?: IdentKey };
@@ -144,7 +144,7 @@
   function restoreIdentificationStates(committed: Record<string, ParameterValue | null>) {
     const next = { ...identStates };
     for (const key of Object.keys(IDENT_CONFIGS) as IdentKey[]) {
-      if (["running", "applying", "failed"].includes(next[key].phase)) continue;
+      if (["running", "applying", "failed", "unverified"].includes(next[key].phase)) continue;
       const valid = numericValue(committed[IDENT_CONFIGS[key].validSymbol]) === 1;
       next[key] = {
         phase: valid && identifiedMatchesActive(key, committed) ? "applied"
@@ -156,6 +156,7 @@
     identStates = next;
   }
   function identifyBusy() { return startingIdent !== null || Object.values(identStates).some((state) => state.phase === "running" || state.phase === "applying"); }
+  function hasPendingEdits() { return $edits.dirty.size > 0 || writing.size > 0; }
   async function commit(symbol: string) {
     if (!isWritable(symbol) || writing.has(symbol)) return;
     try {
@@ -178,7 +179,7 @@
   }
   async function startIdentification(identKey: IdentKey) {
     const config = IDENT_CONFIGS[identKey];
-    if (!identificationAvailable(identKey) || identifyBusy()) return;
+    if (!identificationAvailable(identKey) || identifyBusy() || hasPendingEdits()) return;
     const token = generation;
     startingIdent = identKey;
     earlyCompletion = undefined;
@@ -197,7 +198,7 @@
         }
       }
       if (result.status !== "started") return;
-      setIdentState(identKey, "running");
+      setIdentState(identKey, "running", result.readbackError ?? "");
       pendingHandles = { ...pendingHandles, [handleKey(result.handle)]: { identKey, kind: "identify" } };
       if (earlyCompletion && handleKey(earlyCompletion) === handleKey(result.handle)) handleActionCompleted(earlyCompletion);
     } catch (error) {
@@ -208,21 +209,17 @@
   }
   async function applyIdentification(identKey: IdentKey) {
     if (!connection?.commissioning?.identificationApply || identifyBusy()
-        || identStates[identKey].phase !== "ready" || applyCandidate !== identKey) return;
+        || identStates[identKey].phase !== "ready" || applyCandidate !== identKey || hasPendingEdits()) return;
     setIdentState(identKey, "applying");
     try {
-      await applyIdentificationAction(identKey);
+      const result = await applyIdentificationAction(identKey);
       applyCandidate = null;
-      setIdentState(identKey, "applied");
+      setIdentState(identKey, result.readbackError ? "unverified" : "applied", result.readbackError ?? "");
     }
     catch (error) { setIdentState(identKey, "failed", String(error)); onError(error); }
   }
   function handleActionCompleted(completion: ActionCompletion) {
-    let pending = pendingHandles[handleKey(completion)];
-    if (!pending) {
-      const key = (Object.keys(IDENT_CONFIGS) as IdentKey[]).find((key) => identStates[key].phase === "running" && IDENT_CONFIGS[key].operation === completion.operation);
-      if (key) pending = { identKey: key, kind: "identify" };
-    }
+    const pending = pendingHandles[handleKey(completion)];
     if (!pending) {
       if (startingIdent && IDENT_CONFIGS[startingIdent].operation === completion.operation) earlyCompletion = completion;
       return;
@@ -233,6 +230,11 @@
     if (!completion.ok) {
       applyCandidate = null;
       setIdentState(pending.identKey, "failed", completion.status);
+      return;
+    }
+    if (completion.readbackError) {
+      applyCandidate = null;
+      setIdentState(pending.identKey, "unverified", completion.readbackError);
       return;
     }
     const config = IDENT_CONFIGS[pending.identKey];
@@ -258,10 +260,11 @@
     {:else}
       <div class="motor-sheet">
         {#if motorState !== "DISABLED"}<div class="state-note">{translate("ui.disable.the.motor.before.editing.its.model.identification.currents.or.commis", $uiLanguage)}</div>{/if}
+        {#if $edits.dirty.size > 0}<div class="state-note" role="status">{translate("commissioning.uncommitted.settings", $uiLanguage)}</div>{/if}
         <section class="motor-section">
           <div class="section-title">{translate("ui.motor.parameters", $uiLanguage)}</div>
 
-          <div class="parameter-grid" role="table" aria-label="Motor parameters">
+          <div class="parameter-grid" role="table" aria-label={translate("motor.parameters.aria", $uiLanguage)}>
             <div class="grid-header" role="row">
               <div role="columnheader">{translate("ui.parameter", $uiLanguage)}</div>
               <div role="columnheader">{translate("ui.default", $uiLanguage)}</div>
@@ -273,7 +276,7 @@
             {#each ROWS as row}
               <div class="grid-row" role="row">
                 <div class="parameter-name" role="cell">{parameterLabel(row.activeSymbol)}</div>
-                <div class="default-value muted mono" role="cell" title="Firmware compiled default from HostSchema">{defaultText(row.activeSymbol)}</div>
+                <div class="default-value muted mono" role="cell" title={translate("motor.firmware.default.tooltip", $uiLanguage)}>{defaultText(row.activeSymbol)}</div>
                 <div role="cell">
                   {#if metadata[row.activeSymbol]}
                     <span class="inline-editor">
@@ -297,23 +300,27 @@
                   {#if row.identKey}
                     {@const state = identStates[row.identKey]}
                     {@const startLabel = IDENT_CONFIGS[row.identKey].label}
-                    <!-- svelte-ignore a11y_click_events_have_key_events a11y_no_static_element_interactions -->
+                    <!-- svelte-ignore a11y_click_events_have_key_events, a11y_no_static_element_interactions (vscode-button provides button semantics and keyboard handling) -->
                     <vscode-button
                       secondary
-                      disabled={!identificationAvailable(row.identKey) || identifyBusy()}
+                      disabled={!identificationAvailable(row.identKey) || identifyBusy() || hasPendingEdits()}
                       title={identificationAvailable(row.identKey) ? `Start ${startLabel}` : `${startLabel} is not exposed by this firmware`}
                       onclick={() => void startIdentification(row.identKey!)}
                     >{startLabel}</vscode-button>
 
                     {#if state.phase === "running"}
                       <span class="action-status state-running"><i class="codicon codicon-loading codicon-modifier-spin"></i> {translate("ui.running", $uiLanguage)}</span>
+                      {#if state.message}<span class="action-reason" role="alert">{translate("actions.readback.start.warning", $uiLanguage)} {localizeFeedback(state.message, $uiLanguage)}</span>{/if}
                     {:else if state.phase === "ready"}
-                      <!-- svelte-ignore a11y_click_events_have_key_events a11y_no_static_element_interactions -->
-                      <vscode-button class="apply-button" disabled={!connection?.commissioning?.identificationApply} onclick={() => void applyIdentification(row.identKey!)} title="Apply the latest valid identification result to Active parameters">{translate("ui.apply", $uiLanguage)}</vscode-button>
+                      <!-- svelte-ignore a11y_click_events_have_key_events, a11y_no_static_element_interactions (vscode-button provides button semantics and keyboard handling) -->
+                      <vscode-button class="apply-button" disabled={!connection?.commissioning?.identificationApply || hasPendingEdits()} onclick={() => void applyIdentification(row.identKey!)} title={translate("motor.identification.apply.tooltip", $uiLanguage)}>{translate("ui.apply", $uiLanguage)}</vscode-button>
                     {:else if state.phase === "applying"}
                       <span class="action-status state-running"><i class="codicon codicon-loading codicon-modifier-spin"></i> {translate("ui.applying", $uiLanguage)}</span>
                     {:else if state.phase === "applied"}
                       <span class="action-status state-success"><i class="codicon codicon-check"></i> {translate("ui.applied", $uiLanguage)}</span>
+                    {:else if state.phase === "unverified"}
+                      <span class="action-status muted">{translate("actions.readback.unverified.label", $uiLanguage)}</span>
+                      <span class="action-reason" role="alert">{translate("actions.readback.unverified.explanation", $uiLanguage)} {localizeFeedback(state.message, $uiLanguage)}</span>
                     {:else if state.phase === "failed"}
                       <span class="action-status state-failed" title={localizeFeedback(state.message, $uiLanguage)}><i class="codicon codicon-error"></i> {translate("ui.failed", $uiLanguage)}</span>
                       {#if state.message}<span class="action-reason" role="alert">{localizeFeedback(state.message, $uiLanguage)}</span>{/if}
@@ -331,7 +338,7 @@
 
         <section class="motor-section identification-settings">
           <div class="section-title">{translate("ui.identification.settings", $uiLanguage)}</div>
-          <div class="settings-grid" role="table" aria-label="Identification settings">
+          <div class="settings-grid" role="table" aria-label={translate("motor.identification.settings.aria", $uiLanguage)}>
             <div class="settings-header" role="row">
               <div role="columnheader">{translate("ui.parameter", $uiLanguage)}</div>
               <div role="columnheader">{translate("ui.value", $uiLanguage)}</div>

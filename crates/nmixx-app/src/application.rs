@@ -256,6 +256,9 @@ impl ApplicationSession {
         let failures = results.into_iter().filter_map(|(_, result)| result.err().map(|error| error.to_string())).collect::<Vec<_>>();
         if failures.is_empty() { Ok(()) } else { Err(ApplicationError::ParameterSync(failures.join("; "))) }
     }
+    // A confirmed Action handle is never invalidated by later Parameter reads.
+    // ParameterService retains per-Parameter read failures in the shared cache;
+    // callers report cache synchronization separately from device acceptance.
     fn refresh_after_immediate_action(&self) -> Result<(), ApplicationError> {
         self.require_refresh(self.parameter_refresh_all()?)
     }
@@ -289,10 +292,10 @@ impl ApplicationSession {
         let handle = self.guarded_action_start(key)?;
         match action.symbol.as_str() {
             "ACTION_IDENT_APPLY" | "ACTION_POSITION_SET_ZERO" | "ACTION_PROTECTION_CLEAR" => {
-                self.refresh_after_immediate_action()?;
+                let _ = self.refresh_after_immediate_action();
             }
             "ACTION_MOTOR_ENABLE" => {
-                self.refresh_motor_context()?;
+                let _ = self.refresh_motor_context();
             }
             _ => {}
         }
@@ -305,7 +308,7 @@ impl ApplicationSession {
     }
     pub fn encoder_set_zero(&self) -> Result<ActionHandle, ApplicationError> {
         let handle = self.guarded_action_start("ACTION_POSITION_SET_ZERO")?;
-        self.refresh_after_immediate_action()?;
+        let _ = self.refresh_after_immediate_action();
         Ok(handle)
     }
     pub fn homing_start(&self) -> Result<ActionHandle, ApplicationError> {
@@ -313,7 +316,7 @@ impl ApplicationSession {
     }
     pub fn protection_clear(&self) -> Result<ActionHandle, ApplicationError> {
         let handle = self.guarded_action_start("ACTION_PROTECTION_CLEAR")?;
-        self.refresh_after_immediate_action()?;
+        let _ = self.refresh_after_immediate_action();
         Ok(handle)
     }
     pub fn preflight_phase_search(&self) -> Result<Vec<PreflightIssue>, ApplicationError> {
@@ -339,7 +342,7 @@ impl ApplicationSession {
             .map_err(|message| ApplicationError::Motion(message.to_owned()))?;
         self.ensure_no_tuning()?;
         let result = self.motor_actions_at(ticket).identification_start(kind, allow_enable)?;
-        if matches!(&result, IdentificationStart::Started(_)) { self.refresh_motor_context()?; }
+        if matches!(&result, IdentificationStart::Started(_)) { let _ = self.refresh_motor_context(); }
         Ok(result)
     }
     pub fn identification_apply_candidate(&self) -> Result<Option<IdentificationKind>, ApplicationError> {
@@ -363,7 +366,7 @@ impl ApplicationSession {
         // a later firmware Ident_Mode.
         *self.inner.identification_apply_candidate.lock().map_err(|_| ApplicationError::Poisoned)? = None;
         let handle = result?;
-        self.refresh_after_immediate_action()?;
+        let _ = self.refresh_after_immediate_action();
         Ok(handle)
     }
     pub fn motor_enable(&self) -> Result<ActionHandle, ApplicationError> {
@@ -373,7 +376,7 @@ impl ApplicationSession {
             .map_err(|message| ApplicationError::Motion(message.to_owned()))?;
         self.ensure_no_tuning()?;
         let handle = self.motor_actions_at(ticket).enable()?;
-        self.refresh_motor_context()?;
+        let _ = self.refresh_motor_context();
         Ok(handle)
     }
     pub fn motor_stop(&self) -> Result<ActionHandle, ApplicationError> {
@@ -398,7 +401,7 @@ impl ApplicationSession {
             self.motor_actions().stop()?
         };
         cancelled?;
-        self.refresh_motor_context()?;
+        let _ = self.refresh_motor_context();
         Ok(handle)
     }
     pub fn motor_disable(&self) -> Result<ActionHandle, ApplicationError> {
@@ -412,7 +415,7 @@ impl ApplicationSession {
             self.motor_actions().disable()?
         };
         cancelled?;
-        self.refresh_motor_context()?;
+        let _ = self.refresh_motor_context();
         Ok(handle)
     }
     pub fn phase_search_start(&self) -> Result<ActionHandle, ApplicationError> {
@@ -422,7 +425,7 @@ impl ApplicationSession {
             .map_err(|message| ApplicationError::Motion(message.to_owned()))?;
         self.ensure_no_tuning()?;
         let handle = self.motor_actions_at(ticket).phase_search_start()?;
-        self.refresh_motor_context()?;
+        let _ = self.refresh_motor_context();
         Ok(handle)
     }
     pub fn is_same_session(&self, other: &Self) -> bool { Arc::ptr_eq(&self.inner, &other.inner) }

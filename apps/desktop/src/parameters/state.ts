@@ -236,10 +236,16 @@ export async function waitParameterWrites(): Promise<void> {
 /** Mirror Application-owned Action readback before delivering a domain result. */
 export async function synchronizeParameters(): Promise<void> {
   const token = epoch;
-  if (!get(mutable).connected) return;
+  requireSession(token);
   try {
-    await sync(readableIds(), token);
+    const ids = readableIds();
+    await sync(ids, token);
     requireSession(token);
+    const entries = get(mutable).entries;
+    const failed = ids.find((id) => !entries[id] || entries[id].error || entries[id].value === null);
+    if (failed !== undefined) {
+      throw new Error(`Parameter synchronization failed for 0x${failed.toString(16).toUpperCase().padStart(4, "0")}: ${entries[failed]?.error ?? "value unavailable"}`);
+    }
   } catch (error) {
     report(error, token);
     throw error;

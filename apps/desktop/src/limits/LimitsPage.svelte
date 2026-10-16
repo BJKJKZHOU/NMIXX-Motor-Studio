@@ -328,10 +328,6 @@
     background: color-mix(in srgb, var(--vscode-focusBorder) 18%, transparent);
   }
 
-  .configured-cell.active-limit-cell {
-    background: color-mix(in srgb, var(--vscode-focusBorder) 18%, var(--vscode-foreground) 5%);
-  }
-
   .hardware-value {
     gap: 7px;
     white-space: nowrap;

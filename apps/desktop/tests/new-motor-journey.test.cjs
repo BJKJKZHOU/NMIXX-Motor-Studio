@@ -122,7 +122,7 @@ test("new motor from USB connection through three identifications, phase search 
     channels:[{id:17,label:"Iq",supportsFast:true,supportsNormal:true}]};
   let connected=false;
   const conn=handlers("connection/ConnectionPage.svelte",["connect"],{
-    port:"COM7",schemaPath:"axdr-host-schema.toml",busy:false,
+    port:"COM7",schemaPath:"axdr-host-schema.toml",busy:false,connection:undefined,
     onSchemaPathChanged:()=>{},onConnected:info=>{connected=info.port==="COM7";},
     onError:error=>errors.push(String(error)),
     connectDevice:async(port,_,baud)=>{
@@ -143,12 +143,12 @@ test("new motor from USB connection through three identifications, phase search 
   const config=motorSource.match(/^  const IDENT_CONFIGS: Record<IdentKey, IdentConfig> = \{[\s\S]*?^  \};/m);
   assert.ok(config);
   const motor=handlers("motor/MotorPage.svelte",[
-    "handleKey","numericValue","identificationAvailable","setIdentState","identifyBusy",
+    "handleKey","numericValue","identificationAvailable","setIdentState","identifyBusy","hasPendingEdits",
     "isWritable","commit","startIdentification","applyIdentification","handleActionCompleted",
   ],{
     connection,motorState:device.motorState,
     $parameters:{loading:false,saving:false},metadata:Object.fromEntries(Object.keys(device.values).map(key=>[key,commonMeta])),
-    values:device.values,writing:new Set(),generation:0,startingIdent:null,
+    values:device.values,writing:new Set(),$edits:{dirty:new Set()},generation:0,startingIdent:null,
     identStates:{rsLs:{phase:"idle",message:""},flux:{phase:"idle",message:""},jb:{phase:"idle",message:""}},
     pendingHandles:{},applyCandidate:null,earlyCompletion:undefined,
     failReasonSymbol:"PARAM_IDENT_FAIL_REASON",
@@ -219,14 +219,15 @@ test("new motor from USB connection through three identifications, phase search 
   // The next workflow is Encoder: protocol is DISABLED-only and a missing
   // encoder feedback produces failure before phase search may energize.
   const enc=handlers("encoder/EncoderPage.svelte",[
-    "handleKey","isWritable","phaseSearchAvailable","setU8",
+    "handleKey","isWritable","phaseSearchAvailable","hasPendingEdits","setU8",
     "startPhaseSearch","handleActionCompleted",
   ],{
     connection,motorState:device.motorState,
     $parameters:{loading:false,saving:false},metadata:{
       PARAM_ENCODER_PROTOCOL:commonMeta,
-    },writing:new Set(),phaseState:"idle",phaseMessage:"",
-    pendingPhaseHandle:null,homingState:"idle",homingMessage:"",pendingHomingHandle:null,
+    },writing:new Set(),$edits:{dirty:new Set()},phaseState:"idle",phaseMessage:"",
+    pendingPhaseHandle:null,earlyPhaseCompletion:undefined,phaseRequestGeneration:0,
+    homingState:"idle",homingMessage:"",pendingHomingHandle:null,earlyHomingCompletion:undefined,homingRequestGeneration:0,
     canWriteInMotorState:canWrite,
     edits:{select:async(key,value)=>device.write(key,value)},
     onError:error=>errors.push(String(error)),
@@ -306,7 +307,7 @@ test("new motor from USB connection through three identifications, phase search 
     "toggleTuningChannel","canRunMotion","runTuningMotion","refreshExperiment",
   ],{
     connection,motorState:device.motorState,motionActionBusy:false,
-    stopActionBusy:false,experimentState:"IDLE",experimentMessage:"",
+    stopActionBusy:false,experimentCommandRevision:0,experimentState:"IDLE",experimentMessage:"",
     experimentSnapshot:undefined,experimentRefreshBusy:false,generation:0,
     waveformTab:"channels",tuningTimePerDiv:0.02,
     tuningSelections:{},displayMultipliers:{},writing:new Set(),

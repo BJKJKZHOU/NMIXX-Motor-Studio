@@ -35,7 +35,7 @@ function createMotionHarness() {
       assert.equal(name, "@tauri-apps/api/core");
       return { invoke: async (operation, args) => {
         calls.push({ operation, args });
-        if (defer) await defer;
+        if (defer && operation === "motion_run") await defer;
         if (ipcError) throw ipcError;
         return operation === "motion_run" ? ipcResult : undefined;
       }};
@@ -44,7 +44,7 @@ function createMotionHarness() {
   vm.runInContext(compile(source("motion/api.ts")), apiContext);
   const page = source("motion/MotionPage.svelte");
   const code = [
-    'let actionBusy = false; let stopBusy = false; let runFeedback = "";',
+    'let actionBusy = false; let stopBusy = false; let runFeedback = ""; let feedbackRevision = 0;',
     'let uncommittedMotion = false;',
     ...["canRun", "canStop", "run", "stop"].map((name) => extract(page, name)),
   ].join("\n");
@@ -133,7 +133,7 @@ function createTuningHarness() {
   const page = source("control/ControlTuningPage.svelte");
   const context = vm.createContext({
     connection: { motion: { run: true, stop: true } },
-    motorState: "ENABLED", motionActionBusy: false, stopActionBusy: false,
+    motorState: "ENABLED", motionActionBusy: false, stopActionBusy: false, experimentCommandRevision: 0,
     experimentState: "IDLE", experimentMessage: "", experimentSnapshot: undefined,
     waveformTab: "channels",
     $parameters: { saving: false }, writing: new Set(),
@@ -177,4 +177,56 @@ test("Tuning dirty input disables Run, no experiment or motor command is dispatc
   assert.equal(h.get("canRunMotion()"), false);
   await h.run();
   assert.equal(h.events.length, 0);
+});
+
+test("Tuning Copy Accel to Decel does not manufacture a draft on checkbox toggle",()=>{
+  const page=source("control/ControlTuningPage.svelte");
+  const calls=[],dirtySymbols=new Set();
+  const context=vm.createContext({
+    copyAccelToDecel:false,
+    MOTION_ACCEL:"PARAM_MOTION_ACCEL",MOTION_DECEL:"PARAM_MOTION_DECEL",
+    drafts:{PARAM_MOTION_ACCEL:"100",PARAM_MOTION_DECEL:"40"},
+    dirty:symbol=>dirtySymbols.has(symbol),
+    edits:{
+      edit(symbol,text){calls.push(["edit",symbol,text]);dirtySymbols.add(symbol);},
+      discard(symbol){calls.push(["discard",symbol]);dirtySymbols.delete(symbol);},
+    },
+  });
+  vm.runInContext(compile(["toggleCopyAccelToDecel","editAcceleration"].map(n=>extract(page,n)).join("\n")),context);
+  vm.runInContext("toggleCopyAccelToDecel(true)",context);
+  assert.deepEqual(calls,[["discard","PARAM_MOTION_DECEL"]]);
+  assert.equal(dirtySymbols.size,0);
+  vm.runInContext('editAcceleration("120")',context);
+  assert.deepEqual(calls.slice(1),[
+    ["edit","PARAM_MOTION_ACCEL","120"],
+    ["edit","PARAM_MOTION_DECEL","120"],
+  ]);
+  assert(dirtySymbols.has("PARAM_MOTION_DECEL"));
+});
+
+test("Motion Stop feedback cannot be overwritten by a slower earlier Run reply",async()=>{
+  const h=createMotionHarness();
+  let releaseRun;
+  h.setDeferred(new Promise(resolve=>{releaseRun=resolve;}));
+  const started=h.run();
+  assert.equal(h.get("actionBusy"),true);
+  await h.stop();
+  assert.match(h.get("runFeedback"),/Stop accepted/);
+  releaseRun();
+  await started;
+  assert.match(h.get("runFeedback"),/Stop accepted/);
+  assert.deepEqual(h.calls.map(x=>x.operation),["motion_run","motion_stop"]);
+});
+test("Tuning Stop prevents a late Run preparation reply from overwriting the latest state",async()=>{
+  const h=createTuningHarness();
+  let finishStart;
+  h.set('startTuningExperiment = async () => new Promise(resolve => { finishStart = resolve; })');
+  // Closures created in the sandbox hold the completion callback there.
+  const start=h.run();
+  await new Promise(resolve=>setImmediate(resolve));
+  await h.stop();
+  assert.equal(h.get("experimentState"),"STOPPING");
+  h.set('finishStart({state:"PREPARING",message:null})');
+  await start;
+  assert.equal(h.get("experimentState"),"STOPPING");
 });

@@ -168,6 +168,23 @@ test("gain source selection is locale-free and phase/experiment placeholders use
   assert.match(source("analysis/scope/ScopeEchartsPage.svelte"),/translateFormat\("scope\.channel\.selection\.exceeded", \$uiLanguage, channelNotice\)/);
 });
 
+test("Tuning, commissioning and Automation copy uses domain keys instead of numbered or hardcoded labels",()=>{
+  const en=english.enMessages, zh=chinese.zhCNMessages;
+  assert.equal(Object.hasOwn(en,"ui.reset.1"),false);
+  assert.equal(zh["tuning.scale.reset.multiplier"],"恢复 ×1");
+  assert.equal(zh["automation.task.exit.code.label"],"退出码");
+  assert.match(source("control/ControlTuningPage.svelte"),/translate\("ui\.channels", \$uiLanguage\)/);
+  assert.match(source("control/ControlTuningPage.svelte"),/translate\("ui\.loss", \$uiLanguage\)/);
+  assert.match(source("motor/MotorPage.svelte"),/translate\("motor\.identification\.apply\.tooltip", \$uiLanguage\)/);
+  assert.match(source("automation/AutomationPage.svelte"),/translate\("automation\.task\.id\.label", \$uiLanguage\)/);
+});
+test("Automation notice and accessibility text are separate language resources",()=>{
+  const page=source("automation/AutomationPage.svelte");
+  assert.match(page,/translate\("automation\.execution\.notice", \$uiLanguage\)/);
+  assert.match(page,/translate\("automation\.source\.aria", \$uiLanguage\)/);
+  assert.doesNotMatch(page,/\$uiLanguage === "zh-CN"/);
+  assert.match(source("motor/MotorPage.svelte"),/translate\("motor\.firmware\.default\.tooltip", \$uiLanguage\)/);
+});
 test("Events and Motion keep contextual copy in locale resources",()=>{
   const {translate}=environment().exports;
   assert.equal(translate("ui.active","zh-CN"),"当前值");

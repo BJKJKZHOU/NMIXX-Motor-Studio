@@ -11,10 +11,12 @@
   import { parameterText } from "./codec";
   import type { ParameterMetadata, ParameterValue } from "./types";
   import { modifiedParameterIds } from "./persistence";
+  import { canWriteInMotorState } from "./writeState";
+  import type { MotorState } from "../motor/state";
 
-  type Props = { connection: ConnectionInfo | undefined; onError?: (error: unknown) => void };
+  type Props = { connection: ConnectionInfo | undefined; motorState: MotorState | null; onError?: (error: unknown) => void };
   type ParameterRow = { meta: ParameterMetadata; value: ParameterValue | null; error: string | null; pending: boolean };
-  let { connection, onError = () => undefined }: Props = $props();
+  let { connection, motorState, onError = () => undefined }: Props = $props();
   const parameters = selectParameters();
   const edits = createParameterEditor(parameters);
   let search = $state("");
@@ -45,6 +47,7 @@
   const table = createTable({ features, columns, get data() { return rows; }, globalFilterFn: filterFn_includesString });
 
   function isWritable(meta: ParameterMetadata) { return meta.access.includes("w"); }
+  function canEdit(meta: ParameterMetadata) { return canWriteInMotorState(meta, motorState) && !$parameters.loading && !$parameters.saving; }
   function valueText(value: ParameterValue | null) { return parameterText(value) || "—"; }
   function rangeText(meta: ParameterMetadata): string {
     if (!meta.range) return "";
@@ -61,6 +64,7 @@
     writeErrors = next;
   }
   function keydown(event: KeyboardEvent, row: ParameterRow) {
+    if (!canEdit(row.meta) || writing.has(row.meta.symbol)) return;
     edits.keydown(event, row.meta.symbol, (error) => {
       writeErrors = { ...writeErrors, [row.meta.id]: error instanceof Error ? error.message : String(error) };
       onError(error);
@@ -136,7 +140,7 @@
                           class:ramModified={$modifiedParameterIds.has(row.meta.id)}
                           class="parameter-value-input mono"
                           value={drafts[row.meta.symbol] ?? ""}
-                          disabled={$parameters.saving || writing.has(row.meta.symbol)}
+                          disabled={!canEdit(row.meta) || writing.has(row.meta.symbol)}
                           aria-label={`Value for ${row.meta.label}`}
                           oninput={(event) => editValue(row, event.currentTarget.value)}
                           onkeydown={(event) => keydown(event, row)}

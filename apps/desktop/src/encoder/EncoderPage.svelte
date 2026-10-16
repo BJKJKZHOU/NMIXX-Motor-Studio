@@ -13,7 +13,7 @@
   import { setPositionZero, startHoming as startHomingAction, startPhaseSearch as startPhaseSearchAction } from "./api";
 
   type Props = { connection: ConnectionInfo | undefined; motorState: MotorState | null; onError?: (error: unknown) => void };
-  type PhaseState = "idle" | "running" | "success" | "stopped" | "failed";
+  type PhaseState = "idle" | "running" | "success" | "stopped" | "failed" | "unverified";
   type HomingState = PhaseState;
   type EnumOption = { value: number; symbol: string; label: string };
 
@@ -40,15 +40,20 @@
   let phaseState = $state<PhaseState>("idle");
   let phaseMessage = $state("");
   let pendingPhaseHandle = $state<string | null>(null);
+  let earlyPhaseCompletion: ActionCompletion | undefined;
+  let phaseRequestGeneration = 0;
   let homingState = $state<HomingState>("idle");
   let homingMessage = $state("");
   let pendingHomingHandle = $state<string | null>(null);
+  let earlyHomingCompletion: ActionCompletion | undefined;
+  let homingRequestGeneration = 0;
   let zeroActionBusy = $state(false);
 
   $effect(() => {
     connection;
-    phaseState = "idle"; phaseMessage = ""; pendingPhaseHandle = null;
-    homingState = "idle"; homingMessage = ""; pendingHomingHandle = null;
+    ++phaseRequestGeneration; ++homingRequestGeneration;
+    phaseState = "idle"; phaseMessage = ""; pendingPhaseHandle = null; earlyPhaseCompletion = undefined;
+    homingState = "idle"; homingMessage = ""; pendingHomingHandle = null; earlyHomingCompletion = undefined;
     zeroActionBusy = false;
   });
 
@@ -60,10 +65,19 @@
     };
     register(onActionCompleted(handleActionCompleted));
     register(onMotorStopIssued(() => {
-      if (phaseState === "running") { pendingPhaseHandle = null; phaseState = "stopped"; phaseMessage = ""; }
-      if (homingState === "running") { pendingHomingHandle = null; homingState = "stopped"; homingMessage = ""; }
+      if (phaseState === "running") {
+        ++phaseRequestGeneration; pendingPhaseHandle = null; earlyPhaseCompletion = undefined;
+        phaseState = "stopped"; phaseMessage = "";
+      }
+      if (homingState === "running") {
+        ++homingRequestGeneration; pendingHomingHandle = null; earlyHomingCompletion = undefined;
+        homingState = "stopped"; homingMessage = "";
+      }
     }));
-    return () => { disposed = true; listeners.forEach((stop) => stop()); };
+    return () => {
+      disposed = true; ++phaseRequestGeneration; ++homingRequestGeneration;
+      listeners.forEach((stop) => stop());
+    };
   });
 
   function handleKey(handle: ActionHandle | ActionCompletion): string { return `${handle.txn}:${handle.actionId}`; }
@@ -76,6 +90,7 @@
   function unitFor(symbol: string): string { return metadata[symbol]?.unit ?? ""; }
   function parameterLabel(symbol: string, fallback?: string): string { return localize(metadata[symbol]?.label ?? fallback ?? "Unavailable", $uiLanguage); }
   function isWritable(symbol: string): boolean { return !$parameters.loading && !$parameters.saving && canWriteInMotorState(metadata[symbol], motorState); }
+  function hasPendingEdits() { return $edits.dirty.size > 0 || writing.size > 0; }
   function phaseSearchAvailable(): boolean { return connection?.commissioning?.phaseSearch ?? false; }
   function setZeroAvailable(): boolean { return connection?.commissioning?.positionSetZero ?? false; }
   function homingAvailable(): boolean { return connection?.commissioning?.homing ?? false; }
@@ -107,22 +122,38 @@
   function handleKeydown(event: KeyboardEvent, symbol: string) { edits.keydown(event, symbol, onError); }
 
   async function startPhaseSearch() {
-    if (!connection || !phaseSearchAvailable() || phaseState === "running") return;
-    phaseState = "running"; phaseMessage = "";
-    try { pendingPhaseHandle = handleKey(await startPhaseSearchAction()); }
-    catch (error) { phaseState = "failed"; phaseMessage = String(error); onError(error); }
+    if (!connection || !phaseSearchAvailable() || phaseState === "running" || hasPendingEdits()) return;
+    const request = ++phaseRequestGeneration;
+    phaseState = "running"; phaseMessage = ""; pendingPhaseHandle = null; earlyPhaseCompletion = undefined;
+    try {
+      const handle = handleKey(await startPhaseSearchAction());
+      if (request !== phaseRequestGeneration || phaseState !== "running") return;
+      pendingPhaseHandle = handle;
+      const early = earlyPhaseCompletion;
+      earlyPhaseCompletion = undefined;
+      if (early && handleKey(early) === handle) handleActionCompleted(early);
+    } catch (error) {
+      if (request === phaseRequestGeneration) {
+        phaseState = "failed"; phaseMessage = String(error); onError(error);
+      }
+    }
   }
   function handleActionCompleted(completion: ActionCompletion) {
-    if (phaseState === "running" && (completion.operation === "encoder.phaseSearch" || handleKey(completion) === pendingPhaseHandle)) {
+    const key = handleKey(completion);
+    if (phaseState === "running" && completion.operation === "encoder.phaseSearch") {
+      if (pendingPhaseHandle === null) { earlyPhaseCompletion = completion; return; }
+      if (key !== pendingPhaseHandle) return;
       pendingPhaseHandle = null;
-      phaseState = completion.ok ? "success" : "failed";
-      phaseMessage = completion.ok ? "" : completion.status;
+      phaseState = !completion.ok ? "failed" : completion.readbackError ? "unverified" : "success";
+      phaseMessage = !completion.ok ? completion.status : completion.readbackError ?? "";
       return;
     }
-    if (homingState === "running" && (completion.operation === "encoder.homing" || handleKey(completion) === pendingHomingHandle)) {
+    if (homingState === "running" && completion.operation === "encoder.homing") {
+      if (pendingHomingHandle === null) { earlyHomingCompletion = completion; return; }
+      if (key !== pendingHomingHandle) return;
       pendingHomingHandle = null;
-      homingState = completion.ok ? "success" : "failed";
-      homingMessage = completion.ok ? "" : completion.status;
+      homingState = !completion.ok ? "failed" : completion.readbackError ? "unverified" : "success";
+      homingMessage = !completion.ok ? completion.status : completion.readbackError ?? "";
     }
   }
   async function setCurrentAsZero() {
@@ -132,10 +163,21 @@
     catch (error) { onError(error); } finally { zeroActionBusy = false; }
   }
   async function startHoming() {
-    if (!homingAvailable() || homingState === "running") return;
-    homingState = "running"; homingMessage = "";
-    try { pendingHomingHandle = handleKey(await startHomingAction()); }
-    catch (error) { homingState = "failed"; homingMessage = String(error); onError(error); }
+    if (!homingAvailable() || homingState === "running" || hasPendingEdits()) return;
+    const request = ++homingRequestGeneration;
+    homingState = "running"; homingMessage = ""; pendingHomingHandle = null; earlyHomingCompletion = undefined;
+    try {
+      const handle = handleKey(await startHomingAction());
+      if (request !== homingRequestGeneration || homingState !== "running") return;
+      pendingHomingHandle = handle;
+      const early = earlyHomingCompletion;
+      earlyHomingCompletion = undefined;
+      if (early && handleKey(early) === handle) handleActionCompleted(early);
+    } catch (error) {
+      if (request === homingRequestGeneration) {
+        homingState = "failed"; homingMessage = String(error); onError(error);
+      }
+    }
   }
 </script>
 
@@ -146,11 +188,12 @@
       <div class="empty-state"><i class="codicon codicon-plug"></i><div>{translate("ui.connect.a.device.to.configure.encoder.feedback", $uiLanguage)}</div></div>
     {:else}
       <div class="encoder-sheet">
+        {#if $edits.dirty.size > 0}<div class="state-note" role="status">{translate("commissioning.uncommitted.settings", $uiLanguage)}</div>{/if}
         <div class="encoder-columns">
           <div class="primary-column">
             <section class="encoder-section">
               <div class="section-title">{translate("ui.feedback.protocol", $uiLanguage)}</div>
-              <div class="setup-grid" aria-label="Encoder feedback protocol">
+              <div class="setup-grid" aria-label={translate("ui.encoder.feedback.protocol", $uiLanguage)}>
                 <div class="field-label">{parameterLabel(ENCODER_PROTOCOL_SYMBOL, "Protocol")}</div>
                 <div>
                   {#if metadata[ENCODER_PROTOCOL_SYMBOL]}
@@ -200,15 +243,16 @@
                 </div>
                 <div class="field-label">{translate("ui.phase.search", $uiLanguage)}</div>
                 <div class="action-line">
-                  <!-- svelte-ignore a11y_click_events_have_key_events a11y_no_static_element_interactions -->
-                  <vscode-button secondary disabled={!phaseSearchAvailable() || phaseState === "running"}
+                  <!-- svelte-ignore a11y_click_events_have_key_events, a11y_no_static_element_interactions (vscode-button provides button semantics and keyboard handling) -->
+                  <vscode-button secondary disabled={!phaseSearchAvailable() || phaseState === "running" || hasPendingEdits()}
                     title={phaseSearchAvailable() ? "Start phase search" : "Required phase-search capabilities are not exposed by this firmware"}
                     onclick={() => void startPhaseSearch()}>{translate("ui.start", $uiLanguage)}</vscode-button>
                   {#if phaseState === "running"}<span class="action-status state-running"><i class="codicon codicon-loading codicon-modifier-spin"></i> {translate("ui.running", $uiLanguage)}</span>
                   {:else if phaseState === "success"}<span class="action-status state-success"><i class="codicon codicon-check"></i> {translate("ui.success", $uiLanguage)}</span>
                   {:else if phaseState === "stopped"}<span class="action-status muted"><i class="codicon codicon-debug-stop"></i> {translate("ui.stopped", $uiLanguage)}</span>
+                  {:else if phaseState === "unverified"}<span class="action-status muted">{translate("actions.readback.unverified.label", $uiLanguage)}</span>
                   {:else if phaseState === "failed"}<span class="action-status state-failed" title={phaseMessage}><i class="codicon codicon-error"></i> {translate("ui.failed", $uiLanguage)}</span>{/if}
-                  {#if phaseState === "failed" && phaseMessage}<span class="action-reason" role="alert">{localizeFeedback(phaseMessage, $uiLanguage)}</span>{/if}
+                  {#if (phaseState === "failed" || phaseState === "unverified") && phaseMessage}<span class="action-reason" role="alert">{#if phaseState === "unverified"}{translate("actions.readback.unverified.explanation", $uiLanguage)} {/if}{localizeFeedback(phaseMessage, $uiLanguage)}</span>{/if}
                 </div>
                 <div class="field-label">{parameterLabel(MOTOR_DIR_SYMBOL, "Motor direction")}</div>
                 <div>
@@ -228,18 +272,21 @@
               <div class="section-title">{translate("ui.mechanical.reference", $uiLanguage)}</div>
               <div class="reference-row"><span class="field-label">{parameterLabel(ZERO_VALID_SYMBOL, "Zero reference")}</span><span class="readonly-value">{localize(zeroReferenceText(), $uiLanguage)}</span></div>
               <div class="reference-actions">
+                <!-- svelte-ignore a11y_click_events_have_key_events, a11y_no_static_element_interactions (vscode-button provides button semantics and keyboard handling) -->
                 <vscode-button secondary disabled={!setZeroAvailable() || zeroActionBusy}
                   title={setZeroAvailable() ? "Set current position as mechanical zero" : "Position-zero operation is not exposed by this firmware"}
                   onclick={() => void setCurrentAsZero()}>{translate("ui.set.current.as.zero", $uiLanguage)}</vscode-button>
-                <vscode-button secondary disabled={!homingAvailable() || homingState === "running"}
+                <!-- svelte-ignore a11y_click_events_have_key_events, a11y_no_static_element_interactions (vscode-button provides button semantics and keyboard handling) -->
+                <vscode-button secondary disabled={!homingAvailable() || homingState === "running" || hasPendingEdits()}
                   title={homingAvailable() ? "Start software homing" : "Homing operation is not exposed by this firmware"}
                   onclick={() => void startHoming()}>{translate("ui.software.homing", $uiLanguage)}</vscode-button>
               </div>
               {#if homingState === "running"}<div class="action-status state-running"><i class="codicon codicon-loading codicon-modifier-spin"></i> {translate("ui.homing", $uiLanguage)}</div>
               {:else if homingState === "success"}<div class="action-status state-success"><i class="codicon codicon-check"></i> {translate("ui.homed", $uiLanguage)}</div>
               {:else if homingState === "stopped"}<div class="action-status muted"><i class="codicon codicon-debug-stop"></i> {translate("ui.homing.stopped", $uiLanguage)}</div>
+              {:else if homingState === "unverified"}<div class="action-status muted">{translate("actions.readback.unverified.label", $uiLanguage)}</div>
               {:else if homingState === "failed"}<div class="action-status state-failed" title={homingMessage}><i class="codicon codicon-error"></i> {translate("ui.homing.failed", $uiLanguage)}</div>{/if}
-              {#if homingState === "failed" && homingMessage}<div class="action-reason" role="alert">{localizeFeedback(homingMessage, $uiLanguage)}</div>{/if}
+              {#if (homingState === "failed" || homingState === "unverified") && homingMessage}<div class="action-reason" role="alert">{#if homingState === "unverified"}{translate("actions.readback.unverified.explanation", $uiLanguage)} {/if}{localizeFeedback(homingMessage, $uiLanguage)}</div>{/if}
               {#if !metadata[ZERO_VALID_SYMBOL] && !setZeroAvailable() && !homingAvailable()}<div class="future-note">{translate("ui.firmware.unavailable", $uiLanguage)}</div>{/if}
             </section>
           </aside>
@@ -253,6 +300,7 @@
   .encoder-root { min-width: 0; min-height: 0; display: grid; grid-template-rows: auto 1fr; }
   .encoder-content { min-width: 0; min-height: 0; overflow: auto; padding: 22px 28px 36px; }
   .encoder-sheet { max-width: 980px; }
+  .state-note { margin-bottom: 14px; color: var(--vscode-descriptionForeground); font-size: 12px; }
   .encoder-columns { display: grid; grid-template-columns: minmax(0, 3fr) minmax(260px, 2fr); gap: 44px; align-items: start; }
   .encoder-section + .encoder-section { margin-top: 30px; }
   .section-title { margin-bottom: 12px; font-size: 13px; font-weight: 600; color: var(--vscode-foreground); }

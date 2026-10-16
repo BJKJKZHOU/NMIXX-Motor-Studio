@@ -3,6 +3,11 @@ name: Operator Regression
 on:
   push:
     branches:
+      - main
+      - dev/nmixx-unified
+  pull_request:
+    branches:
+      - main
       - dev/nmixx-unified
   workflow_dispatch:
 

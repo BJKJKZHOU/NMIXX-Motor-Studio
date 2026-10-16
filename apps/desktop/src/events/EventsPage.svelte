@@ -115,5 +115,4 @@
   .history-state { color: var(--vscode-descriptionForeground); }
   .history-state.active { color: var(--vscode-errorForeground); }
   .mono { font-family: "SFMono-Regular", Consolas, "Liberation Mono", monospace; }
-  .muted { color: var(--vscode-descriptionForeground); }
 </style>

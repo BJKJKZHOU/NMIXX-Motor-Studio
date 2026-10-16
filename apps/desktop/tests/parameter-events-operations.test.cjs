@@ -178,3 +178,33 @@ test("Events: failed Protection Clear does not claim Recheck or clear active fau
   assert.match(errors[0],/ERR_STATE/);
   assert.equal(ctx.busy,false);
 });
+
+test("Parameters expert editor enforces HostSchema write_state against the shared motor state",()=>{
+  const restrictions=moduleFrom(source("parameters/writeState.ts"));
+  const page=source("parameters/ParameterTablePage.svelte");
+  const canEdit=extract(page,"canEdit");
+  const context=vm.createContext({
+    canWriteInMotorState:restrictions.canWriteInMotorState,
+    motorState:"DISABLED",
+    $parameters:{loading:false,saving:false},
+  });
+  vm.runInContext(compile(canEdit),context);
+  const meta={access:"rw",writeState:"disabled"};
+  context.meta=meta;
+  assert.equal(vm.runInContext("canEdit(meta)",context),true);
+  context.motorState="ENABLED";
+  assert.equal(vm.runInContext("canEdit(meta)",context),false);
+  context.motorState="RUN";
+  assert.equal(vm.runInContext("canEdit(meta)",context),false);
+  meta.writeState="not_running";
+  context.motorState="ENABLED";
+  assert.equal(vm.runInContext("canEdit(meta)",context),true);
+  context.motorState="RUN";
+  assert.equal(vm.runInContext("canEdit(meta)",context),false);
+  meta.writeState=null;
+  assert.equal(vm.runInContext("canEdit(meta)",context),true);
+  context.$parameters.saving=true;
+  assert.equal(vm.runInContext("canEdit(meta)",context),false);
+  const shell=source("App.svelte");
+  assert.match(shell, /<ParameterTablePage connection=\{readyConnection\} \{motorState\}/);
+});
