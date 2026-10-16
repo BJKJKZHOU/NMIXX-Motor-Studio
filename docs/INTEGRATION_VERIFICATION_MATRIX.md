@@ -11,7 +11,7 @@
 
 ## Latest regression evidence (2026-10-16)
 
-The operator-review follow-up branch `fix/operator-review-followup` is based on
+The operator-review follow-up branch `dev/nmixx-unified` is based on
 `dev/nmixx-unified`. Its [Operator Regression run](https://github.com/BJKJKZHOU/NMIXX-Motor-Studio/actions/runs/38842341919)
 passed the complete desktop `npm run test:all` / `npm run build` sequence and the
 Rust `cargo test --workspace --locked` sequence.

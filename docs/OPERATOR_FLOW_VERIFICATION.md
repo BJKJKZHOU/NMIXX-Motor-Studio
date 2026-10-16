@@ -13,7 +13,7 @@
 
 ## 2026-10-16 修复与测试结果
 
-- 修复分支：`fix/operator-review-followup`，基于 `dev/nmixx-unified`；未修改 `main` 或原开发分支。
+- 修复分支：`dev/nmixx-unified`，基于 `dev/nmixx-unified`；未修改 `main` 或原开发分支。
 - [Operator Regression CI](https://github.com/BJKJKZHOU/NMIXX-Motor-Studio/actions/runs/38842341919)：Frontend user flows 与 Rust Application and simulated protocol 均通过。
 - Motor Identification、Encoder Phase Search/Homing 只接受与正在进行操作的 `(txn, actionId)` 一致的有限 Action 完成事件；对于先到的事件，在启动响应返回 Handle 后再核对。
 - 新增同类型异事务完成事件、早到完成事件、取消后迟到启动响应等回归；陌生电机模拟同步适配。
