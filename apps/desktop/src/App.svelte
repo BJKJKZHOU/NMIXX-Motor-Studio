@@ -242,8 +242,6 @@
   <main class="main-area">
     {#if activePage === "connection"}
       <ConnectionPage {connection} ready={connectionReady} initializing={connectionInitializing} onRetry={() => void setConnection(connection)} bind:port={connectionPort} bind:schemaPath={connectionSchemaPath} onSchemaPathChanged={persistConnectionSchemaPath} onConnected={(next) => void setConnection(next)} onDisconnected={() => void setConnection(undefined)} onError={setError} />
-    {:else if activePage === "motor"}<div class="domain-page-container"><MotorPage connection={readyConnection} {motorState} onError={setError} /></div>
-    {:else if activePage === "encoder"}<div class="domain-page-container"><EncoderPage connection={readyConnection} {motorState} onError={setError} /></div>
     {:else if activePage === "limits"}<div class="domain-page-container"><LimitsPage connection={readyConnection} {motorState} onError={setError} /></div>
     {:else if activePage === "control"}
       <div class="control-domain-shell"><aside class="control-navigation" aria-label={translate("ui.control.architecture", $uiLanguage)}>
@@ -259,10 +257,13 @@
     {:else if activePage === "parameters"}<div class="domain-page-container"><ParameterTablePage connection={readyConnection} {motorState} onError={setError} /></div>
     {:else if activePage === "events"}<div class="domain-page-container"><EventsPage connection={readyConnection} onNavigate={(page) => activePage = page} onError={setError} /></div>
     {:else if activePage === "automation"}<div class="domain-page-container"><AutomationHost connected={!!readyConnection} /></div>
-    {:else if activePage !== "analysis"}
+    {:else if activePage !== "analysis" && activePage !== "motor" && activePage !== "encoder"}
       <section class="page-toolbar"><div class="page-title">{translate(pageTitle(activePage), $uiLanguage).toUpperCase()}</div></section>
       <section class="placeholder-page"><div class="placeholder-title">{translate(pageTitle(activePage), $uiLanguage)}</div><div class="placeholder-copy">{translate("ui.this.workflow.page.is.reserved.for.the.corresponding.application.domain", $uiLanguage)}</div></section>
     {/if}
+    <!-- Preserve finite commissioning Action subscriptions while navigating, as with Scope. -->
+    <div class:inactive={activePage !== "motor"} class="domain-page-container"><MotorPage connection={readyConnection} {motorState} onError={setError} /></div>
+    <div class:inactive={activePage !== "encoder"} class="domain-page-container"><EncoderPage connection={readyConnection} {motorState} onError={setError} /></div>
     <div class:inactive={activePage !== "analysis"} class="scope-page-container"><ScopePage connection={readyConnection} active={activePage === "analysis"} onSummary={(summary) => scopeSummary = summary} onError={setError} /></div>
     {#if errorText || $parameterState.error}<div class="error-text app-error">{localizeFeedback((errorText || $parameterState.error) ?? "", $uiLanguage)}</div>{/if}
   </main>
@@ -301,6 +302,7 @@
   .problem-summary strong { font-size: 12px; }
   .problem-summary span, .problem-summary.empty { color: var(--vscode-descriptionForeground); font-size: 11px; line-height: 1.4; }
   .domain-page-container { grid-row: 1 / -1; min-width: 0; min-height: 0; display: grid; }
+  .domain-page-container.inactive { display: none; }
   .control-domain-shell { grid-row: 1 / -1; min-width: 0; min-height: 0; display: grid; grid-template-columns: 196px minmax(0, 1fr); }
   .control-navigation { min-width: 0; min-height: 0; background: var(--vscode-sideBar-background); border-right: 1px solid var(--vscode-panel-border); }
   .control-navigation-parent, .control-navigation-children button { width: 100%; border: 0; color: var(--vscode-sideBar-foreground); background: transparent; text-align: left; cursor: default; }

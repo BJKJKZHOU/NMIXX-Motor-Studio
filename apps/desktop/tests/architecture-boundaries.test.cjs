@@ -275,3 +275,16 @@ test("accepted finite and immediate Actions retain handles when readback fails",
     assert.doesNotMatch(operation,/self\.refresh_(?:motor_context|after_immediate_action)\(\)\?/);
   }
 });
+
+test("commissioning pages stay mounted while navigating to preserve finite Action state", () => {
+  const shell = source("App.svelte");
+  assert.match(shell, /class:inactive=\{activePage !== "motor"\} class="domain-page-container"><MotorPage/);
+  assert.match(shell, /class:inactive=\{activePage !== "encoder"\} class="domain-page-container"><EncoderPage/);
+  assert.match(shell, /\.domain-page-container\.inactive \{ display: none; \}/);
+  assert.doesNotMatch(shell, /\{:else if activePage === "motor"\}/);
+  assert.doesNotMatch(shell, /\{:else if activePage === "encoder"\}/);
+  const motor = source("motor/MotorPage.svelte");
+  const encoder = source("encoder/EncoderPage.svelte");
+  assert.match(motor, /onActionCompleted\(\(completion\) => handleActionCompleted\(completion\)\)/);
+  assert.match(encoder, /register\(onActionCompleted\(handleActionCompleted\)\)/);
+});
