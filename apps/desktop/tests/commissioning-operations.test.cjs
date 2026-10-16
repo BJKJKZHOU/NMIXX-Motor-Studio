@@ -129,7 +129,7 @@ test("Motor identification starts with one explicit request and no Enable confir
   await h.run();
   assert.deepEqual(h.calls,[["identification_start","rsLs",true]]);
   assert.equal(h.get("identStates.rsLs.phase"),"running");
-  assert.doesNotMatch(source("motor/MotorPage.svelte"),/window\\.confirm\\(/);
+  assert.equal(source("motor/MotorPage.svelte").includes("window.confirm("),false);
 });
 
 test("Motor shows a non-modal prerequisite message if Application cannot start",async()=>{
