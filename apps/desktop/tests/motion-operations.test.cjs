@@ -230,3 +230,68 @@ test("Tuning Stop prevents a late Run preparation reply from overwriting the lat
   await start;
   assert.equal(h.get("experimentState"),"STOPPING");
 });
+
+test("Tuning user channel selection is not overwritten by late default-channel IPC",async()=>{
+  const page=source("control/ControlTuningPage.svelte");
+  let release;
+  const events=[];
+  const ctx=vm.createContext({
+    connection:{channels:[
+      {id:1,supportsFast:true,supportsNormal:true},
+      {id:5,supportsFast:false,supportsNormal:true},
+    ]},
+    generation:2,tuningSelectionMode:"speed",tuningSelectionRevision:0,
+    tuningSelections:{},displayMultipliers:{},
+    experimentActive:()=>false,onError:e=>events.push(String(e)),
+    tuningExperimentDefaults:()=>new Promise(resolve=>release=resolve),
+  });
+  vm.runInContext(compile(["loadTuningDefaults","toggleTuningChannel","setTuningRate"].map(n=>extract(page,n)).join("\n")),ctx);
+  const read=vm.runInContext("loadTuningDefaults()",ctx);
+  vm.runInContext("toggleTuningChannel(5,true)",ctx);
+  release([{id:1,rate:"fast"}]);
+  await read;
+  assert.equal(ctx.tuningSelections[5],"normal");
+  assert.equal(ctx.tuningSelections[1],undefined);
+  assert.equal(events.length,0);
+});
+
+test("Tuning late defaults cannot reverse the user's FAST/NORMAL rate selection",async()=>{
+  const page=source("control/ControlTuningPage.svelte");
+  let release;
+  const ctx=vm.createContext({
+    connection:{channels:[{id:1,supportsFast:true,supportsNormal:true}]},
+    generation:2,tuningSelectionMode:"position",tuningSelectionRevision:0,
+    tuningSelections:{1:"normal"},displayMultipliers:{1:1},
+    experimentActive:()=>false,onError:()=>{},
+    tuningExperimentDefaults:()=>new Promise(resolve=>release=resolve),
+  });
+  vm.runInContext(compile(["loadTuningDefaults","toggleTuningChannel","setTuningRate"].map(n=>extract(page,n)).join("\n")),ctx);
+  const read=vm.runInContext("loadTuningDefaults()",ctx);
+  vm.runInContext('setTuningRate(1,"fast")',ctx);
+  release([{id:1,rate:"normal"}]);
+  await read;
+  assert.equal(ctx.tuningSelections[1],"fast");
+});
+
+test("Tuning older periodic RUNNING poll cannot overwrite an acknowledged Stop",async()=>{
+  const page=source("control/ControlTuningPage.svelte");
+  let releasePoll;
+  const ctx=vm.createContext({
+    connection:{motion:{stop:true}},
+    generation:1,experimentRefreshBusy:false,experimentCommandRevision:1,
+    experimentState:"RUNNING",experimentMessage:"",experimentSnapshot:undefined,
+    stopActionBusy:false,experimentActive:()=>true,
+    tuningExperimentStatus:()=>new Promise(resolve=>releasePoll=resolve),
+    readTuningExperimentSnapshot:async()=>({snapshot:{series:[]}}),
+    stopTuningExperiment:async()=>({state:"STOPPING",message:null}),
+    onError:()=>{},
+  });
+  vm.runInContext(compile(["canStopMotion","refreshExperiment","stopTuningMotion"].map(n=>extract(page,n)).join("\n")),ctx);
+  const oldPoll=vm.runInContext("refreshExperiment()",ctx);
+  await vm.runInContext("stopTuningMotion()",ctx);
+  assert.equal(ctx.experimentState,"STOPPING");
+  releasePoll({state:"RUNNING",message:null});
+  await oldPoll;
+  assert.equal(ctx.experimentState,"STOPPING");
+  assert.equal(ctx.experimentSnapshot,undefined);
+});

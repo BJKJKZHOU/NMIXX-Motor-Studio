@@ -66,6 +66,7 @@
   let tuningSelections = $state<Record<number, "fast" | "normal">>({});
   let displayMultipliers = $state<Record<number, number>>({});
   let tuningSelectionMode = $state<MotionMode | undefined>(undefined);
+  let tuningSelectionRevision = 0;
   let tuningTimePerDiv = $state(20e-3);
   let incrementalDraft = $state("1");
 
@@ -189,9 +190,10 @@
   async function loadTuningDefaults() {
     const token = generation;
     const mode = tuningSelectionMode;
+    const selectionRevision = tuningSelectionRevision;
     try {
       const defaults = await tuningExperimentDefaults();
-      if (token !== generation || mode !== tuningSelectionMode) return;
+      if (token !== generation || mode !== tuningSelectionMode || selectionRevision !== tuningSelectionRevision) return;
       const next: Record<number, "fast" | "normal"> = {};
       const nextMultipliers = { ...displayMultipliers };
       for (const selection of defaults) { next[selection.id] = selection.rate; if (!(selection.id in nextMultipliers)) nextMultipliers[selection.id] = 1; }
@@ -208,11 +210,13 @@
       if (!(id in displayMultipliers)) displayMultipliers = { ...displayMultipliers, [id]: 1 };
     } else delete next[id];
     tuningSelections = next;
+    ++tuningSelectionRevision;
   }
   function setTuningRate(id: number, rate: "fast" | "normal") {
     const channel = connection?.channels.find((item) => item.id === id);
     if (!channel || experimentActive() || (rate === "fast" && !channel.supportsFast) || (rate === "normal" && !channel.supportsNormal)) return;
     tuningSelections = { ...tuningSelections, [id]: rate };
+    ++tuningSelectionRevision;
   }
   async function setMotionProfile(value: number) {
     if (motionLocked() || locked(MOTION_PROFILE)) return;
@@ -231,20 +235,22 @@
   async function refreshExperiment() {
     if (!connection || experimentRefreshBusy) return;
     const token = generation;
+    const commandRevision = experimentCommandRevision;
     experimentRefreshBusy = true;
     try {
       const previousState = experimentState;
       const status = await tuningExperimentStatus();
-      if (token !== generation) return;
+      if (token !== generation || commandRevision !== experimentCommandRevision) return;
       experimentState = status.state; experimentMessage = status.message ?? "";
       const active = status.state === "PREPARING" || status.state === "RUNNING" || status.state === "STOPPING";
       const finalTransition = (status.state === "COMPLETED" || status.state === "FAILED") && (previousState !== status.state || !experimentSnapshot);
       if (active || finalTransition) {
         const snapshot = await readTuningExperimentSnapshot(tuningTimePerDiv * 10, 0);
-        if (token === generation) experimentSnapshot = snapshot;
+        if (token === generation && commandRevision === experimentCommandRevision) experimentSnapshot = snapshot;
       }
-    } catch (error) { if (token === generation && experimentState !== "IDLE") onError(error); }
-    finally { experimentRefreshBusy = false; }
+    } catch (error) {
+      if (token === generation && commandRevision === experimentCommandRevision && experimentState !== "IDLE") onError(error);
+    } finally { experimentRefreshBusy = false; }
   }
   function canRunMotion(): boolean {
     return !!connection && motorState === "ENABLED" && !motionActionBusy && !experimentActive()
