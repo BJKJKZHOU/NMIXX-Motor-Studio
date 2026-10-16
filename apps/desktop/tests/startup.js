@@ -15,6 +15,7 @@ mockIPC((command, args) => {
   window.__nmixxStartupArgs.push({ command, args });
   if (command === "device_list" || command === "action_list") return [];
   if (command === "device_disconnect") return;
+  if (command === "parameter_list") return [];
   if (command === "automation_snapshot") return mockTask;
   if (command === "automation_start") {
     mockTask = { ...mockTask, taskId: 1, name: args.spec.name, state: "RUNNING" };
@@ -68,6 +69,10 @@ if (fixture.has("tuning-tabs")) {
   await import("../src/theme.css");
   const { mount } = await import("svelte");
   const { default: AutomationPage } = await import("../src/automation/AutomationPage.svelte");
+  // This fixture mounts a single page without App.svelte: initialize the same
+  // shared Parameter session the real Connect flow would have established.
+  const { connectParameters } = await import("../src/parameters/state");
+  await connectParameters();
   mount(AutomationPage, {
     target: document.getElementById("app"),
     props: { connected: true },
