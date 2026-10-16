@@ -194,6 +194,40 @@ def main() -> int:
                         print("PASS chromium: Monaco editing, current-source Run IPC, Cancel feedback")
                     finally:
                         context.close()
+                    # Full App shell with a connected, simulated device:
+                    # the displayed Enable/Disable state must come from the
+                    # same Parameter readbacks observed by the business pages.
+                    context = browser.new_context(viewport={"width": 1400, "height": 900})
+                    context.add_init_script("localStorage.setItem('nmixx.ui.language', 'en')")
+                    page = context.new_page()
+                    errors = []
+                    page.on("pageerror", lambda error: errors.append(str(error)))
+                    try:
+                        page.goto(url + "?motor-controls=1", wait_until="networkidle")
+                        expect(page.locator("#connection-port")).to_have_value("COM7")
+                        power = page.locator(".global-actions > button").first
+                        expect(power).to_contain_text("UNKNOWN")
+                        page.locator(".connection-actions vscode-button").click()
+                        expect(page.locator(".connection-status")).to_contain_text("AxDr_L")
+                        expect(power).to_contain_text("DISABLED")
+                        expect(power).to_have_class("tool-button global-action motor-disabled")
+                        power.click()
+                        expect(power).to_contain_text("ENABLED")
+                        expect(power).to_have_class("tool-button global-action motor-enabled")
+                        page.locator(".global-actions .stop-action").click()
+                        expect(power).to_contain_text("ENABLED")
+                        power.click()
+                        expect(power).to_contain_text("DISABLED")
+                        commands = page.evaluate("window.__nmixxStartupRequests")
+                        for command in ("motor_enable", "motor_stop", "motor_disable"):
+                            assert commands.count(command) == 1, commands
+                        page.locator(".connection-actions vscode-button").click()
+                        expect(page.locator(".connection-status")).to_contain_text("Disconnected")
+                        expect(power).to_contain_text("UNKNOWN")
+                        assert not errors, f"Global control browser errors: {errors}"
+                        print("PASS chromium: Connect, Motor State red/green, Enable/Stop/Disable and Disconnect")
+                    finally:
+                        context.close()
                 finally:
                     browser.close()
             return 0
