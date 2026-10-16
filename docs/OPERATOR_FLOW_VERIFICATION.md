@@ -6,10 +6,18 @@
 ## 验证等级
 
 - **HANDLER-SIM**：在受限 JS 沙盒中提取并执行真实 Svelte 操作函数，以模拟 Tauri 返回值；没有运行整个 Svelte/WebView。
-- **NODE-TEST-ADDED**：仓库已有可重放的 Node 脚本测试；尚未在当前环境执行完整 npm 测试。
-- **WIRE-TEST-ADDED**：Rust 模拟 `FrameTransport` 的通信帧测试已编写，当前环境尚未运行 Cargo。
+- **NODE-TEST-ADDED**：仓库已有可重放的 Node 脚本测试；本轮修复分支已通过 GitHub Actions 前端全套回归，但不代表 WebView 实机验证。
+- **WIRE-TEST-ADDED**：Rust 模拟 `FrameTransport` 的通信帧测试已编写，本轮修复分支已通过 CI 的 `cargo test --workspace --locked`；未使用真实硬件。
 - **CODE-TRACED**：核对 Rust Application/DeviceSession 和固件现有实现；不等于实际硬件观察。
 - **HW-PENDING**：需固件开发板/电机实测；尤其是故障、运动时序与 Plot 数据路径。
+
+## 2026-10-16 修复与测试结果
+
+- 修复分支：`fix/operator-review-followup`，基于 `dev/nmixx-unified`；未修改 `main` 或原开发分支。
+- [Operator Regression CI](https://github.com/BJKJKZHOU/NMIXX-Motor-Studio/actions/runs/38842341919)：Frontend user flows 与 Rust Application and simulated protocol 均通过。
+- Motor Identification、Encoder Phase Search/Homing 只接受与正在进行操作的 `(txn, actionId)` 一致的有限 Action 完成事件；对于先到的事件，在启动响应返回 Handle 后再核对。
+- 新增同类型异事务完成事件、早到完成事件、取消后迟到启动响应等回归；陌生电机模拟同步适配。
+- 仍未完成：真实 Tauri WebView 点击和完整固件硬件验收；固件 Plot 与 Tuning 默认选道断点维持暂缓。
 
 ## 用户操作与反馈矩阵
 

@@ -9,6 +9,20 @@
 > corresponding page design document. Documentation authority rules are in
 > `docs/README.md`.
 
+## Latest regression evidence (2026-10-16)
+
+The operator-review follow-up branch `fix/operator-review-followup` is based on
+`dev/nmixx-unified`. Its [Operator Regression run](https://github.com/BJKJKZHOU/NMIXX-Motor-Studio/actions/runs/38842341919)
+passed the complete desktop `npm run test:all` / `npm run build` sequence and the
+Rust `cargo test --workspace --locked` sequence.
+
+The pass includes transaction-exact finite Action completion checks, early completion
+races, cancel/late-response regression and the first-motor scripted journey.
+These results establish regression coverage and compilation in CI only.
+They are **not** evidence that a Tauri WebView or physical motor was exercised.
+All unchecked `[HW]` and `[WEBVIEW]` acceptance items remain unchecked.
+The known firmware Plot / Tuning default channel mismatch remains deferred.
+
 ## Verification rules
 
 All items intentionally start unchecked for this integration pass. Existing code,
