@@ -154,7 +154,10 @@
     <div class="editor-error" role="alert">{localizeFeedback(error || $taskError, $uiLanguage)}</div>
   {/if}
 
-  <div class="workspace-body">
+  <!-- Built-in VSCode Elements splitter, rather than a custom drag/resize system. -->
+  <vscode-split-layout class="workspace-split" split="horizontal"
+    initial-handle-position="71%" min-start="190px" min-end="100px">
+    <div slot="start" class="workspace-body">
     {#if explorerVisible}
       <aside class="script-explorer">
         <div class="explorer-heading">
@@ -220,7 +223,7 @@
     </div>
   </div>
 
-  <section class="script-output">
+    <section slot="end" class="script-output">
     <div class="output-heading">
       <span><i class="codicon codicon-output"></i> {translate("automation.workspace.output", $uiLanguage)}</span>
       <span class="output-state">
@@ -244,7 +247,8 @@
     {#if ($taskState?.firstSequence ?? 1) > 1}<div class="output-message">{translate("ui.old.output.was.truncated.by.the.bounded.log.buffer", $uiLanguage)}</div>{/if}
     <pre class="output-content" aria-label={translate("automation.output.aria", $uiLanguage)}>{output || translate("ui.no.output.yet", $uiLanguage)}</pre>
     {#if feedback}<div class="output-message">{localizeFeedback(feedback, $uiLanguage)}</div>{/if}
-  </section>
+    </section>
+  </vscode-split-layout>
 </div>
 
 <style>
@@ -261,7 +265,8 @@
   .settings-strip input { width: 105px; } .settings-strip .timeout { width: 70px; }
   .save-as-strip label { flex: 1; } .save-as-strip input { flex: 1; min-width: 130px; }
   .editor-error { padding: 7px 12px; color: var(--vscode-errorForeground); background: var(--vscode-inputValidation-errorBackground, #402222); font-size: 11px; }
-  .workspace-body { flex: 1 1 auto; display: flex; min-height: 190px; min-width: 0; border-bottom: 1px solid var(--vscode-panel-border); }
+  .workspace-split { display: block; flex: 1 1 auto; min-width: 0; min-height: 0; }
+  .workspace-body { display: flex; width: 100%; height: 100%; min-width: 0; min-height: 0; }
   .script-explorer { flex: 0 0 190px; width: 190px; min-height: 0; overflow: auto; border-right: 1px solid var(--vscode-panel-border); background: var(--vscode-sideBar-background, #252526); }
   .explorer-heading { height: 32px; padding: 0 10px; display: flex; align-items: center; justify-content: space-between; font-size: 11px; font-weight: 600; }
   .explorer-section { margin: 8px 0 16px; min-width: 0; }
@@ -284,7 +289,7 @@
   .editor-empty .codicon { font-size: 30px; opacity: 0.6; }
   .editor-status { display: flex; justify-content: space-between; gap: 15px; min-height: 22px; padding: 3px 10px; box-sizing: border-box; font-size: 10px; color: var(--vscode-descriptionForeground); background: var(--vscode-statusBar-background, #202020); }
   .editor-status span:first-child { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
-  .script-output { flex: 0 0 29%; min-height: 100px; max-height: 45%; display: flex; flex-direction: column; min-width: 0; }
+  .script-output { display: flex; flex-direction: column; width: 100%; height: 100%; min-width: 0; min-height: 0; }
   .output-heading { display: flex; gap: 10px; align-items: center; min-height: 29px; padding: 0 12px; border-bottom: 1px solid var(--vscode-panel-border); font-size: 11px; font-weight: 600; }
   .output-state { flex: 1; text-align: right; color: var(--vscode-descriptionForeground); font-weight: 400; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
   .log-export { display: flex; gap: 8px; padding: 6px 10px; border-bottom: 1px solid var(--vscode-panel-border); }
