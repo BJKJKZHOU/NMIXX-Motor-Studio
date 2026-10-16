@@ -186,7 +186,9 @@ def main() -> int:
                         starts = [entry for entry in commands if entry["command"] == "automation_start"]
                         assert len(starts) == 1, starts
                         assert "browser-edited" in starts[0]["args"]["spec"]["source"], starts
-                        page.get_by_role("button", name="Cancel", exact=True).first.click()
+                        # Locate the domain Cancel control by its stable icon:
+                        # language labels and accessible names may vary with locale.
+                        page.locator(".toolbar-actions button:has(.codicon-debug-stop)").click()
                         expect(page.locator(".output-state")).to_contain_text("CANCELLED")
                         assert not errors, f"Automation browser errors: {errors}"
                         print("PASS chromium: Monaco editing, current-source Run IPC, Cancel feedback")
