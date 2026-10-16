@@ -173,7 +173,9 @@
   function discardAcceleration() { edits.discard(MOTION_ACCEL); if (copyAccelToDecel) edits.discard(MOTION_DECEL); }
   function toggleCopyAccelToDecel(checked: boolean) {
     copyAccelToDecel = checked;
-    if (checked) edits.edit(MOTION_DECEL, drafts[MOTION_ACCEL] ?? "");
+    // Enabling the link alone must not introduce an uncommitted Decel value.
+    // Only an actual Accel draft is mirrored until Enter commits both values.
+    if (checked && dirty(MOTION_ACCEL)) edits.edit(MOTION_DECEL, drafts[MOTION_ACCEL]);
     else edits.discard(MOTION_DECEL);
   }
 

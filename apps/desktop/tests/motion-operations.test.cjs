@@ -178,3 +178,28 @@ test("Tuning dirty input disables Run, no experiment or motor command is dispatc
   await h.run();
   assert.equal(h.events.length, 0);
 });
+
+test("Tuning Copy Accel to Decel does not manufacture a draft on checkbox toggle",()=>{
+  const page=source("control/ControlTuningPage.svelte");
+  const calls=[],dirtySymbols=new Set();
+  const context=vm.createContext({
+    copyAccelToDecel:false,
+    MOTION_ACCEL:"PARAM_MOTION_ACCEL",MOTION_DECEL:"PARAM_MOTION_DECEL",
+    drafts:{PARAM_MOTION_ACCEL:"100",PARAM_MOTION_DECEL:"40"},
+    dirty:symbol=>dirtySymbols.has(symbol),
+    edits:{
+      edit(symbol,text){calls.push(["edit",symbol,text]);dirtySymbols.add(symbol);},
+      discard(symbol){calls.push(["discard",symbol]);dirtySymbols.delete(symbol);},
+    },
+  });
+  vm.runInContext(compile(["toggleCopyAccelToDecel","editAcceleration"].map(n=>extract(page,n)).join("\n")),context);
+  vm.runInContext("toggleCopyAccelToDecel(true)",context);
+  assert.deepEqual(calls,[["discard","PARAM_MOTION_DECEL"]]);
+  assert.equal(dirtySymbols.size,0);
+  vm.runInContext('editAcceleration("120")',context);
+  assert.deepEqual(calls.slice(1),[
+    ["edit","PARAM_MOTION_ACCEL","120"],
+    ["edit","PARAM_MOTION_DECEL","120"],
+  ]);
+  assert(dirtySymbols.has("PARAM_MOTION_DECEL"));
+});
