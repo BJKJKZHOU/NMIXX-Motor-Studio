@@ -180,6 +180,12 @@ def main() -> int:
                         page.locator(".monaco-editor").click()
                         page.keyboard.insert_text("\\nprint('browser-edited')\\n")
                         expect(page.locator(".script-tab .dirty-mark")).to_be_visible()
+                        page.get_by_role("button", name="New", exact=True).click()
+                        expect(page.locator(".script-tab")).to_have_count(2)
+                        # The edited first model must survive a switch to the
+                        # second tab before Run captures its source.
+                        page.locator(".script-tab").first.locator(".tab-name").click()
+                        expect(page.locator(".script-tab.active")).to_contain_text("Untitled-1.py")
                         page.locator(".run-button").click()
                         expect(page.locator(".output-state")).to_contain_text("RUNNING")
                         commands = page.evaluate("window.__nmixxStartupArgs")
