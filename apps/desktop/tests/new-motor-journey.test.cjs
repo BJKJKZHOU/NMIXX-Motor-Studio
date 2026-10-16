@@ -307,7 +307,7 @@ test("new motor from USB connection through three identifications, phase search 
     "toggleTuningChannel","canRunMotion","runTuningMotion","refreshExperiment",
   ],{
     connection,motorState:device.motorState,motionActionBusy:false,
-    stopActionBusy:false,experimentState:"IDLE",experimentMessage:"",
+    stopActionBusy:false,experimentCommandRevision:0,experimentState:"IDLE",experimentMessage:"",
     experimentSnapshot:undefined,experimentRefreshBusy:false,generation:0,
     waveformTab:"channels",tuningTimePerDiv:0.02,
     tuningSelections:{},displayMultipliers:{},writing:new Set(),
