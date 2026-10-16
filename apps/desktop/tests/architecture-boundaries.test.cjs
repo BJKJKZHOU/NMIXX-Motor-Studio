@@ -254,3 +254,24 @@ test("finite Action completion workers are connection-scoped", () => {
   assert.match(tauri, /completion\.wait\(handle, Some\(Duration::from_millis\(100\)\)\)/);
   assert.doesNotMatch(tauri, /completion\.wait\(handle, None\)/);
 });
+
+test("accepted finite and immediate Actions retain handles when readback fails", () => {
+  const app = readFileSync(join(repo, "crates/nmixx-app/src/application.rs"), "utf8");
+  const slice = (start, end) => {
+    const a=app.indexOf(start);
+    assert.notEqual(a,-1);
+    const b=app.indexOf(end,a+start.length);
+    assert.notEqual(b,-1);
+    return app.slice(a,b);
+  };
+  for (const [start,end] of [
+    ["pub fn identification_start(", "pub fn identification_apply_candidate("],
+    ["pub fn identification_apply_kind(", "pub fn motor_enable("],
+    ["pub fn phase_search_start(", "pub fn is_same_session("],
+    ["fn stop_motor_command(", "pub fn motor_disable("],
+  ]) {
+    const operation=slice(start,end);
+    assert.match(operation,/let _ = self\.refresh_(?:motor_context|after_immediate_action)\(\);/);
+    assert.doesNotMatch(operation,/self\.refresh_(?:motor_context|after_immediate_action)\(\)\?/);
+  }
+});
