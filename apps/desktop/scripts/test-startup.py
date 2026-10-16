@@ -129,67 +129,67 @@ def main() -> int:
                             print(f"PASS {args.browser} / {locale}: workbench, eight pages, Scope and Motion preview")
                         finally:
                             context.close()
-                # Real Svelte/VSCode Elements event test. Synthetic Tauri IPC replies,
-                # but the user clicks actual Web Components in Chromium.
-                context = browser.new_context(viewport={"width": 1400, "height": 900})
-                context.add_init_script("localStorage.setItem('nmixx.ui.language', 'en')")
-                page = context.new_page()
-                errors = []
-                page.on("pageerror", lambda error: errors.append(str(error)))
-                try:
-                    page.goto(url + "?tuning-tabs=1", wait_until="networkidle")
-                    tabs = page.locator("vscode-tab-header")
-                    expect(tabs).to_have_count(3)
-                    expect(page.locator(".scope-echarts-view canvas")).to_be_visible()
-                    tabs.nth(1).click()
-                    expect(page.locator("vscode-tabs")).to_have_attribute("selected-index", "1")
-                    expect(page.locator(".tuning-channel-list")).to_be_visible()
-                    page.locator(".tuning-channel-row input[type=checkbox]").check()
-                    expect(page.locator(".tuning-channel-row input[type=checkbox]")).to_be_checked()
-                    tabs.nth(2).click()
-                    expect(page.locator("vscode-tabs")).to_have_attribute("selected-index", "2")
-                    expect(page.locator(".tuning-scale-list")).to_be_visible()
-                    tabs.nth(0).click()
-                    expect(page.locator(".scope-echarts-view canvas")).to_be_visible()
-                    # Keyboard-driven selection belongs to VSCode Elements, not
-                    # application-authored extra keydown handlers.
-                    tabs.nth(0).focus()
-                    page.keyboard.press("ArrowRight")
-                    page.keyboard.press("Enter")
-                    expect(page.locator("vscode-tabs")).to_have_attribute("selected-index", "1")
-                    assert not errors, f"Tuning tab browser errors: {errors}"
-                    assert page.evaluate("window.__nmixxUIErrors") == []
-                    print("PASS chromium: Tuning Waveform/Channels/Scale clicks, keyboard and chart return")
-                finally:
-                    context.close()
+                    # Real Svelte/VSCode Elements event test. Synthetic Tauri IPC replies,
+                    # but the user clicks actual Web Components in Chromium.
+                    context = browser.new_context(viewport={"width": 1400, "height": 900})
+                    context.add_init_script("localStorage.setItem('nmixx.ui.language', 'en')")
+                    page = context.new_page()
+                    errors = []
+                    page.on("pageerror", lambda error: errors.append(str(error)))
+                    try:
+                        page.goto(url + "?tuning-tabs=1", wait_until="networkidle")
+                        tabs = page.locator("vscode-tab-header")
+                        expect(tabs).to_have_count(3)
+                        expect(page.locator(".scope-echarts-view canvas")).to_be_visible()
+                        tabs.nth(1).click()
+                        expect(page.locator("vscode-tabs")).to_have_attribute("selected-index", "1")
+                        expect(page.locator(".tuning-channel-list")).to_be_visible()
+                        page.locator(".tuning-channel-row input[type=checkbox]").check()
+                        expect(page.locator(".tuning-channel-row input[type=checkbox]")).to_be_checked()
+                        tabs.nth(2).click()
+                        expect(page.locator("vscode-tabs")).to_have_attribute("selected-index", "2")
+                        expect(page.locator(".tuning-scale-list")).to_be_visible()
+                        tabs.nth(0).click()
+                        expect(page.locator(".scope-echarts-view canvas")).to_be_visible()
+                        # Keyboard-driven selection belongs to VSCode Elements, not
+                        # application-authored extra keydown handlers.
+                        tabs.nth(0).focus()
+                        page.keyboard.press("ArrowRight")
+                        page.keyboard.press("Enter")
+                        expect(page.locator("vscode-tabs")).to_have_attribute("selected-index", "1")
+                        assert not errors, f"Tuning tab browser errors: {errors}"
+                        assert page.evaluate("window.__nmixxUIErrors") == []
+                        print("PASS chromium: Tuning Waveform/Channels/Scale clicks, keyboard and chart return")
+                    finally:
+                        context.close()
 
-                # Script text stays editable. Run dispatches only the current editor
-                # snapshot, and Cancel uses the shared Automation task API.
-                context = browser.new_context(viewport={"width": 1400, "height": 900})
-                context.add_init_script("localStorage.setItem('nmixx.ui.language', 'en')")
-                page = context.new_page()
-                errors = []
-                page.on("pageerror", lambda error: errors.append(str(error)))
-                try:
-                    page.goto(url + "?automation-script=1", wait_until="networkidle")
-                    page.get_by_role("button", name="New", exact=True).click()
-                    expect(page.locator(".script-tab")).to_have_count(1)
-                    expect(page.locator(".monaco-editor")).to_be_visible(timeout=15000)
-                    page.locator(".monaco-editor").click()
-                    page.keyboard.insert_text("\\nprint('browser-edited')\\n")
-                    expect(page.locator(".script-tab .dirty-mark")).to_be_visible()
-                    page.locator(".run-button").click()
-                    expect(page.locator(".output-state")).to_contain_text("RUNNING")
-                    commands = page.evaluate("window.__nmixxStartupArgs")
-                    starts = [entry for entry in commands if entry["command"] == "automation_start"]
-                    assert len(starts) == 1, starts
-                    assert "browser-edited" in starts[0]["args"]["spec"]["source"], starts
-                    page.get_by_role("button", name="Cancel", exact=True).first.click()
-                    expect(page.locator(".output-state")).to_contain_text("CANCELLED")
-                    assert not errors, f"Automation browser errors: {errors}"
-                    print("PASS chromium: Monaco editing, current-source Run IPC, Cancel feedback")
-                finally:
-                    context.close()
+                    # Script text stays editable. Run dispatches only the current editor
+                    # snapshot, and Cancel uses the shared Automation task API.
+                    context = browser.new_context(viewport={"width": 1400, "height": 900})
+                    context.add_init_script("localStorage.setItem('nmixx.ui.language', 'en')")
+                    page = context.new_page()
+                    errors = []
+                    page.on("pageerror", lambda error: errors.append(str(error)))
+                    try:
+                        page.goto(url + "?automation-script=1", wait_until="networkidle")
+                        page.get_by_role("button", name="New", exact=True).click()
+                        expect(page.locator(".script-tab")).to_have_count(1)
+                        expect(page.locator(".monaco-editor")).to_be_visible(timeout=15000)
+                        page.locator(".monaco-editor").click()
+                        page.keyboard.insert_text("\\nprint('browser-edited')\\n")
+                        expect(page.locator(".script-tab .dirty-mark")).to_be_visible()
+                        page.locator(".run-button").click()
+                        expect(page.locator(".output-state")).to_contain_text("RUNNING")
+                        commands = page.evaluate("window.__nmixxStartupArgs")
+                        starts = [entry for entry in commands if entry["command"] == "automation_start"]
+                        assert len(starts) == 1, starts
+                        assert "browser-edited" in starts[0]["args"]["spec"]["source"], starts
+                        page.get_by_role("button", name="Cancel", exact=True).first.click()
+                        expect(page.locator(".output-state")).to_contain_text("CANCELLED")
+                        assert not errors, f"Automation browser errors: {errors}"
+                        print("PASS chromium: Monaco editing, current-source Run IPC, Cancel feedback")
+                    finally:
+                        context.close()
                 finally:
                     browser.close()
             return 0
