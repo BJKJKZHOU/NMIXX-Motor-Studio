@@ -55,6 +55,7 @@
   let loading = $derived($parameters.loading);
   let motionActionBusy = $state(false);
   let stopActionBusy = $state(false);
+  let experimentCommandRevision = 0;
   let copyAccelToDecel = $state(false);
   let experimentState = $state<TuningExperimentState>("IDLE");
   let experimentMessage = $state("");
@@ -254,12 +255,16 @@
   async function runTuningMotion() {
     if (!canRunMotion()) return;
     motionActionBusy = true;
+    const revision = ++experimentCommandRevision;
     try {
       await waitMotionUpdates();
+      if (revision !== experimentCommandRevision) return;
       const status = await startTuningExperiment(selectedTuningEntries());
+      if (revision !== experimentCommandRevision) return;
       experimentState = status.state; experimentMessage = status.message ?? ""; experimentSnapshot = undefined; waveformTab = "waveform";
       await refreshExperiment();
-    } catch (error) { onError(error); } finally { motionActionBusy = false; }
+    } catch (error) { if (revision === experimentCommandRevision) onError(error); }
+    finally { motionActionBusy = false; }
   }
   async function requestExperimentWindow(windowSeconds: number, endOffsetSeconds: number, maxPoints = 3000) {
     if (!connection || experimentRefreshBusy) return;
@@ -273,11 +278,14 @@
   async function stopTuningMotion() {
     if (!canStopMotion()) return;
     stopActionBusy = true;
+    const revision = ++experimentCommandRevision;
     try {
       const status = await stopTuningExperiment();
+      if (revision !== experimentCommandRevision) return;
       experimentState = status.state; experimentMessage = status.message ?? "";
       await refreshExperiment();
-    } catch (error) { onError(error); } finally { stopActionBusy = false; }
+    } catch (error) { if (revision === experimentCommandRevision) onError(error); }
+    finally { stopActionBusy = false; }
   }
 </script>
 

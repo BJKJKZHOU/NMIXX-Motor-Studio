@@ -36,6 +36,7 @@
   let actionBusy = false;
   let stopBusy = false;
   let runFeedback = "";
+  let feedbackRevision = 0;
   let incrementalDraft = "1";
   $: uncommittedMotion = $edits.dirty.size > 0 || incrementalDraft !== formatHostNumber($motionState.incrementalDeltaTurn);
   onMount(() => {
@@ -105,28 +106,36 @@
     }
     if (!canRun() || actionBusy) return;
     actionBusy = true;
+    const revision = ++feedbackRevision;
     runFeedback = "Sending Motion command…";
     try {
       const result = await executeMotion();
       // An accepted Action is not evidence that the motor reached its target.
-      runFeedback = result.kind === "targetUpdated"
-        ? "Position target updated on device; motion remains under firmware control."
-        : "Motor Run accepted by device; awaiting motor-state feedback.";
+      if (revision === feedbackRevision) {
+        runFeedback = result.kind === "targetUpdated"
+          ? "Position target updated on device; motion remains under firmware control."
+          : "Motor Run accepted by device; awaiting motor-state feedback.";
+      }
     } catch (error) {
-      runFeedback = `Run failed: ${String(error)}`;
-      onError(error);
+      if (revision === feedbackRevision) {
+        runFeedback = `Run failed: ${String(error)}`;
+        onError(error);
+      }
     } finally { actionBusy = false; }
   }
   async function stop() {
     if (!canStop()) return;
     stopBusy = true;
+    const revision = ++feedbackRevision;
     runFeedback = "Requesting controlled Stop…";
     try {
       await stopMotionExecution();
-      runFeedback = "Stop accepted; waiting for firmware to leave RUN.";
+      if (revision === feedbackRevision) runFeedback = "Stop accepted; waiting for firmware to leave RUN.";
     } catch (error) {
-      runFeedback = `Stop failed: ${String(error)}`;
-      onError(error);
+      if (revision === feedbackRevision) {
+        runFeedback = `Stop failed: ${String(error)}`;
+        onError(error);
+      }
     } finally { stopBusy = false; }
   }
   function previewLabel(): string {
