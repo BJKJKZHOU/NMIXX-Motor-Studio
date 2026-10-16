@@ -44,20 +44,13 @@
     <label>{translate("ui.timeout.s", $uiLanguage)} <input class="compact-input timeout" type="number" min="1" max="3600" step="1" bind:value={$scriptSettings.timeoutSeconds} disabled={busy || activeTask} /></label>
   </div>
   <div class="automation-notice">
-    {#if $uiLanguage === "zh-CN"}
-      脚本与界面共用 Application API 和设备连接，可修改参数并操作电机及 Scope。
-      Motion 示例使用当前已提交的目标，运行前需要手动使能。脚本使用当前操作系统用户权限执行，并非沙盒；仅运行可信文件。
-    {:else}
-      Uses the same Application API and connection as GUI actions, not CLI. Scripts can write parameters and operate the motor and Scope.
-      The Motion example uses your current committed target and requires manual Enable first.
-      Scripts run with your OS user permissions, not in a sandbox. Run only trusted files.
-    {/if}
+    {translate("automation.execution.notice", $uiLanguage)}
   </div>
   {#if error || $taskError}<div class="error-text" role="alert">{localizeFeedback(error || $taskError, $uiLanguage)}</div>{/if}
   <div class="automation-content">
     <section class="source-panel">
       <div class="section-heading">{$scriptSettings.document?.name ?? translate("ui.no.script.selected", $uiLanguage)} · {translate("ui.source.preview", $uiLanguage)}</div>
-      <pre aria-label="Read-only script source">{$scriptSettings.document?.source ?? ""}</pre>
+      <pre aria-label={translate("automation.source.aria", $uiLanguage)}>{$scriptSettings.document?.source ?? ""}</pre>
     </section>
     <section class="log-panel">
       <div class="section-heading">
@@ -65,13 +58,13 @@
         {#if $taskState?.taskId} · {$taskState.name} · {translate("automation.task.id.label", $uiLanguage)} {$taskState.taskId}{/if}
         {#if $taskState?.exitCode !== null && $taskState?.exitCode !== undefined} · {translate("automation.task.exit.code.label", $uiLanguage)} {$taskState.exitCode}{/if}
       </div>
-      {#if $taskState?.message}<div class="automation-message">{$taskState.message}</div>{/if}
+      {#if $taskState?.message}<div class="automation-message">{localizeFeedback($taskState.message, $uiLanguage)}</div>{/if}
       {#if ($taskState?.firstSequence ?? 1) > 1}<div class="automation-message">{translate("ui.old.output.was.truncated.by.the.bounded.log.buffer", $uiLanguage)}</div>{/if}
-      <pre class="output" aria-label="Script output">{output || translate("ui.no.output.yet", $uiLanguage)}</pre>
+      <pre class="output" aria-label={translate("automation.output.aria", $uiLanguage)}>{output || translate("ui.no.output.yet", $uiLanguage)}</pre>
     </section>
   </div>
   <div class="log-export">
-    <input class="compact-input" bind:value={$scriptSettings.logPath} placeholder="/home/user/logs/diagnosis-001.log" aria-label="New log output file" />
+    <input class="compact-input" bind:value={$scriptSettings.logPath} placeholder="/home/user/logs/diagnosis-001.log" aria-label={translate("automation.export.path.aria", $uiLanguage)} />
     <button class="tool-button" disabled={busy || activeTask || !$taskState?.taskId} onclick={() => void perform(saveLog)}>{translate("ui.save.log", $uiLanguage)}</button>
     {#if feedback}<span>{localizeFeedback(feedback, $uiLanguage)}</span>{/if}
   </div>

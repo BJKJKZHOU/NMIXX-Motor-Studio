@@ -392,4 +392,9 @@ export const enMessages = {
   "motor.identification.apply.tooltip": "Apply the latest valid identification result to Active parameters",
   "automation.task.id.label": "task",
   "automation.task.exit.code.label": "exit",
+  "automation.source.aria": "Read-only script source",
+  "automation.output.aria": "Script output",
+  "automation.export.path.aria": "New log output file",
+  "automation.execution.notice": "Scripts share the GUI Application API and device connection, not the CLI. They may change parameters and operate the motor or Scope. The Motion example uses the committed target and requires manual Enable first. Scripts run with the current OS user permissions, not in a sandbox; use only trusted files.",
+  "motor.firmware.default.tooltip": "Firmware compiled default from HostSchema",
 } as const;

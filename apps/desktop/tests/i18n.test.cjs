@@ -178,6 +178,13 @@ test("Tuning, commissioning and Automation copy uses domain keys instead of numb
   assert.match(source("motor/MotorPage.svelte"),/translate\("motor\.identification\.apply\.tooltip", \$uiLanguage\)/);
   assert.match(source("automation/AutomationPage.svelte"),/translate\("automation\.task\.id\.label", \$uiLanguage\)/);
 });
+test("Automation notice and accessibility text are separate language resources",()=>{
+  const page=source("automation/AutomationPage.svelte");
+  assert.match(page,/translate\("automation\.execution\.notice", \$uiLanguage\)/);
+  assert.match(page,/translate\("automation\.source\.aria", \$uiLanguage\)/);
+  assert.doesNotMatch(page,/\$uiLanguage === "zh-CN"/);
+  assert.match(source("motor/MotorPage.svelte"),/translate\("motor\.firmware\.default\.tooltip", \$uiLanguage\)/);
+});
 test("Events and Motion keep contextual copy in locale resources",()=>{
   const {translate}=environment().exports;
   assert.equal(translate("ui.active","zh-CN"),"当前值");

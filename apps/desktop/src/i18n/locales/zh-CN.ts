@@ -393,4 +393,9 @@ export const zhCNMessages = {
   "motor.identification.apply.tooltip": "将最近一次有效辨识结果写入当前参数",
   "automation.task.id.label": "任务",
   "automation.task.exit.code.label": "退出码",
+  "automation.source.aria": "只读脚本源码",
+  "automation.output.aria": "脚本输出",
+  "automation.export.path.aria": "新日志输出文件",
+  "automation.execution.notice": "脚本与界面共用 Application API 和设备连接，可修改参数并操作电机及 Scope。Motion 示例使用当前已提交的目标，运行前需要手动使能。脚本以当前操作系统用户权限运行，并非沙盒；仅运行可信文件。",
+  "motor.firmware.default.tooltip": "固件 HostSchema 中定义的编译默认值",
 } satisfies Record<keyof typeof enMessages, string>;

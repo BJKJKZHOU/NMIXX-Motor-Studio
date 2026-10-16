@@ -269,7 +269,7 @@
             {#each ROWS as row}
               <div class="grid-row" role="row">
                 <div class="parameter-name" role="cell">{parameterLabel(row.activeSymbol)}</div>
-                <div class="default-value muted mono" role="cell" title="Firmware compiled default from HostSchema">{defaultText(row.activeSymbol)}</div>
+                <div class="default-value muted mono" role="cell" title={translate("motor.firmware.default.tooltip", $uiLanguage)}>{defaultText(row.activeSymbol)}</div>
                 <div role="cell">
                   {#if metadata[row.activeSymbol]}
                     <span class="inline-editor">
