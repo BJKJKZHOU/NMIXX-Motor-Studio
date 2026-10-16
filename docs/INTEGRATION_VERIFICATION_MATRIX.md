@@ -79,6 +79,32 @@ back to Waveform, and a waveform resize after the panel is revealed).
 No new library was installed for this audit. The deferred firmware Plot/Tuning
 default channel-capability mismatch remains deferred.
 
+### Browser operator-flow pass — 2026-10-16
+
+[Chromium mock-IPC regression](https://github.com/BJKJKZHOU/NMIXX-Motor-Studio/actions/runs/38880468820)
+exercised the compiled Svelte application and real VSCode Elements, Monaco,
+and ECharts components, beyond the handler-only test suite:
+
+- Four browser navigator locales, eight disconnected page transitions,
+  Scope chart initialization, and Motion preview Canvas.
+- Tuning tab mouse and keyboard switching, channel selection and waveform
+  return; `vscode-tabs` owns keyboard/ARIA behavior.
+- Monaco editing, generic script Run with the exact editor-source snapshot,
+  and Cancel result reflected in the output panel.
+- Connected mock-device flow: Connect → red DISABLED → Enable → green
+  ENABLED → Stop → Disable → red DISABLED → Disconnect → UNKNOWN,
+  with authoritative `PARAM_MOTOR_STATE` cache readbacks and one Action
+  IPC per explicit operator action.
+- Tuning asynchronous regressions prevent a late default-channel read from
+  overwriting a user's FAST/NORMAL edits, and a stale periodic RUNNING read
+  from replacing the latest Stop state.
+
+This pass additionally ran the frontend automated suite, Svelte/Vite build,
+and Rust workspace CI. Chromium uses the Tauri SDK `mockIPC`; no real
+motor, serial device, native Tauri WebView, or operating-system Dialog
+was driven. All native/hardware acceptance items remain open, as does the
+explicitly deferred Plot/Tuning default-channel mismatch.
+
 ## Verification rules
 
 All items intentionally start unchecked for this integration pass. Existing code,

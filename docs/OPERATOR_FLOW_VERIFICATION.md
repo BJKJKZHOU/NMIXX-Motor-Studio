@@ -6,6 +6,7 @@
 ## 验证等级
 
 - **HANDLER-SIM**：在受限 JS 沙盒中提取并执行真实 Svelte 操作函数，以模拟 Tauri 返回值；没有运行整个 Svelte/WebView。
+- **BROWSER-MOCK**：Playwright 在 Chromium 中渲染实际 Svelte / VSCode Elements / Monaco / ECharts，模拟点击、键盘、输入与界面切换，设备侧用官方 Tauri mockIPC 返回模拟参数和 Action；不是 Tauri 原生窗口、真实 USB 或真实电机。
 - **NODE-TEST-ADDED**：仓库已有可重放的 Node 脚本测试；当前开发分支已通过 GitHub Actions 前端全套回归，但不代表 WebView 实机验证。
 - **WIRE-TEST-ADDED**：Rust 模拟 `FrameTransport` 的通信帧测试已编写，开发分支已通过 CI 的 `cargo test --workspace --locked`；未使用真实硬件。
 - **CODE-TRACED**：核对 Rust Application/DeviceSession 和固件现有实现；不等于实际硬件观察。
@@ -41,6 +42,20 @@
 
 **尚未验证**：完整 Tauri WebView 实际点击、真实固件、电机动作和完整 Plot/Tuning 采集。固件 Plot 能力与默认采集通道断点仍按约定暂缓。正常控制闭环审查也不意味着所有页面已通过实机验收。
 
+## 2026-10-16 正常用户操作：Chromium 浏览器模拟
+
+这一次测试补全了浏览器级事件绑定，不再仅依据 Handler 函数或静态组件存在判断是否实现。[CI 证据](https://github.com/BJKJKZHOU/NMIXX-Motor-Studio/actions/runs/38880468820)：
+
+- **页面进入和离开**：在 `C`、`POSIX`、`en-US`、`zh-CN` 浏览器环境下实际进入八个工作页，Scope 和 Motion 的 ECharts 正常生成 Canvas；未连接时不发出意外控制命令。
+- **Control Tuning 标签**：鼠标点击 Waveform → Channels → Scale → Waveform，切回时 ECharts 可见；勾选采集通道、以方向键 + Enter 切换标签。浏览器实际执行 `vscode-tabs` 自带事件处理。
+- **脚本工作区**：Monaco 中输入 Python 源码 → Run → `automation_start` 收到该时刻编辑器中的源文本 → 显示 RUNNING → Cancel → 模拟任务返回 CANCELLED。
+- **全局电机状态**：模拟 Connect 读取 `PARAM_MOTOR_STATE=DISABLED` → 红色 DISABLED → 点击 Enable，参数回读变为 ENABLED、显示绿色 → Stop 不改变使能状态 → Disable 后回到红色 DISABLED → Disconnect 后 UNKNOWN。Enable/Stop/Disable 分别发送一次对应 IPC。
+- **正常竞态**：真实 Svelte 处理函数测试覆盖默认 Tuning 通道读取晚于用户勾选，以及旧 RUNNING 状态轮询返回晚于 Stop 两种场景；用户最新选择和 Stop 反馈保留。
+
+`apps/desktop/scripts/test-startup.py` 现在通过同一套可复用浏览器启动工具运行这些用例；CI 安装 Playwright Chromium，以 `tests/startup.js` 中的 SDK `mockIPC` 代替串口设备。
+
+**验证边界：** 实测的是浏览器 UI（Chromium），不是实际 Tauri WebView 和系统原生 Dialog；Motor、Encoder 真实功率动作、串口时序与固件 Plot/Tuning 默认采集兼容性仍未经过实机验证。WebView/HW 待验收项保持未完成。
+
 ## 用户操作与反馈矩阵
 
 | 用户操作 | 预期设备命令 / 实际代码路径 | 成功反馈与 UI 联动 | 失败及取消 | 覆盖等级 |
@@ -49,7 +64,7 @@
 | Motion 第一次 Position Run（Incremental） | 后端从精确 `PARAM_RUN_POSITION` 生成目标 → `PARAM_TARGET_POSITION` WRITE → `ACTION_MOTOR_RUN` | Tauri 返回 `runAccepted`，显示命令已接受；后续 `Motor State` 仍由设备状态决定 | 拒绝 Action 时显示 `Run failed`，不得显示完成 | HANDLER-SIM、WIRE-TEST-ADDED、HW-PENDING |
 | Motion Repeat 第二次 Run（电机保持 RUN） | 上位机先确认上一段参考到达目标，仅 WRITE 反向 `PARAM_TARGET_POSITION`；不发送第二个 Run Action | Tauri 返回 `targetUpdated`，显示已更新目标，**不宣称运动已完成** | 尚未到达目标或 WRITE 失败时不得推进 A/B | HANDLER-SIM、WIRE-TEST-ADDED、HW-PENDING |
 | Motion Stop / 全局 Stop | `ACTION_MOTOR_STOP`；固件按原减速逻辑回到 ENABLED | 显示 Stop 已接受 + 最新 Motor State；`RUN` 仍可能持续一段时间 | ERR_STATE 或读回失败须分别报告；Stop ACK 不等于已停稳 | HANDLER-SIM、NODE-TEST-ADDED、CODE-TRACED、HW-PENDING |
-| 全局 Enable / Disable | `DISABLED` 时点击发送 `ACTION_MOTOR_ENABLE`，`ENABLED` 或 `RUN` 时点击发送 `ACTION_MOTOR_DISABLE` | 按钮常态只显示固件当前状态：红色 `DISABLED` 或绿色 `ENABLED`（RUN 仍为使能）；Tooltip 标识点击动作，ACK 后等真实 Motor State 更新 | 设备拒绝或读回失败时不预先切换按钮状态；状态未知时显示中性 UNKNOWN | NODE-TEST-ADDED、HW-PENDING |
+| 全局 Enable / Disable | `DISABLED` 时点击发送 `ACTION_MOTOR_ENABLE`，`ENABLED` 或 `RUN` 时点击发送 `ACTION_MOTOR_DISABLE` | 按钮常态只显示固件当前状态：红色 `DISABLED` 或绿色 `ENABLED`（RUN 仍为使能）；Tooltip 标识点击动作，ACK 后等真实 Motor State 更新 | 设备拒绝或读回失败时不预先切换按钮状态；状态未知时显示中性 UNKNOWN | NODE-TEST-ADDED、BROWSER-MOCK、HW-PENDING |
 | Motor Rs/Ls 等辨识 Start | 应用预检；需使能时先征求确认；被允许后设置 IDENT 模式、Enable、发相应 `ACTION_IDENT_*_START` | 页面进入 Running；收到**匹配的有限 Action**完成事件与有效结果后显示 Apply | 预检 Blocked 显示原因；取消使能不发命令；Action 失败显示 Failed | HANDLER-SIM、NODE-TEST-ADDED、CODE-TRACED、HW-PENDING |
 | Motor Apply | `ACTION_IDENT_APPLY` 同步完成，依当前 Session 的候选辨识类型执行 | 后端刷新真实参数，再显示 Applied | 若候选失效或被拒绝，不显示 Applied | HANDLER-SIM、NODE-TEST-ADDED、HW-PENDING |
 | Encoder Phase Search | 应用预检与模式/使能编排 → `ACTION_MOTOR_RUN`（PHASE_SEARCH） | GUI 显示 Running；有限 Action 完成后为 Success | 启动拒绝或完成失败显示 Failed；全局 Stop 为 Stopped | HANDLER-SIM、NODE-TEST-ADDED、CODE-TRACED、HW-PENDING |
