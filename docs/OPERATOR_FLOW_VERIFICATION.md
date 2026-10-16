@@ -6,14 +6,14 @@
 ## 验证等级
 
 - **HANDLER-SIM**：在受限 JS 沙盒中提取并执行真实 Svelte 操作函数，以模拟 Tauri 返回值；没有运行整个 Svelte/WebView。
-- **NODE-TEST-ADDED**：仓库已有可重放的 Node 脚本测试；本轮修复分支已通过 GitHub Actions 前端全套回归，但不代表 WebView 实机验证。
-- **WIRE-TEST-ADDED**：Rust 模拟 `FrameTransport` 的通信帧测试已编写，本轮修复分支已通过 CI 的 `cargo test --workspace --locked`；未使用真实硬件。
+- **NODE-TEST-ADDED**：仓库已有可重放的 Node 脚本测试；当前开发分支已通过 GitHub Actions 前端全套回归，但不代表 WebView 实机验证。
+- **WIRE-TEST-ADDED**：Rust 模拟 `FrameTransport` 的通信帧测试已编写，开发分支已通过 CI 的 `cargo test --workspace --locked`；未使用真实硬件。
 - **CODE-TRACED**：核对 Rust Application/DeviceSession 和固件现有实现；不等于实际硬件观察。
 - **HW-PENDING**：需固件开发板/电机实测；尤其是故障、运动时序与 Plot 数据路径。
 
 ## 2026-10-16 修复与测试结果
 
-- 修复分支：`dev/nmixx-unified`，基于 `dev/nmixx-unified`；未修改 `main` 或原开发分支。
+- 审查修改直接提交到唯一开发分支 `dev/nmixx-unified`，`main` 不变。
 - [Operator Regression CI](https://github.com/BJKJKZHOU/NMIXX-Motor-Studio/actions/runs/38842341919)：Frontend user flows 与 Rust Application and simulated protocol 均通过。
 - Motor Identification、Encoder Phase Search/Homing 只接受与正在进行操作的 `(txn, actionId)` 一致的有限 Action 完成事件；对于先到的事件，在启动响应返回 Handle 后再核对。
 - 新增同类型异事务完成事件、早到完成事件、取消后迟到启动响应等回归；陌生电机模拟同步适配。
@@ -27,6 +27,19 @@
 - `synchronizeParameters()` 现在检查各可读 Parameter 的缓存错误和缺失值；完成事件携带独立 `readbackError`，Motor / Encoder 显示“未确认”，不得因此误报固件拒绝或校准成功。
 - Connection 拦截重复 Connect，异步端口发现不得覆盖用户在请求期间手工输入的端口；相关用户流程模拟已加入回归。
 - 目前“未确认”结果不会单凭旧 VALID 参数自动恢复为可 Apply；用户须先检查最新设备参数并重新操作。后续可单独设计明确的校验/恢复入口，不应恢复使用旧数据猜测。
+
+## 正常通信用户操作复审（2026-10-16）
+
+本轮优先检查无通信异常时用户动作是否按预期真正落到固件、跨页状态是否一致，以及先后 Run/Stop 的正常异步返回是否产生错误反馈。
+
+- Motor 辨识 Start/Apply、Encoder Phase Search/Homing 在存在未提交草稿或共享 Parameter WRITE 尚未完成时不再下发 Action；UI 提示 Enter 写入或 Esc 放弃。避免画面显示新值而固件使用上一有效 RAM 值。
+- Parameters 专家页编辑权限与 Motor/Encoder/Limits 使用同一个 HostSchema `write_state` 判断，并订阅全局设备 Motor State；在 DISABLED/ENABLED/RUN 间变化时禁用不允许的写入。
+- Motor、Encoder 在导航切换时保持挂载，有限 Action 完成事件订阅及 Running/Ready/Success 等状态不因离开页面丢失；设备连接代次变化时仍按已有逻辑重置。
+- Control Tuning 勾选 Copy Accel to Decel 不再产生无缘由的 Decel 草稿；实际编辑 Accel 后继续成对提交。
+- Motion、Control Tuning 以用户的最新 Run/Stop 操作为 UI 反馈依据：Stop 已发起时，较早的 Run IPC 迟到响应不得把停止提示覆盖为“Run 已接受”。
+- 覆盖新增：实际 Svelte Handler 模拟、跨页 Journey、专家页 Write-State 判断、挂载边界，以及 Run/Stop 交错的前端回归。持续以 GitHub Actions 前端 `test:all`/`build` 与 Rust Workspace 回归为证据。
+
+**尚未验证**：完整 Tauri WebView 实际点击、真实固件、电机动作和完整 Plot/Tuning 采集。固件 Plot 能力与默认采集通道断点仍按约定暂缓。正常控制闭环审查也不意味着所有页面已通过实机验收。
 
 ## 用户操作与反馈矩阵
 

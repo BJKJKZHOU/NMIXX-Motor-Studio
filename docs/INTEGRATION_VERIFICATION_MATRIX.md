@@ -11,8 +11,7 @@
 
 ## Latest regression evidence (2026-10-16)
 
-The operator-review follow-up branch `dev/nmixx-unified` is based on
-`dev/nmixx-unified`. Its [Operator Regression run](https://github.com/BJKJKZHOU/NMIXX-Motor-Studio/actions/runs/38842341919)
+The changes were committed directly on `dev/nmixx-unified`. Its [Operator Regression run](https://github.com/BJKJKZHOU/NMIXX-Motor-Studio/actions/runs/38842341919)
 passed the complete desktop `npm run test:all` / `npm run build` sequence and the
 Rust `cargo test --workspace --locked` sequence.
 
@@ -37,6 +36,15 @@ it must not infer a valid candidate from historical VALID flags.
 
 This is **mock/build evidence**. No [HW] or [WEBVIEW] acceptance item is
 closed by this pass. The Plot/Tuning default channel capability mismatch remains deferred.
+
+### Normal operator-flow review — 2026-10-16
+
+- Motor Identification/Apply and Encoder Phase Search/Homing no longer start while relevant page Parameter drafts or writes are pending.
+- The Parameters expert table now uses the shared firmware HostSchema `write_state` rule with authoritative global Motor State, rather than merely `access=w`.
+- Motor and Encoder stay mounted across navigation, preserving finite-operation lifecycle and completion subscriptions. They still reset when the connected Application session changes.
+- Tuning's Copy Accel to Decel toggle no longer creates an unexpected uncommitted draft; changing Accel still mirrors Decel and Enter performs the documented sequential writes.
+- When Stop follows Run, delayed earlier Run replies cannot replace the most recent operator feedback or Tuning stop state.
+- Frontend handler simulations and structural checks exercise these normal use cases. They are not real WebView or hardware verification. The existing deferred Plot/Tuning default capture compatibility issue remains unchanged.
 
 ## Verification rules
 
