@@ -174,13 +174,13 @@ def main() -> int:
                         page.goto(url + "?automation-script=1", wait_until="networkidle")
                         expect(page.locator(".automation-workspace")).to_be_visible()
                         assert not errors, f"Automation mount errors: {errors}"
-                        page.get_by_role("button", name="New", exact=True).click()
+                        page.locator(".toolbar-actions button:has(.codicon-new-file)").click()
                         expect(page.locator(".script-tab")).to_have_count(1)
                         expect(page.locator(".monaco-editor")).to_be_visible(timeout=15000)
                         page.locator(".monaco-editor").click()
                         page.keyboard.insert_text("\\nprint('browser-edited')\\n")
                         expect(page.locator(".script-tab .dirty-mark")).to_be_visible()
-                        page.get_by_role("button", name="New", exact=True).click()
+                        page.locator(".toolbar-actions button:has(.codicon-new-file)").click()
                         expect(page.locator(".script-tab")).to_have_count(2)
                         # The edited first model must survive a switch to the
                         # second tab before Run captures its source.
