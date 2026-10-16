@@ -10,11 +10,47 @@ let mockTask = {
   taskId: 0, state: "IDLE", name: "", exitCode: null, message: null,
   firstSequence: 1, nextSequence: 1, logs: [], effects: [],
 };
+let motorState = 0;
+const motorMeta = {
+  id: 1, symbol: "PARAM_MOTOR_STATE", label: "Motor State",
+  typeName: "u8", access: "ro", allowed: [0, 1, 2],
+  allowedSymbols: ["DISABLED", "ENABLED", "RUN"],
+  persistent: false, description: "", unit: null, default: 0, writeState: null,
+};
+function motorReadback(ids = [1]) {
+  return ids.filter((id) => id === 1).map((id) => ({
+    id, value: { type: "u8", value: motorState }, error: null,
+  }));
+}
+
 mockIPC((command, args) => {
   window.__nmixxStartupRequests.push(command);
   window.__nmixxStartupArgs.push({ command, args });
-  if (command === "device_list" || command === "action_list") return [];
+  if (command === "device_list") return fixture.has("motor-controls") ? ["COM7"] : [];
+  if (command === "action_list") return [];
   if (command === "device_disconnect") return;
+  if (fixture.has("motor-controls")) {
+    if (command === "device_connect") return {
+      port: "COM7", fastMaxChannels: 4, normalMaxChannels: 8,
+      fastBlockSamples: 5, fastRateHz: 20000, normalRateHz: 1000,
+      channels: [], runtimeChannelIds: [],
+      motion: { run: true, stop: true, enable: true, disable: true,
+        position: true, speed: true, sensorlessSpeed: false, torque: true },
+      commissioning: {},
+    };
+    if (command === "parameter_list") return [motorMeta];
+    if (command === "parameter_cached_many" || command === "parameter_read_many")
+      return motorReadback(args.ids);
+    if (command === "parameter_refresh_all") return motorReadback();
+    if (command === "config_save_available") return true;
+    if (command === "config_save") return { txn: 4, actionId: 0x1109 };
+    if (command === "motor_enable") { motorState = 1; return { txn: 1, actionId: 0x1001 }; }
+    if (command === "motor_disable") { motorState = 0; return { txn: 2, actionId: 0x1002 }; }
+    if (command === "motor_stop") return { txn: 3, actionId: 0x1003 };
+    if (command === "runtime_telemetry")
+      return { currentIq: 0.1, speedWm: 0, positionTurns: 0, vbus: 24.8 };
+    if (command === "problems_snapshot") return { active: [], history: [] };
+  }
   if (command === "parameter_list") return [];
   if (command === "automation_snapshot") return mockTask;
   if (command === "automation_start") {
