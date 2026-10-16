@@ -558,9 +558,10 @@ fn scope_snapshot(state: State<'_, Mutex<DesktopState>>, window_seconds: Option<
     })
 }
 fn main() {
-    tauri::Builder::default().manage(Mutex::new(DesktopState::default()))
+    tauri::Builder::default().plugin(tauri_plugin_dialog::init()).manage(Mutex::new(DesktopState::default()))
         .invoke_handler(tauri::generate_handler![
             automation_commands::automation_builtin, automation_commands::automation_open_script,
+            automation_commands::automation_save_script,
             automation_commands::automation_start, automation_commands::automation_snapshot,
             automation_commands::automation_cancel, automation_commands::automation_export_log,
             device_list, device_connect, device_disconnect, parameter_list, parameter_read, parameter_read_many,

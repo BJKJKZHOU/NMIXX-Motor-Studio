@@ -1,4 +1,4 @@
-use std::io::Read;
+use std::io::{Read, Write};
 use std::path::Path;
 use std::sync::Arc;
 use nmixx_app::{AutomationSnapshot, ScriptSpec, SessionWorkflowApi, DIAGNOSIS_SCRIPT, ENCODER_TURN_SCRIPT, MOTION_SCRIPT};
@@ -8,7 +8,7 @@ use crate::DesktopState;
 
 #[derive(Serialize)]
 #[serde(rename_all = "camelCase")]
-pub struct ScriptDocument { name: String, source: String, working_directory: Option<String> }
+pub struct ScriptDocument { name: String, source: String, working_directory: Option<String>, path: Option<String> }
 
 #[tauri::command]
 pub fn automation_builtin(kind: Option<String>) -> Result<ScriptDocument, String> {
@@ -18,7 +18,7 @@ pub fn automation_builtin(kind: Option<String>) -> Result<ScriptDocument, String
         "motion" => ("motion_workflow.py", MOTION_SCRIPT),
         _ => return Err("Unknown built-in workflow".into()),
     };
-    Ok(ScriptDocument { name: name.into(), source: source.into(), working_directory: None })
+    Ok(ScriptDocument { name: name.into(), source: source.into(), working_directory: None, path: None })
 }
 #[tauri::command]
 pub async fn automation_open_script(path: String) -> Result<ScriptDocument, String> {
@@ -29,10 +29,36 @@ pub async fn automation_open_script(path: String) -> Result<ScriptDocument, Stri
         if !file.metadata().map_err(|e| e.to_string())?.is_file() { return Err("Choose a regular script file".to_owned()); }
         let mut bytes = Vec::new();
         file.take(262145).read_to_end(&mut bytes).map_err(|e| e.to_string())?;
-        if bytes.is_empty() || bytes.len() > 262144 { return Err("Script must contain 1..262144 bytes".to_owned()); }
+        if bytes.len() > 262144 { return Err("Script must not exceed 262144 bytes".to_owned()); }
         let source = String::from_utf8(bytes).map_err(|_| "Script must be UTF-8")?;
-        Ok(ScriptDocument { name, source, working_directory: path.parent().map(|path| path.to_string_lossy().into_owned()) })
+        Ok(ScriptDocument { name, source, working_directory: path.parent().map(|path| path.to_string_lossy().into_owned()), path: Some(path.to_string_lossy().into_owned()) })
     }).await.map_err(|e| e.to_string())?
+}
+/// Save only when explicitly requested. Running a script uses its editor snapshot,
+/// not the last saved file; Save As never overwrites an existing file.
+#[tauri::command]
+pub async fn automation_save_script(path: String, source: String, overwrite: bool) -> Result<ScriptDocument, String> {
+    tauri::async_runtime::spawn_blocking(move || {
+        if source.len() > 262144 { return Err("Script must not exceed 262144 UTF-8 bytes".to_owned()); }
+        let path = Path::new(&path);
+        let name = path.file_name().and_then(|name| name.to_str())
+            .filter(|name| !name.is_empty()).ok_or("Invalid script filename")?.to_owned();
+        let parent = path.parent().filter(|parent| !parent.as_os_str().is_empty())
+            .ok_or("Choose an absolute script file path")?
+            .canonicalize().map_err(|error| error.to_string())?;
+        let path = parent.join(&name);
+        let mut options = std::fs::OpenOptions::new();
+        options.write(true);
+        if overwrite { options.create(true).truncate(true); }
+        else { options.create_new(true); }
+        let mut file = options.open(&path).map_err(|error| error.to_string())?;
+        file.write_all(source.as_bytes()).map_err(|error| error.to_string())?;
+        file.flush().map_err(|error| error.to_string())?;
+        Ok(ScriptDocument {
+            name, source, working_directory: Some(parent.to_string_lossy().into_owned()),
+            path: Some(path.to_string_lossy().into_owned()),
+        })
+    }).await.map_err(|error| error.to_string())?
 }
 #[tauri::command]
 pub fn automation_start(state: State<'_, std::sync::Mutex<DesktopState>>, spec: ScriptSpec) -> Result<AutomationSnapshot, String> {

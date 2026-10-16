@@ -28,25 +28,25 @@ function setup() {
 }
 const pause=()=>new Promise(resolve=>setImmediate(resolve));
 test('script completion mirrors canonical Scope/Motion without another device command',async()=>{
-  const h=setup();await h.s.ensureDocument();
+  const h=setup();
   const effects=[{sequence:1,kind:'scope.changed',payload:{config:{channels:[{id:17,rate:'normal'}],historySeconds:10},state:'STOPPED'}},
     {sequence:2,kind:'motion.changed',payload:{positionCommand:'absolute',repeat:false,incrementalDeltaTurn:1}}];
   h.setRun(async()=>task(1,'COMPLETED',effects));h.setRead(async()=>task(1,'COMPLETED',effects));
-  await h.s.runSelected();
+  await h.s.runSelected({name:'test.py',source:'print(1)',workingDirectory:null});
   assert.equal(h.scope._get().state,'STOPPED');assert.equal(h.motions.length,1);
   await h.s.refreshTask();assert.equal(h.motions.length,1);
 });
 test('Save uses captured baseline rather than a later current cache',async()=>{
-  const h=setup();await h.s.ensureDocument();
+  const h=setup();
   const baseline=[{id:17,value:{type:'f32',value:1},error:null}];
   const result=task(1,'COMPLETED',[{sequence:1,kind:'config.saved',payload:baseline}]);
   h.setRun(async()=>result);h.setRead(async()=>result);
-  await h.s.runSelected();assert.deepEqual(h.saved,[baseline]);
+  await h.s.runSelected({name:'test.py',source:'print(1)',workingDirectory:null});assert.deepEqual(h.saved,[baseline]);
 });
 test('old workflow effects are not applied to reconnected device',async()=>{
-  const h=setup();await h.s.ensureDocument();
+  const h=setup();
   h.setRun(async()=>task(1,'RUNNING'));h.setRead(async()=>task(1,'RUNNING'));
-  await h.s.runSelected();h.s.clearAutomationProjection();h.state.set({epoch:2,connected:true});
+  await h.s.runSelected({name:'test.py',source:'print(1)',workingDirectory:null});h.s.clearAutomationProjection();h.state.set({epoch:2,connected:true});
   h.setRead(async()=>task(1,'COMPLETED',[{sequence:1,kind:'config.saved',payload:[1]}]));
   await h.s.refreshTask();assert.equal(h.saved.length,0);
 });
@@ -57,10 +57,10 @@ test('application-owned task continues to be observed without Automation page',a
   assert.equal(h.s.taskState._get().state,'COMPLETED');stop();
 });
 test('a new task refresh is coalesced behind an older pending IPC response',async()=>{
-  const h=setup();await h.s.ensureDocument();let release;
+  const h=setup();let release;
   h.setRead(()=>new Promise(resolve=>{release=resolve}));
   const pending=h.s.refreshTask();await pause();
-  h.setRun(async()=>task(2,'COMPLETED'));await h.s.runSelected();
+  h.setRun(async()=>task(2,'COMPLETED'));await h.s.runSelected({name:'test.py',source:'print(1)',workingDirectory:null});
   h.setRead(async()=>task(2,'COMPLETED'));release(task(1,'RUNNING'));await pending;await pause();await pause();
   assert.equal(h.s.taskState._get().taskId,2);assert.equal(h.s.taskState._get().state,'COMPLETED');
 });
@@ -80,9 +80,9 @@ test('connection reset clears previous Automation task and permits the new initi
   stop();
 });
 test('a delayed script-start response cannot restore the previous connection task',async()=>{
-  const h=setup();await h.s.ensureDocument();let release;
+  const h=setup();let release;
   h.setRun(()=>new Promise(resolve=>{release=resolve}));
-  const pending=h.s.runSelected();await pause();
+  const pending=h.s.runSelected({name:'test.py',source:'print(1)',workingDirectory:null});await pause();
   assert.equal(typeof release,'function');
   h.s.clearAutomationProjection();h.state.set({epoch:2,connected:true});
   release(task(7,'COMPLETED',[{sequence:1,kind:'config.saved',payload:[17]}]));

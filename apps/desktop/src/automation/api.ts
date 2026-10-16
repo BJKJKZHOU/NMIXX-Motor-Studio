@@ -1,6 +1,6 @@
 import { invoke } from "@tauri-apps/api/core";
 
-export type ScriptDocument = { name: string; source: string; workingDirectory: string | null };
+export type ScriptDocument = { name: string; source: string; workingDirectory: string | null; path?: string | null };
 export type LogLine = { sequence: number; elapsedMs: number; source: string; text: string };
 export type TaskState = "IDLE" | "STARTING" | "RUNNING" | "CANCELLING" | "COMPLETED" | "CANCELLED" | "FAILED";
 export type TaskSnapshot = {
@@ -10,6 +10,9 @@ export type TaskSnapshot = {
 };
 export function builtinScript(kind = "diagnosis") { return invoke<ScriptDocument>("automation_builtin", { kind }); }
 export function openScript(path: string) { return invoke<ScriptDocument>("automation_open_script", { path }); }
+export function saveScript(path: string, source: string, overwrite: boolean) {
+  return invoke<ScriptDocument>("automation_save_script", { path, source, overwrite });
+}
 export function runScript(document: ScriptDocument, program: string, timeoutSeconds: number) {
   return invoke<TaskSnapshot>("automation_start", { spec: { ...document, program, arguments: [], timeoutSeconds } });
 }

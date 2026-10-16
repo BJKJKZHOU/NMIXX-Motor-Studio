@@ -11,3 +11,4 @@ tauri-build = { version = "2", features = [] }
 tauri = { version = "2", features = [] }
 serde = { version = "1", features = ["derive"] }
 nmixx-app = { path = "../../../crates/nmixx-app" }
+tauri-plugin-dialog = "=2.7.3"
