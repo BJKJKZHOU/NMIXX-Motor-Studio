@@ -156,19 +156,13 @@ test("new motor from USB connection through three identifications, phase search 
     edits:{commit:async key=>device.write(key,device.values[key])},
     startIdentificationAction:device.start,applyIdentificationAction:device.apply,
     onError:error=>errors.push(String(error)),
-    window:{confirm:()=>true},
     $uiLanguage:"zh-CN",
-    translateFormat:(key, language, values)=>{
-      assert.equal(language,"zh-CN");
-      if(key==="motor.identification.enable.confirm")return values.kind+" 辨识需要使能电机。";
-      if(key==="motor.identification.failure.reason")return "原因代码 "+values.code;
-      throw Error("unexpected translation key "+key);
-    },
+    translate:(key)=>key,
   },config[0]);
 
   // Inherited RL injection setting is unsafe for the chosen current limit.
   await motor.get('startIdentification("rsLs")');
-  assert.equal(motor.get("identStates.rsLs.phase"),"failed");
+  assert.equal(motor.get("identStates.rsLs.phase"),"blocked");
   assert.match(motor.get("identStates.rsLs.message"),/injection peak/);
   assert.equal(device.commands.some(c=>c[1]==="ACTION_IDENT_RS_LS_START"),false);
 
@@ -188,7 +182,7 @@ test("new motor from USB connection through three identifications, phase search 
 
   // Flux is now blocked by the missing Align and I/F setup.
   await motor.get('startIdentification("flux")');
-  assert.equal(motor.get("identStates.flux.phase"),"failed");
+  assert.equal(motor.get("identStates.flux.phase"),"blocked");
   assert.match(motor.get("identStates.flux.message"),/Align/);
   motor.ctx.motorState=device.motorState;
   assert.equal(motor.get('isWritable("PARAM_MOTOR_ALIGN_CURRENT")'),false);

@@ -1,5 +1,5 @@
 <script lang="ts">
-  import { uiLanguage, localize, localizeFeedback, translate, translateFormat } from "../i18n";
+  import { uiLanguage, localize, localizeFeedback, translate } from "../i18n";
   import { onMount, untrack } from "svelte";
   import type { ConnectionInfo } from "../connection/types";
   import type { MotorState } from "../motor/state";
@@ -14,7 +14,7 @@
 
   type Props = { connection: ConnectionInfo | undefined; motorState: MotorState | null; onError?: (error: unknown) => void };
   type IdentKey = "rsLs" | "flux" | "jb";
-  type IdentPhase = "idle" | "running" | "ready" | "applying" | "applied" | "failed" | "unverified";
+  type IdentPhase = "idle" | "blocked" | "running" | "ready" | "applying" | "applied" | "failed" | "unverified";
   type IdentState = { phase: IdentPhase; message: string };
   type IdentConfig = { label: string; operation: string; validSymbol: string; resultSymbols: string[]; activeSymbols: string[] };
   type RowSpec = { activeSymbol: string; identifiedSymbol?: string; identifiedValidSymbol?: string; identKey?: IdentKey };
@@ -144,7 +144,7 @@
   function restoreIdentificationStates(committed: Record<string, ParameterValue | null>) {
     const next = { ...identStates };
     for (const key of Object.keys(IDENT_CONFIGS) as IdentKey[]) {
-      if (["running", "applying", "failed", "unverified"].includes(next[key].phase)) continue;
+      if (["running", "applying", "blocked", "failed", "unverified"].includes(next[key].phase)) continue;
       const valid = numericValue(committed[IDENT_CONFIGS[key].validSymbol]) === 1;
       next[key] = {
         phase: valid && identifiedMatchesActive(key, committed) ? "applied"
@@ -178,26 +178,22 @@
     }
   }
   async function startIdentification(identKey: IdentKey) {
-    const config = IDENT_CONFIGS[identKey];
     if (!identificationAvailable(identKey) || identifyBusy() || hasPendingEdits()) return;
     const token = generation;
     startingIdent = identKey;
     earlyCompletion = undefined;
     try {
-      let result = await startIdentificationAction(identKey, false);
+      // Start is the operator's explicit request; mode/Enable are Application-owned.
+      const result = await startIdentificationAction(identKey, true);
       if (token !== generation) return;
       if (result.status === "blocked") {
-        setIdentState(identKey, "failed", result.issues.map((issue) => issue.reason).join("\n")); return;
+        setIdentState(identKey, "blocked", result.issues.map((issue) => issue.reason).join("\n"));
+        return;
       }
-      if (result.status === "requires_enable") {
-        if (!window.confirm(translateFormat("motor.identification.enable.confirm", $uiLanguage, { kind: config.label }))) return;
-        result = await startIdentificationAction(identKey, true);
-        if (token !== generation) return;
-        if (result.status === "blocked") {
-          setIdentState(identKey, "failed", result.issues.map((issue) => issue.reason).join("\n")); return;
-        }
+      if (result.status !== "started") {
+        setIdentState(identKey, "blocked", translate("motor.identification.start.unavailable", $uiLanguage));
+        return;
       }
-      if (result.status !== "started") return;
       setIdentState(identKey, "running", result.readbackError ?? "");
       pendingHandles = { ...pendingHandles, [handleKey(result.handle)]: { identKey, kind: "identify" } };
       if (earlyCompletion && handleKey(earlyCompletion) === handleKey(result.handle)) handleActionCompleted(earlyCompletion);
@@ -259,6 +255,7 @@
       <div class="empty-state"><i class="codicon codicon-plug"></i><div>{translate("ui.connect.a.device.to.configure.motor.parameters", $uiLanguage)}</div></div>
     {:else}
       <div class="motor-sheet">
+        <div class="state-note" role="note">{translate("motor.identification.start.notice", $uiLanguage)}</div>
         {#if motorState !== "DISABLED"}<div class="state-note">{translate("ui.disable.the.motor.before.editing.its.model.identification.currents.or.commis", $uiLanguage)}</div>{/if}
         {#if $edits.dirty.size > 0}<div class="state-note" role="status">{translate("commissioning.uncommitted.settings", $uiLanguage)}</div>{/if}
         <section class="motor-section">
@@ -321,8 +318,8 @@
                     {:else if state.phase === "unverified"}
                       <span class="action-status muted">{translate("actions.readback.unverified.label", $uiLanguage)}</span>
                       <span class="action-reason" role="alert">{translate("actions.readback.unverified.explanation", $uiLanguage)} {localizeFeedback(state.message, $uiLanguage)}</span>
-                    {:else if state.phase === "failed"}
-                      <span class="action-status state-failed" title={localizeFeedback(state.message, $uiLanguage)}><i class="codicon codicon-error"></i> {translate("ui.failed", $uiLanguage)}</span>
+                    {:else if state.phase === "blocked" || state.phase === "failed"}
+                      <span class="action-status state-failed" title={localizeFeedback(state.message, $uiLanguage)}><i class="codicon codicon-error"></i> {translate(state.phase === "blocked" ? "motor.identification.prerequisites.label" : "ui.failed", $uiLanguage)}</span>
                       {#if state.message}<span class="action-reason" role="alert">{localizeFeedback(state.message, $uiLanguage)}</span>{/if}
                     {:else}
                       <span class="action-status muted">—</span>

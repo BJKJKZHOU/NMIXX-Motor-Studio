@@ -145,10 +145,11 @@ test("context-specific status words never reuse the Motor Active value label",()
   assert.match(event,/translate\(problem\.active \? "events\.problem\.active" : "events\.problem\.resolved", \$uiLanguage\)/);
 });
 
-test("translated enable approval and runtime reasons preserve technical symbols",()=>{
-  const {translateFormat,localizeFeedback}=environment().exports;
-  assert.match(translateFormat("motor.identification.enable.confirm","zh-CN",{kind:"Rs/Ls"}),/Rs\/Ls 辨识需要使能电机/);
-  assert.match(translateFormat("motor.identification.enable.confirm","en",{kind:"Flux"}),/Flux identification requires enabling/);
+test("identification informational notice and runtime reasons preserve technical symbols",()=>{
+  const {translate,translateFormat,localizeFeedback}=environment().exports;
+  assert.match(translate("motor.identification.start.notice","zh-CN"),/自动切换至 IDENT/);
+  assert.match(translate("motor.identification.start.notice","en"),/automatically selects IDENT/);
+  assert.equal(translate("motor.identification.prerequisites.label","zh-CN"),"启动条件未满足");
   assert.equal(localizeFeedback("Reason 42","zh-CN"),"原因代码 42");
   assert.equal(localizeFeedback("Reason 42","en"),"Reason 42");
   assert.equal(localizeFeedback("ERR_STATE","zh-CN"),"ERR_STATE");

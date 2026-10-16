@@ -30,7 +30,6 @@ function motorHarness() {
   let initial = config[0] + "\n" + functions.map(name => extract(page,name)).join("\n");
   let response = { status: "started", handle: {txn: 1,actionId:0x1101} };
   let applyReadbackError;
-  let confirmResult = false;
   const calls = [], errors = [];
   const context = vm.createContext({
     connection:{commissioning:{identificationRsLs:true,identificationFlux:true,identificationJb:true,identificationApply:true}},
@@ -41,12 +40,7 @@ function motorHarness() {
     values:{PARAM_IDENT_RS_LS_VALID:{type:"u8",value:1}},
     onError:(error)=>errors.push(String(error)),
     $uiLanguage:"zh-CN",
-    translateFormat:(key, language, values)=>{
-      assert.equal(key,"motor.identification.enable.confirm");
-      assert.equal(language,"zh-CN");
-      return values.kind+" 辨识需要使能电机。\\n\\n是否使能并继续？";
-    },
-    window:{confirm:(text)=>{calls.push(["confirm",text]);return confirmResult;}},
+    translate:(key)=>key,
     startIdentificationAction:async (key,allowEnable)=>{calls.push(["identification_start",key,allowEnable]);return typeof response==="function"?response(key,allowEnable):response;},
     applyIdentificationAction:async (key)=>{calls.push(["identification_apply",key]);return {txn:2,actionId:0x1104,readbackError:applyReadbackError};},
   });
@@ -55,7 +49,7 @@ function motorHarness() {
   return {calls,errors,get,run:(key="rsLs")=>get(`startIdentification("${key}")`),
     complete:(event)=>{context.completed=event;return get("handleActionCompleted(completed)")},
     apply:(key="rsLs")=>get(`applyIdentification("${key}")`),
-    setResponse:(value)=>response=value,setConfirm:(value)=>confirmResult=value,
+    setResponse:(value)=>response=value,
     setApplyReadbackError:(value)=>applyReadbackError=value};
 }
 test("Motor refuses Start while a motor setting is uncommitted or writing",async()=>{
@@ -90,7 +84,7 @@ test("Motor Rs/Ls: user Start -> Action accepted -> Running -> valid completion 
   await h.run();
   assert.equal(h.calls[0][0],"identification_start");
   assert.equal(h.calls[0][1],"rsLs");
-  assert.equal(h.calls[0][2],false);
+  assert.equal(h.calls[0][2],true);
   assert.equal(h.get("identStates.rsLs.phase"),"running");
   h.complete({txn:1,actionId:0x1101,operation:"identification.rsLs",status:"Ok",ok:true});
   assert.equal(h.get("identStates.rsLs.phase"),"ready");
@@ -118,26 +112,33 @@ test("Motor synchronous Apply stays unverified when accepted but cache synchroni
   assert.equal(h.get("identStates.rsLs.phase"),"unverified");
   assert.match(h.get("identStates.rsLs.message"),/post-Apply readback failed/);
 });
-test("Motor blocked preflight shows reasons without proposing false Running",async()=>{
+test("Motor preflight rejection is displayed as prerequisites, not a failed running Action",async()=>{
   const h=motorHarness();
   h.setResponse({status:"blocked",issues:[{reason:"Encoder not valid"}]});
   await h.run();
-  assert.equal(h.get("identStates.rsLs.phase"),"failed");
+  assert.equal(h.get("identStates.rsLs.phase"),"blocked");
   assert.match(h.get("identStates.rsLs.message"),/Encoder not valid/);
   assert.equal(h.get("startingIdent"),null);
+  assert.equal(h.calls.length,1);
+  assert.deepEqual(h.calls[0],["identification_start","rsLs",true]);
 });
 
-test("Motor identification explicit Enable confirmation changes request flag only after approval",async()=>{
+test("Motor identification starts with one explicit request and no Enable confirmation dialog",async()=>{
   const h=motorHarness();
   h.setResponse((key,allowEnable)=>allowEnable?{status:"started",handle:{txn:3,actionId:0x1101}}:{status:"requires_enable"});
-  h.setConfirm(false);
   await h.run();
-  assert.match(h.calls.find(c=>c[0]==="confirm")[1],/辨识需要使能电机/);
-  assert.equal(h.calls.filter(c=>c[0]==="identification_start").length,1);
-  h.setConfirm(true);
-  await h.run();
-  assert.deepEqual(h.calls.filter(c=>c[0]==="identification_start").map(c=>c[2]),[false,false,true]);
+  assert.deepEqual(h.calls,[["identification_start","rsLs",true]]);
   assert.equal(h.get("identStates.rsLs.phase"),"running");
+  assert.doesNotMatch(source("motor/MotorPage.svelte"),/window\\.confirm\\(/);
+});
+
+test("Motor shows a non-modal prerequisite message if Application cannot start",async()=>{
+  const h=motorHarness();
+  h.setResponse({status:"requires_enable"});
+  await h.run();
+  assert.equal(h.get("identStates.rsLs.phase"),"blocked");
+  assert.equal(h.get("identStates.rsLs.message"),"motor.identification.start.unavailable");
+  assert.deepEqual(h.calls,[["identification_start","rsLs",true]]);
 });
 
 test("Motor ignores stale same-operation completions with a different transaction",async()=>{
