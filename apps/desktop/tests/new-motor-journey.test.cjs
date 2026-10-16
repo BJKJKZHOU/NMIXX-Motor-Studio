@@ -122,7 +122,7 @@ test("new motor from USB connection through three identifications, phase search 
     channels:[{id:17,label:"Iq",supportsFast:true,supportsNormal:true}]};
   let connected=false;
   const conn=handlers("connection/ConnectionPage.svelte",["connect"],{
-    port:"COM7",schemaPath:"axdr-host-schema.toml",busy:false,
+    port:"COM7",schemaPath:"axdr-host-schema.toml",busy:false,connection:undefined,
     onSchemaPathChanged:()=>{},onConnected:info=>{connected=info.port==="COM7";},
     onError:error=>errors.push(String(error)),
     connectDevice:async(port,_,baud)=>{
