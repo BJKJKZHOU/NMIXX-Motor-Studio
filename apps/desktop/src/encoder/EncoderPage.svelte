@@ -40,15 +40,20 @@
   let phaseState = $state<PhaseState>("idle");
   let phaseMessage = $state("");
   let pendingPhaseHandle = $state<string | null>(null);
+  let earlyPhaseCompletion: ActionCompletion | undefined;
+  let phaseRequestGeneration = 0;
   let homingState = $state<HomingState>("idle");
   let homingMessage = $state("");
   let pendingHomingHandle = $state<string | null>(null);
+  let earlyHomingCompletion: ActionCompletion | undefined;
+  let homingRequestGeneration = 0;
   let zeroActionBusy = $state(false);
 
   $effect(() => {
     connection;
-    phaseState = "idle"; phaseMessage = ""; pendingPhaseHandle = null;
-    homingState = "idle"; homingMessage = ""; pendingHomingHandle = null;
+    ++phaseRequestGeneration; ++homingRequestGeneration;
+    phaseState = "idle"; phaseMessage = ""; pendingPhaseHandle = null; earlyPhaseCompletion = undefined;
+    homingState = "idle"; homingMessage = ""; pendingHomingHandle = null; earlyHomingCompletion = undefined;
     zeroActionBusy = false;
   });
 
@@ -60,10 +65,19 @@
     };
     register(onActionCompleted(handleActionCompleted));
     register(onMotorStopIssued(() => {
-      if (phaseState === "running") { pendingPhaseHandle = null; phaseState = "stopped"; phaseMessage = ""; }
-      if (homingState === "running") { pendingHomingHandle = null; homingState = "stopped"; homingMessage = ""; }
+      if (phaseState === "running") {
+        ++phaseRequestGeneration; pendingPhaseHandle = null; earlyPhaseCompletion = undefined;
+        phaseState = "stopped"; phaseMessage = "";
+      }
+      if (homingState === "running") {
+        ++homingRequestGeneration; pendingHomingHandle = null; earlyHomingCompletion = undefined;
+        homingState = "stopped"; homingMessage = "";
+      }
     }));
-    return () => { disposed = true; listeners.forEach((stop) => stop()); };
+    return () => {
+      disposed = true; ++phaseRequestGeneration; ++homingRequestGeneration;
+      listeners.forEach((stop) => stop());
+    };
   });
 
   function handleKey(handle: ActionHandle | ActionCompletion): string { return `${handle.txn}:${handle.actionId}`; }
@@ -108,18 +122,34 @@
 
   async function startPhaseSearch() {
     if (!connection || !phaseSearchAvailable() || phaseState === "running") return;
-    phaseState = "running"; phaseMessage = "";
-    try { pendingPhaseHandle = handleKey(await startPhaseSearchAction()); }
-    catch (error) { phaseState = "failed"; phaseMessage = String(error); onError(error); }
+    const request = ++phaseRequestGeneration;
+    phaseState = "running"; phaseMessage = ""; pendingPhaseHandle = null; earlyPhaseCompletion = undefined;
+    try {
+      const handle = handleKey(await startPhaseSearchAction());
+      if (request !== phaseRequestGeneration || phaseState !== "running") return;
+      pendingPhaseHandle = handle;
+      const early = earlyPhaseCompletion;
+      earlyPhaseCompletion = undefined;
+      if (early && handleKey(early) === handle) handleActionCompleted(early);
+    } catch (error) {
+      if (request === phaseRequestGeneration) {
+        phaseState = "failed"; phaseMessage = String(error); onError(error);
+      }
+    }
   }
   function handleActionCompleted(completion: ActionCompletion) {
-    if (phaseState === "running" && (completion.operation === "encoder.phaseSearch" || handleKey(completion) === pendingPhaseHandle)) {
+    const key = handleKey(completion);
+    if (phaseState === "running" && completion.operation === "encoder.phaseSearch") {
+      if (pendingPhaseHandle === null) { earlyPhaseCompletion = completion; return; }
+      if (key !== pendingPhaseHandle) return;
       pendingPhaseHandle = null;
       phaseState = completion.ok ? "success" : "failed";
       phaseMessage = completion.ok ? "" : completion.status;
       return;
     }
-    if (homingState === "running" && (completion.operation === "encoder.homing" || handleKey(completion) === pendingHomingHandle)) {
+    if (homingState === "running" && completion.operation === "encoder.homing") {
+      if (pendingHomingHandle === null) { earlyHomingCompletion = completion; return; }
+      if (key !== pendingHomingHandle) return;
       pendingHomingHandle = null;
       homingState = completion.ok ? "success" : "failed";
       homingMessage = completion.ok ? "" : completion.status;
@@ -133,9 +163,20 @@
   }
   async function startHoming() {
     if (!homingAvailable() || homingState === "running") return;
-    homingState = "running"; homingMessage = "";
-    try { pendingHomingHandle = handleKey(await startHomingAction()); }
-    catch (error) { homingState = "failed"; homingMessage = String(error); onError(error); }
+    const request = ++homingRequestGeneration;
+    homingState = "running"; homingMessage = ""; pendingHomingHandle = null; earlyHomingCompletion = undefined;
+    try {
+      const handle = handleKey(await startHomingAction());
+      if (request !== homingRequestGeneration || homingState !== "running") return;
+      pendingHomingHandle = handle;
+      const early = earlyHomingCompletion;
+      earlyHomingCompletion = undefined;
+      if (early && handleKey(early) === handle) handleActionCompleted(early);
+    } catch (error) {
+      if (request === homingRequestGeneration) {
+        homingState = "failed"; homingMessage = String(error); onError(error);
+      }
+    }
   }
 </script>
 

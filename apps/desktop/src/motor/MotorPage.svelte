@@ -218,11 +218,7 @@
     catch (error) { setIdentState(identKey, "failed", String(error)); onError(error); }
   }
   function handleActionCompleted(completion: ActionCompletion) {
-    let pending = pendingHandles[handleKey(completion)];
-    if (!pending) {
-      const key = (Object.keys(IDENT_CONFIGS) as IdentKey[]).find((key) => identStates[key].phase === "running" && IDENT_CONFIGS[key].operation === completion.operation);
-      if (key) pending = { identKey: key, kind: "identify" };
-    }
+    const pending = pendingHandles[handleKey(completion)];
     if (!pending) {
       if (startingIdent && IDENT_CONFIGS[startingIdent].operation === completion.operation) earlyCompletion = completion;
       return;

@@ -92,6 +92,28 @@ test("Motor identification explicit Enable confirmation changes request flag onl
   assert.equal(h.get("identStates.rsLs.phase"),"running");
 });
 
+test("Motor ignores stale same-operation completions with a different transaction",async()=>{
+  const h=motorHarness();
+  await h.run();
+  h.complete({txn:9,actionId:0x1101,operation:"identification.rsLs",status:"Ok",ok:true});
+  assert.equal(h.get("identStates.rsLs.phase"),"running");
+  assert.equal(h.get("applyCandidate"),null);
+  h.complete({txn:1,actionId:0x1101,operation:"identification.rsLs",status:"Ok",ok:true});
+  assert.equal(h.get("identStates.rsLs.phase"),"ready");
+});
+
+test("Motor preserves a matching completion received before the start response",async()=>{
+  const h=motorHarness();
+  let resolveStart;
+  h.setResponse(()=>new Promise(resolve=>{resolveStart=resolve;}));
+  const start=h.run();
+  h.complete({txn:1,actionId:0x1101,operation:"identification.rsLs",status:"Ok",ok:true});
+  assert.equal(h.get("identStates.rsLs.phase"),"idle");
+  resolveStart({status:"started",handle:{txn:1,actionId:0x1101}});
+  await start;
+  assert.equal(h.get("identStates.rsLs.phase"),"ready");
+});
+
 test("Motor rejected finite Action completes with failure, not an Apply candidate",async()=>{
   const h=motorHarness();
   await h.run();
@@ -106,19 +128,19 @@ function encoderHarness(){
   const page=source("encoder/EncoderPage.svelte");
   const functions=["handleKey","phaseSearchAvailable","startPhaseSearch","handleActionCompleted"];
   const actions=[], errors=[];
-  let phaseHandle={txn:7,actionId:0x1002},reject;
+  let phaseHandle={txn:7,actionId:0x1002},reject,phaseResponder=()=>phaseHandle;
   const context=vm.createContext({
     connection:{commissioning:{phaseSearch:true}},
-    phaseState:"idle",phaseMessage:"",pendingPhaseHandle:null,
-    homingState:"idle",homingMessage:"",pendingHomingHandle:null,
+    phaseState:"idle",phaseMessage:"",pendingPhaseHandle:null,earlyPhaseCompletion:undefined,phaseRequestGeneration:0,
+    homingState:"idle",homingMessage:"",pendingHomingHandle:null,earlyHomingCompletion:undefined,homingRequestGeneration:0,
     onError:(error)=>errors.push(String(error)),
-    startPhaseSearchAction:async()=>{actions.push("phase_search_start");if(reject)throw reject;return phaseHandle;},
+    startPhaseSearchAction:async()=>{actions.push("phase_search_start");if(reject)throw reject;return phaseResponder();},
   });
   vm.runInContext(compile(functions.map(n=>extract(page,n)).join("\n")),context);
   const get=x=>vm.runInContext(x,context);
   return {actions,errors,get,start:()=>get("startPhaseSearch()"),
     complete:evt=>{context.completed=evt;return get("handleActionCompleted(completed)")},
-    setReject:e=>reject=e};
+    setReject:e=>reject=e,setPhaseResponder:fn=>phaseResponder=fn};
 }
 test("Encoder Phase Search: start -> Running -> matching ACTION_COMPLETE -> Success",async()=>{
   const h=encoderHarness();
@@ -127,6 +149,38 @@ test("Encoder Phase Search: start -> Running -> matching ACTION_COMPLETE -> Succ
   assert.equal(h.get("phaseState"),"running");
   h.complete({txn:7,actionId:0x1002,operation:"encoder.phaseSearch",status:"Ok",ok:true});
   assert.equal(h.get("phaseState"),"success");
+});
+test("Encoder ignores stale same-operation completion from a different transaction",async()=>{
+  const h=encoderHarness();
+  await h.start();
+  h.complete({txn:8,actionId:0x1002,operation:"encoder.phaseSearch",status:"Ok",ok:true});
+  assert.equal(h.get("phaseState"),"running");
+  h.complete({txn:7,actionId:0x1002,operation:"encoder.phaseSearch",status:"Ok",ok:true});
+  assert.equal(h.get("phaseState"),"success");
+});
+test("Encoder correlates a completion that arrives before the start response",async()=>{
+  const h=encoderHarness();
+  let resolveStart;
+  h.setPhaseResponder(()=>new Promise(resolve=>{resolveStart=resolve;}));
+  const start=h.start();
+  h.complete({txn:17,actionId:0x1002,operation:"encoder.phaseSearch",status:"Ok",ok:true});
+  assert.equal(h.get("phaseState"),"running");
+  resolveStart({txn:7,actionId:0x1002});
+  await start;
+  assert.equal(h.get("phaseState"),"running");
+  h.complete({txn:7,actionId:0x1002,operation:"encoder.phaseSearch",status:"Ok",ok:true});
+  assert.equal(h.get("phaseState"),"success");
+});
+test("Encoder ignores a start reply after the operation was cancelled",async()=>{
+  const h=encoderHarness();
+  let resolveStart;
+  h.setPhaseResponder(()=>new Promise(resolve=>{resolveStart=resolve;}));
+  const start=h.start();
+  h.get('++phaseRequestGeneration; phaseState="stopped"; pendingPhaseHandle=null; earlyPhaseCompletion=undefined');
+  resolveStart({txn:7,actionId:0x1002});
+  await start;
+  assert.equal(h.get("phaseState"),"stopped");
+  assert.equal(h.get("pendingPhaseHandle"),null);
 });
 test("Encoder phase-search Action rejection and completion failure remain visible",async()=>{
   const h=encoderHarness();
