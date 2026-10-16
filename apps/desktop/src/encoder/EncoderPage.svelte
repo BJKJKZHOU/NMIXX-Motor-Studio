@@ -298,6 +298,7 @@
   .encoder-root { min-width: 0; min-height: 0; display: grid; grid-template-rows: auto 1fr; }
   .encoder-content { min-width: 0; min-height: 0; overflow: auto; padding: 22px 28px 36px; }
   .encoder-sheet { max-width: 980px; }
+  .state-note { margin-bottom: 14px; color: var(--vscode-descriptionForeground); font-size: 12px; }
   .encoder-columns { display: grid; grid-template-columns: minmax(0, 3fr) minmax(260px, 2fr); gap: 44px; align-items: start; }
   .encoder-section + .encoder-section { margin-top: 30px; }
   .section-title { margin-bottom: 12px; font-size: 13px; font-weight: 600; color: var(--vscode-foreground); }

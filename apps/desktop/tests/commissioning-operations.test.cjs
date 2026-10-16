@@ -26,7 +26,7 @@ function motorHarness() {
   const config = page.match(/^  const IDENT_CONFIGS: Record<IdentKey, IdentConfig> = \{[\s\S]*?^  \};/m);
   assert.ok(config, "Motor identification configuration is required");
   const functions = ["handleKey","numericValue","identificationAvailable","setIdentState",
-    "identifyBusy","startIdentification","applyIdentification","handleActionCompleted"];
+    "identifyBusy","hasPendingEdits","startIdentification","applyIdentification","handleActionCompleted"];
   let initial = config[0] + "\n" + functions.map(name => extract(page,name)).join("\n");
   let response = { status: "started", handle: {txn: 1,actionId:0x1101} };
   let applyReadbackError;
@@ -36,6 +36,7 @@ function motorHarness() {
     connection:{commissioning:{identificationRsLs:true,identificationFlux:true,identificationJb:true,identificationApply:true}},
     identStates:{rsLs:{phase:"idle",message:""},flux:{phase:"idle",message:""},jb:{phase:"idle",message:""}},
     generation:0,startingIdent:null,earlyCompletion:undefined,pendingHandles:{},
+    $edits:{dirty:new Set()},writing:new Set(),
     applyCandidate:null,failReasonSymbol:"PARAM_IDENT_FAIL_REASON",
     values:{PARAM_IDENT_RS_LS_VALID:{type:"u8",value:1}},
     onError:(error)=>errors.push(String(error)),
@@ -57,6 +58,33 @@ function motorHarness() {
     setResponse:(value)=>response=value,setConfirm:(value)=>confirmResult=value,
     setApplyReadbackError:(value)=>applyReadbackError=value};
 }
+test("Motor refuses Start while a motor setting is uncommitted or writing",async()=>{
+  const h=motorHarness();
+  h.get('$edits.dirty.add("PARAM_MOTOR_RL_I_PEAK")');
+  assert.equal(h.get('hasPendingEdits()'),true);
+  await h.run();
+  assert.equal(h.calls.length,0);
+  h.get('$edits.dirty.clear(); writing.add("PARAM_MOTOR_RL_I_PEAK")');
+  await h.run();
+  assert.equal(h.calls.length,0);
+  h.get('writing.clear()');
+  await h.run();
+  assert.equal(h.calls.length,1);
+});
+
+test("Motor refuses Apply while a separate setting has an uncommitted draft",async()=>{
+  const h=motorHarness();
+  await h.run();
+  h.complete({txn:1,actionId:0x1101,operation:"identification.rsLs",status:"Ok",ok:true});
+  assert.equal(h.get("identStates.rsLs.phase"),"ready");
+  h.get('$edits.dirty.add("PARAM_MOTOR_ALIGN_CURRENT")');
+  await h.apply();
+  assert.equal(h.calls.some(c=>c[0]==="identification_apply"),false);
+  h.get('$edits.dirty.clear()');
+  await h.apply();
+  assert.equal(h.calls.filter(c=>c[0]==="identification_apply").length,1);
+});
+
 test("Motor Rs/Ls: user Start -> Action accepted -> Running -> valid completion -> Apply -> Applied",async()=>{
   const h=motorHarness();
   await h.run();
@@ -146,12 +174,13 @@ test("Motor rejected finite Action completes with failure, not an Apply candidat
 
 function encoderHarness(){
   const page=source("encoder/EncoderPage.svelte");
-  const functions=["handleKey","phaseSearchAvailable","startPhaseSearch","handleActionCompleted"];
+  const functions=["handleKey","phaseSearchAvailable","hasPendingEdits","startPhaseSearch","handleActionCompleted"];
   const actions=[], errors=[];
   let phaseHandle={txn:7,actionId:0x1002},reject,phaseResponder=()=>phaseHandle;
   const context=vm.createContext({
     connection:{commissioning:{phaseSearch:true}},
     phaseState:"idle",phaseMessage:"",pendingPhaseHandle:null,earlyPhaseCompletion:undefined,phaseRequestGeneration:0,
+    $edits:{dirty:new Set()},writing:new Set(),
     homingState:"idle",homingMessage:"",pendingHomingHandle:null,earlyHomingCompletion:undefined,homingRequestGeneration:0,
     onError:(error)=>errors.push(String(error)),
     startPhaseSearchAction:async()=>{actions.push("phase_search_start");if(reject)throw reject;return phaseResponder();},
@@ -162,6 +191,16 @@ function encoderHarness(){
     complete:evt=>{context.completed=evt;return get("handleActionCompleted(completed)")},
     setReject:e=>reject=e,setPhaseResponder:fn=>phaseResponder=fn};
 }
+test("Encoder Phase Search cannot start with an uncommitted search current",async()=>{
+  const h=encoderHarness();
+  h.get('$edits.dirty.add("PARAM_PHASE_I_SEARCH")');
+  await h.start();
+  assert.deepEqual(h.actions,[]);
+  h.get('$edits.dirty.clear()');
+  await h.start();
+  assert.deepEqual(h.actions,["phase_search_start"]);
+});
+
 test("Encoder Phase Search: start -> Running -> matching ACTION_COMPLETE -> Success",async()=>{
   const h=encoderHarness();
   await h.start();
