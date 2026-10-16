@@ -191,6 +191,88 @@ test("Encoder phase-search Action rejection and completion failure remain visibl
   assert.equal(h.actions.length,1);
 });
 
+test("Motor treats successful firmware completion with failed Parameter readback as unverified",async()=>{
+  const h=motorHarness();
+  await h.run();
+  h.complete({txn:1,actionId:0x1101,operation:"identification.rsLs",status:"Ok",ok:true,readbackError:"cached parameter failed"});
+  assert.equal(h.get("identStates.rsLs.phase"),"unverified");
+  assert.equal(h.get("applyCandidate"),null);
+  await h.apply();
+  assert.equal(h.calls.some(c=>c[0]==="identification_apply"),false);
+});
+
+test("Encoder does not claim calibration success when Action readback failed",async()=>{
+  const h=encoderHarness();
+  await h.start();
+  h.complete({txn:7,actionId:0x1002,operation:"encoder.phaseSearch",status:"Ok",ok:true,readbackError:"parameter readback lost"});
+  assert.equal(h.get("phaseState"),"unverified");
+  assert.match(h.get("phaseMessage"),/readback lost/);
+});
+
+test("parameter synchronization rejects cached read errors and recovers after a fresh valid snapshot",async()=>{
+  const state={connected:true,entries:{
+    1:{id:1,value:{type:"u8",value:1},error:null},
+    2:{id:2,value:null,error:"ERR_IO"},
+  }};
+  const sourceText=source("parameters/state.ts");
+  const fragment=sourceText.match(/^export async function synchronizeParameters\(\): Promise<void> \{[\s\S]*?^\}/m)?.[0];
+  assert.ok(fragment);
+  const ctx=vm.createContext({
+    exports:{},epoch:10,mutable:{},get:()=>state,
+    readableIds:()=>[1,2],sync:async()=>{},
+    requireSession:()=>{if(!state.connected)throw Error("Device connection changed.");},
+    report:()=>{},
+  });
+  vm.runInContext(compile(fragment),ctx);
+  await assert.rejects(ctx.exports.synchronizeParameters(),/Parameter synchronization failed for 0x0002: ERR_IO/);
+  state.entries[2]={id:2,value:{type:"u8",value:2},error:null};
+  await ctx.exports.synchronizeParameters();
+  state.connected=false;
+  await assert.rejects(ctx.exports.synchronizeParameters(),/Device connection changed/);
+});
+
+test("Action completion bridge forwards firmware result with readback error and fences stale epochs",async()=>{
+  let listener,disposed=false;
+  const state={epoch:5};
+  let rejectSync=false, holdSync=false, releaseSync;
+  const received=[];
+  const ctx=vm.createContext({
+    exports:{},
+    require(name){
+      if(name==="@tauri-apps/api/core")return {invoke:async()=>({})};
+      if(name==="@tauri-apps/api/event")return {listen:async(_,fn)=>{
+        listener=fn;return()=>{disposed=true;};
+      }};
+      if(name==="svelte/store")return {get:()=>state};
+      if(name==="../parameters/state")return {parameterState:state,synchronizeParameters:()=>{
+        if(holdSync)return new Promise(resolve=>releaseSync=resolve);
+        return rejectSync?Promise.reject(Error("readback failed")):Promise.resolve();
+      }};
+      throw Error(name);
+    },
+  });
+  vm.runInContext(compile(source("actions/api.ts")),ctx);
+  const unsubscribe=await ctx.exports.onActionCompleted(event=>received.push(event));
+  const completion={txn:3,actionId:0x1101,operation:"identification.rsLs",status:"Ok",ok:true};
+  listener({payload:completion});
+  await new Promise(resolve=>setImmediate(resolve));
+  assert.equal(received.length,1);
+  assert.equal(received[0].readbackError,undefined);
+  rejectSync=true;
+  listener({payload:completion});
+  await new Promise(resolve=>setImmediate(resolve));
+  assert.equal(received.length,2);
+  assert.equal(received[1].ok,true);
+  assert.match(received[1].readbackError,/readback failed/);
+  rejectSync=false;holdSync=true;
+  listener({payload:completion});
+  state.epoch=6;releaseSync();
+  await new Promise(resolve=>setImmediate(resolve));
+  assert.equal(received.length,2);
+  unsubscribe();
+  assert.equal(disposed,true);
+});
+
 test("accepted Motor Stop with failed Parameter refresh reports ambiguous UI state, not rejected command",async()=>{
   const calls=[];
   const ctx=vm.createContext({
