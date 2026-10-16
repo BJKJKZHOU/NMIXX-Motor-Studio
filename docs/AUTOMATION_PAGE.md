@@ -99,9 +99,19 @@ tabs, a writable Python code editor, and an output panel underneath.
   permanent toolbar fields.
 
 Use the approved local Monaco Editor for live Python editing, lazy-loaded when
-Automation is entered. A simple text editor may be used if Monaco cannot load,
-but editing itself must remain available. Do not load an editor from a CDN or
-instantiate another shell/device transport.
+Automation is entered. Monaco owns editing, models, shortcuts, and layout. The
+page owns only tab selection and the Run snapshot; it must not implement a
+second editor, document undo stack, or custom keyboard event engine.
+Use existing VSCode Elements controls (including split layout) rather than
+writing generic UI interaction mechanisms. A plain textarea may provide a
+failure-only fallback when Monaco cannot load.
+
+Desktop file selection should use Tauri's maintained dialog integration when
+available, not another handwritten file browser or OS-specific selector.
+The small existing file IPC is responsible only for reading/writing explicitly
+chosen paths; it is not a general file manager. Avoid introducing Dockview,
+xterm or a new framework unless an actual feature requires them.
+Do not load an editor from a CDN or instantiate another shell/device transport.
 
 Local file Open reads UTF-8 source into a document. Explicit Save writes the
 current source to the chosen local file; Save As must not silently overwrite an
