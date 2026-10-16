@@ -23,6 +23,21 @@ They are **not** evidence that a Tauri WebView or physical motor was exercised.
 All unchecked `[HW]` and `[WEBVIEW]` acceptance items remain unchecked.
 The known firmware Plot / Tuning default channel mismatch remains deferred.
 
+### 2026-10-16 Action/readback follow-up
+
+[Current development branch CI](https://github.com/BJKJKZHOU/NMIXX-Motor-Studio/actions/runs/38846695908)
+passed frontend operator regressions, full Svelte/Vite build, and the Rust workspace
+tests. Actions accepted by firmware are now represented separately from subsequent
+Parameter cache readback failures. Finite Action success is not promoted to
+Motor Apply-ready or Encoder Success when the authoritative readback is unavailable.
+
+Connect duplicate dispatch and late port-refresh override are regression guarded.
+The recovery from an unverified completed operation remains an explicit follow-up;
+it must not infer a valid candidate from historical VALID flags.
+
+This is **mock/build evidence**. No [HW] or [WEBVIEW] acceptance item is
+closed by this pass. The Plot/Tuning default channel capability mismatch remains deferred.
+
 ## Verification rules
 
 All items intentionally start unchecked for this integration pass. Existing code,

@@ -19,6 +19,15 @@
 - 新增同类型异事务完成事件、早到完成事件、取消后迟到启动响应等回归；陌生电机模拟同步适配。
 - 仍未完成：真实 Tauri WebView 点击和完整固件硬件验收；固件 Plot 与 Tuning 默认选道断点维持暂缓。
 
+## 2026-10-16 后续审查：Action ACK 与读回边界
+
+- 代码修复直接提交于 `dev/nmixx-unified`，不创建额外开发分支，不影响 `main`。
+- [前端与 Rust 完整回归](https://github.com/BJKJKZHOU/NMIXX-Motor-Studio/actions/runs/38846695908) 均通过；该结果不代表 Tauri WebView 或电机硬件验收。
+- 固件已接受的辨识 Start、Apply、寻相、Enable/Disable、Stop 等 Action 不因后续缓存同步失败而丢失 Handle。
+- `synchronizeParameters()` 现在检查各可读 Parameter 的缓存错误和缺失值；完成事件携带独立 `readbackError`，Motor / Encoder 显示“未确认”，不得因此误报固件拒绝或校准成功。
+- Connection 拦截重复 Connect，异步端口发现不得覆盖用户在请求期间手工输入的端口；相关用户流程模拟已加入回归。
+- 目前“未确认”结果不会单凭旧 VALID 参数自动恢复为可 Apply；用户须先检查最新设备参数并重新操作。后续可单独设计明确的校验/恢复入口，不应恢复使用旧数据猜测。
+
 ## 用户操作与反馈矩阵
 
 | 用户操作 | 预期设备命令 / 实际代码路径 | 成功反馈与 UI 联动 | 失败及取消 | 覆盖等级 |
