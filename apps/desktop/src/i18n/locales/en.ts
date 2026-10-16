@@ -408,6 +408,7 @@ export const enMessages = {
   "automation.workspace.explorer": "Script explorer",
   "automation.workspace.hide.explorer": "Hide explorer",
   "automation.workspace.local.files": "Local scripts",
+  "automation.workspace.choose.file": "Choose a script file",
   "automation.workspace.path": "Script file path",
   "automation.workspace.opened": "Open editors",
   "automation.workspace.examples": "Example scripts",

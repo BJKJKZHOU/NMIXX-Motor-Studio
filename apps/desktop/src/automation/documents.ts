@@ -33,6 +33,10 @@ export function newScript(): ScriptTab {
     workingDirectory: null, path: null,
   }, false, `editor-${number}`);
 }
+/** Browser-selected files are imported as editable tabs. Save As assigns a path. */
+export function importScript(name: string, source: string): ScriptTab {
+  return add({ name, source, path: null, workingDirectory: null });
+}
 export async function openLocalScript(path: string): Promise<ScriptTab> {
   const existing = get(scriptTabs).find((tab) => tab.path === path);
   if (existing) { activeScriptId.set(existing.id); return existing; }

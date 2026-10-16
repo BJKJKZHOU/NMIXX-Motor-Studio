@@ -409,6 +409,7 @@ export const zhCNMessages = {
   "automation.workspace.explorer": "脚本资源管理器",
   "automation.workspace.hide.explorer": "隐藏资源管理器",
   "automation.workspace.local.files": "本地脚本",
+  "automation.workspace.choose.file": "选择脚本文件",
   "automation.workspace.path": "脚本文件路径",
   "automation.workspace.opened": "已打开",
   "automation.workspace.examples": "示例脚本",

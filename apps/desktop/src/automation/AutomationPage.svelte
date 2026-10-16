@@ -4,7 +4,7 @@
   import { cancelTask, exportLog } from "./api";
   import {
     activeScript, activeScriptId, closeScript, editScript, isDirty, newScript,
-    openExample, openLocalScript, saveCurrentScript, scriptTabs, selectScript,
+    importScript, openExample, openLocalScript, saveCurrentScript, scriptTabs, selectScript,
   } from "./documents";
   import { isActive, logs, refreshTask, runSelected, scriptSettings, taskError, taskState } from "./state";
   import ScriptEditor from "./ScriptEditor.svelte";
@@ -19,6 +19,7 @@
   let logExportVisible = false;
   let openPath = "";
   let savePath = "";
+  let filePicker: HTMLInputElement;
   $: activeTask = isActive($taskState?.state);
   $: output = $logs.map((line) => `[${(line.elapsedMs / 1000).toFixed(3)}s ${line.source}] ${line.text}`).join("\n");
 
@@ -27,6 +28,15 @@
     busy = true; error = ""; feedback = "";
     try { await operation(); } catch (failure) { error = String(failure); }
     finally { busy = false; }
+  }
+  async function chooseFile(event: Event) {
+    const input = event.currentTarget as HTMLInputElement;
+    const file = input.files?.[0];
+    if (!file) return;
+    input.value = "";
+    if (file.size > 262144) { error = "Script must not exceed 262144 bytes"; return; }
+    try { importScript(file.name, await file.text()); }
+    catch (failure) { error = String(failure); }
   }
   async function openFile() {
     const path = openPath.trim();
@@ -41,13 +51,14 @@
     if (isDirty(tab) && !window.confirm(translate("automation.workspace.discard.prompt", $uiLanguage))) return;
     closeScript(id);
   }
+  function promptSaveAs() {
+    if (!$activeScript) return;
+    savePath = $activeScript.path ?? "";
+    saveAsVisible = true;
+  }
   function saveCurrent() {
     if (!$activeScript || busy) return;
-    if (!$activeScript.path || $activeScript.example) {
-      savePath = $activeScript.path ?? "";
-      saveAsVisible = true;
-      return;
-    }
+    if (!$activeScript.path || $activeScript.example) { promptSaveAs(); return; }
     void perform(() => saveCurrentScript());
   }
   async function saveAs() {
@@ -83,17 +94,22 @@
 </script>
 
 <div class="automation-workspace">
+  <input class="hidden-file-picker" type="file" accept=".py,.txt" bind:this={filePicker}
+    aria-label={translate("automation.workspace.choose.file", $uiLanguage)} onchange={(event) => void chooseFile(event)} />
   <header class="page-toolbar">
     <div class="page-title">{translate("automation.workspace.title", $uiLanguage)}</div>
     <div class="toolbar-actions">
       <button class="tool-button" title={translate("automation.workspace.new", $uiLanguage)} onclick={createFile}>
         <i class="codicon codicon-new-file"></i> {translate("automation.workspace.new", $uiLanguage)}
       </button>
-      <button class="tool-button" title={translate("automation.workspace.open", $uiLanguage)} onclick={() => explorerVisible = true}>
+      <button class="tool-button" title={translate("automation.workspace.open", $uiLanguage)} onclick={() => filePicker?.click()}>
         <i class="codicon codicon-folder-opened"></i> {translate("automation.workspace.open", $uiLanguage)}
       </button>
       <button class="tool-button" disabled={!$activeScript || busy} onclick={saveCurrent}>
         <i class="codicon codicon-save"></i> {translate("automation.workspace.save", $uiLanguage)}
+      </button>
+      <button class="tool-button" disabled={!$activeScript || busy} onclick={promptSaveAs}>
+        {translate("automation.workspace.save.as", $uiLanguage)}
       </button>
       <span class="toolbar-separator"></span>
       <button class="tool-button run-button" disabled={!connected || busy || activeTask || !$activeScript || !$activeScript.source.trim()} onclick={runCurrent}>
@@ -226,6 +242,7 @@
 </div>
 
 <style>
+  .hidden-file-picker { display: none; }
   .automation-workspace { display: flex; flex-direction: column; min-width: 0; min-height: 0; height: 100%; background: var(--vscode-editor-background, #1e1e1e); }
   .page-toolbar { flex: 0 0 36px; min-width: 0; }
   .toolbar-actions { display: flex; align-items: center; gap: 5px; }
