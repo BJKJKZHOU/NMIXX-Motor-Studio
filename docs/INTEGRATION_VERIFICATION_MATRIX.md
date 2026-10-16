@@ -46,6 +46,39 @@ closed by this pass. The Plot/Tuning default channel capability mismatch remains
 - When Stop follows Run, delayed earlier Run replies cannot replace the most recent operator feedback or Tuning stop state.
 - Frontend handler simulations and structural checks exercise these normal use cases. They are not real WebView or hardware verification. The existing deferred Plot/Tuning default capture compatibility issue remains unchanged.
 
+## UI component reuse audit — 2026-10-16
+
+This audit checks *implementation ownership*, not visual resemblance to VS Code.
+The rule in `ARCHITECTURE.md` remains: use a maintained library for general
+interaction mechanics, but keep small native controls and motor-specific state.
+
+| Surface | Reuse assessment | Decision |
+| --- | --- | --- |
+| App shell / Connection | Existing VSCode Elements buttons and native forms; one ApplicationSession is backend-owned | Keep. Native serial-port input and explicit HostSchema setting do not warrant a new forms library |
+| Motor / Encoder | Shared Parameter editor, metadata-based permissions and finite Action state | Keep. Identification/phase-search policy belongs in the motor domain, not in a generic UI library |
+| Limits / Safety | Small domain-specific value grid and shared Parameter editor | Keep native layout; a full data table library would add indirection |
+| Control Architecture | Static control-block diagrams and shared Parameter editing | Keep. Do not add a graph/canvas library until the diagrams actually become interactive |
+| Control Tuning | Shared ECharts waveform and Motion model; formerly handwritten three-button waveform tabs | **Changed:** reuse the installed `vscode-tabs` for tab selection and keyboard/ARIA behavior |
+| Motion | Existing ECharts trajectory preview; shared Motion and Parameter models | Keep. ECharts already owns axes, rendering and plotting |
+| Scope / Analysis | ECharts inside-zoom, pan, legend, axes and tooltip; shared Scope view used by Tuning | Keep. Readback window/debounce and channel capacity are device/application semantics, not a chart-widget rewrite |
+| Parameters | TanStack Table sorting/filtering and shared editors | Keep; do not recreate table filtering or row projection |
+| Events / Problems | Short readonly active/history lists with fixed presentation | Keep native lists. Reuse the installed TanStack Table if sortable/filtered large history becomes a real requirement |
+| Automation | Monaco, VSCode Elements splitter and Tauri native dialogs; Application-owned script runner | Keep. No custom editor, terminal engine or additional dock framework |
+
+`ResizeObserver` in the ECharts views is required because ECharts does not
+automatically track every host container resize; it is not a second rendering
+engine. Similarly, the shared Parameter editor and Action gates are domain
+semantics and cannot be replaced by a generic component without changing
+device behavior.
+
+Frontend tests and builds verify the `vscode-tabs` integration's source and
+compilation, **not physical keyboard navigation in the Tauri WebView**. The
+latter still requires manual WebView acceptance (Tab, Left/Right, Enter, switching
+back to Waveform, and a waveform resize after the panel is revealed).
+
+No new library was installed for this audit. The deferred firmware Plot/Tuning
+default channel-capability mismatch remains deferred.
+
 ## Verification rules
 
 All items intentionally start unchecked for this integration pass. Existing code,
