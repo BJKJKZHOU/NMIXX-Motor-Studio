@@ -56,6 +56,14 @@
 
 **验证边界：** 实测的是浏览器 UI（Chromium），不是实际 Tauri WebView 和系统原生 Dialog；Motor、Encoder 真实功率动作、串口时序与固件 Plot/Tuning 默认采集兼容性仍未经过实机验证。WebView/HW 待验收项保持未完成。
 
+## 辨识操作：单次 Start 与非交互式说明（2026-10-16）
+
+- Motor 中 Rs/Ls、Flux、J/B 的 Start 代表用户明确请求辨识，不再先试探 `allowEnable=false`、弹出 `window.confirm`、再请求第二次。
+- 一次请求由 Application 完成预检、切 IDENT 模式及必要的 Disable/Enable。已有 Rust MotorActionService 和 Automation `allowEnable` 语义保持不变。
+- 页面在辨识区域提示可能自动使能及电机旋转，不使用弹窗中的确认按钮控制 Enable；实际执行状态由 Action 完成事件决定。
+- 预检被阻止显示「启动条件未满足」，与已启动后失败分开；Apply 仍需要用户明确点击，辨识结束后不自行 Disable。
+- 相关 Handler 模拟、陌生电机流程和中英文资源回归已补充。代码变更直接提交到 `dev/nmixx-unified`。固件硬件实测仍待完成。
+
 ## 用户操作与反馈矩阵
 
 | 用户操作 | 预期设备命令 / 实际代码路径 | 成功反馈与 UI 联动 | 失败及取消 | 覆盖等级 |
@@ -65,7 +73,7 @@
 | Motion Repeat 第二次 Run（电机保持 RUN） | 上位机先确认上一段参考到达目标，仅 WRITE 反向 `PARAM_TARGET_POSITION`；不发送第二个 Run Action | Tauri 返回 `targetUpdated`，显示已更新目标，**不宣称运动已完成** | 尚未到达目标或 WRITE 失败时不得推进 A/B | HANDLER-SIM、WIRE-TEST-ADDED、HW-PENDING |
 | Motion Stop / 全局 Stop | `ACTION_MOTOR_STOP`；固件按原减速逻辑回到 ENABLED | 显示 Stop 已接受 + 最新 Motor State；`RUN` 仍可能持续一段时间 | ERR_STATE 或读回失败须分别报告；Stop ACK 不等于已停稳 | HANDLER-SIM、NODE-TEST-ADDED、CODE-TRACED、HW-PENDING |
 | 全局 Enable / Disable | `DISABLED` 时点击发送 `ACTION_MOTOR_ENABLE`，`ENABLED` 或 `RUN` 时点击发送 `ACTION_MOTOR_DISABLE` | 按钮常态只显示固件当前状态：红色 `DISABLED` 或绿色 `ENABLED`（RUN 仍为使能）；Tooltip 标识点击动作，ACK 后等真实 Motor State 更新 | 设备拒绝或读回失败时不预先切换按钮状态；状态未知时显示中性 UNKNOWN | NODE-TEST-ADDED、BROWSER-MOCK、HW-PENDING |
-| Motor Rs/Ls 等辨识 Start | 应用预检；需使能时先征求确认；被允许后设置 IDENT 模式、Enable、发相应 `ACTION_IDENT_*_START` | 页面进入 Running；收到**匹配的有限 Action**完成事件与有效结果后显示 Apply | 预检 Blocked 显示原因；取消使能不发命令；Action 失败显示 Failed | HANDLER-SIM、NODE-TEST-ADDED、CODE-TRACED、HW-PENDING |
+| Motor Rs/Ls 等辨识 Start | 用户点击一次 Start → Application 预检 → 按需 Disable、写入 IDENT、Enable → 发相应 `ACTION_IDENT_*_START`；不弹使能确认框、不重发 Start | 页面进入 Running；收到**匹配的有限 Action**完成事件与有效结果后显示 Apply；全局 Enable 状态仍取自固件读回 | 预检不通过显示「启动条件未满足」及原因，不误报为执行 Failed；实际 Action 失败仍显示 Failed | HANDLER-SIM、NODE-TEST-ADDED、CODE-TRACED、HW-PENDING |
 | Motor Apply | `ACTION_IDENT_APPLY` 同步完成，依当前 Session 的候选辨识类型执行 | 后端刷新真实参数，再显示 Applied | 若候选失效或被拒绝，不显示 Applied | HANDLER-SIM、NODE-TEST-ADDED、HW-PENDING |
 | Encoder Phase Search | 应用预检与模式/使能编排 → `ACTION_MOTOR_RUN`（PHASE_SEARCH） | GUI 显示 Running；有限 Action 完成后为 Success | 启动拒绝或完成失败显示 Failed；全局 Stop 为 Stopped | HANDLER-SIM、NODE-TEST-ADDED、CODE-TRACED、HW-PENDING |
 | Control Tuning Run | `tuning_experiment_start` → 采集准备与预采集 → Application Motion Run；Position 由实际参考到位 + 稳定窗口触发 Stop | UI 轮询 PREPARING → RUNNING → STOPPING → COMPLETED/FAILED，保留已有波形 | 未提交草稿不启动；故障与用户 Stop 取消 A/B | HANDLER-SIM、NODE-TEST-ADDED、CODE-TRACED、HW-PENDING |

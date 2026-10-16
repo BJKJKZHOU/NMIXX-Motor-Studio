@@ -90,6 +90,22 @@ The tooltip names the **next action** explicitly; the visible text/icon/color re
 
 `Run` is not a generic global action. Run/Start belongs to the domain that defines what operation will execute.
 
+## Domain Start actions and informational dialogs
+
+Starting an explicit motor-domain operation (such as Rs/Ls, Flux or J/B
+identification) must not require a second operational Enable/Continue decision
+inside a modal dialog. One Start requests the semantic Application action;
+Application performs firmware mode changes, required Enable/Disable sequencing
+and preflight. The GUI reports readiness and outcomes beside the originating
+operation. It must not synthesize its own mode or motor-state commands.
+
+Safety/rotation information belongs in non-interactive, visible context near
+the action. A dialog used only to explain something does not issue control
+commands. Normal operation must not depend on confirming a modal to proceed.
+Global Stop/Disable remain independently available and authoritative motor
+state always comes from firmware readback. File chooser dialogs and explicitly
+required destructive-operation confirmation are separate concerns.
+
 ## Global parameter controls
 
 `Read` and `Save` are global configuration actions in the top toolbar.
