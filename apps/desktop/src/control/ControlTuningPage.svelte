@@ -286,11 +286,11 @@
     {:else}
       <div class="tuning-layout"><div class="experiment-column">
         <section class="waveform-panel">
-          <div class="waveform-heading"><div class="section-title">{translate("ui.experiment.waveform", $uiLanguage)}</div><div class="experiment-status" class:failed={experimentState === "FAILED"}>{localize(experimentState, $uiLanguage)}{#if experimentSnapshot}<span>· loss {experimentSnapshot.snapshot.lostFrames}</span>{/if}</div></div>
+          <div class="waveform-heading"><div class="section-title">{translate("ui.experiment.waveform", $uiLanguage)}</div><div class="experiment-status" class:failed={experimentState === "FAILED"}>{localize(experimentState, $uiLanguage)}{#if experimentSnapshot}<span>· {translate("ui.loss", $uiLanguage)} {experimentSnapshot.snapshot.lostFrames}</span>{/if}</div></div>
           {#if experimentMessage}<div class="experiment-message">{localizeFeedback(experimentMessage, $uiLanguage)}</div>{/if}
-          <div class="waveform-tabs" role="tablist" aria-label="Experiment waveform views">
+          <div class="waveform-tabs" role="tablist" aria-label={translate("tuning.experiment.waveform.aria", $uiLanguage)}>
             <button class:active={waveformTab === "waveform"} onclick={() => waveformTab = "waveform"}>{translate("ui.waveform", $uiLanguage)}</button>
-            <button class:active={waveformTab === "channels"} onclick={() => waveformTab = "channels"}>Channels {selectedTuningEntries().length}</button>
+            <button class:active={waveformTab === "channels"} onclick={() => waveformTab = "channels"}>{translate("ui.channels", $uiLanguage)} {selectedTuningEntries().length}</button>
             <button class:active={waveformTab === "scale"} onclick={() => waveformTab = "scale"}>{translate("ui.scale", $uiLanguage)}</button>
           </div>
           <div class="waveform-tab-content">
@@ -320,7 +320,7 @@
                     <input class="compact-input mono" type="number" min="0.000001" step="any" value={displayMultipliers[channel.id] ?? 1} onchange={(event) => setDisplayMultiplier(channel.id, Number(event.currentTarget.value))} />
                   </span></label>
                 {/each}
-                <div class="tuning-scale-actions"><button onclick={resetDisplayMultipliers}>{translate("ui.reset.1", $uiLanguage)}</button></div>
+                <div class="tuning-scale-actions"><button onclick={resetDisplayMultipliers}>{translate("tuning.scale.reset.multiplier", $uiLanguage)}</button></div>
               </div>
             {/if}
           </div>
@@ -330,13 +330,13 @@
             <select class="compact-select motion-mode-select" value={activeMotionMode() ?? ""}
               class:ramModified={!!metadata[MOTION_MODE] && $modifiedParameterIds.has(metadata[MOTION_MODE].id)}
               disabled={motionLocked() || motorState !== "DISABLED" || locked(MOTION_MODE)}
-              title={motorState === "DISABLED" ? "Select motor mode" : "Disable the motor before changing mode"}
+              title={translate(motorState === "DISABLED" ? "tuning.motion.mode.select.tooltip" : "tuning.motion.mode.disabled.tooltip", $uiLanguage)}
               onchange={(event) => void setMotionMode(event.currentTarget.value as MotionMode)}>
               {#each Object.entries(motionModeLabels) as [value, labelText]}{#if motionModeSupported(value as MotionMode)}<option value={value}>{translate(labelText, $uiLanguage)}</option>{/if}{/each}
             </select>
           </label>
           {#if activeMotionMode() === "position"}
-            <div class="position-mode-options" aria-label="Position command mode">
+            <div class="position-mode-options" aria-label={translate("tuning.position.command.aria", $uiLanguage)}>
               <label><input type="radio" name="tuning-position-command" checked={$motionState.positionCommand === "incremental"} disabled={motionLocked()} onchange={() => updateMotionField("positionCommand", "incremental")} />{translate("ui.incremental", $uiLanguage)}</label>
               <label><input type="radio" name="tuning-position-command" checked={$motionState.positionCommand === "absolute"} disabled={motionLocked()} onchange={() => updateMotionField("positionCommand", "absolute")} />{translate("ui.absolute", $uiLanguage)}</label>
               <label><input type="checkbox" checked={$motionState.repeat} disabled={motionLocked()} onchange={(event) => updateMotionField("repeat", event.currentTarget.checked)} />{translate("ui.repeat", $uiLanguage)}</label>

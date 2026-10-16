@@ -257,7 +257,7 @@
         <section class="motor-section">
           <div class="section-title">{translate("ui.motor.parameters", $uiLanguage)}</div>
 
-          <div class="parameter-grid" role="table" aria-label="Motor parameters">
+          <div class="parameter-grid" role="table" aria-label={translate("motor.parameters.aria", $uiLanguage)}>
             <div class="grid-header" role="row">
               <div role="columnheader">{translate("ui.parameter", $uiLanguage)}</div>
               <div role="columnheader">{translate("ui.default", $uiLanguage)}</div>
@@ -305,7 +305,7 @@
                       <span class="action-status state-running"><i class="codicon codicon-loading codicon-modifier-spin"></i> {translate("ui.running", $uiLanguage)}</span>
                     {:else if state.phase === "ready"}
                       <!-- svelte-ignore a11y_click_events_have_key_events a11y_no_static_element_interactions -->
-                      <vscode-button class="apply-button" disabled={!connection?.commissioning?.identificationApply} onclick={() => void applyIdentification(row.identKey!)} title="Apply the latest valid identification result to Active parameters">{translate("ui.apply", $uiLanguage)}</vscode-button>
+                      <vscode-button class="apply-button" disabled={!connection?.commissioning?.identificationApply} onclick={() => void applyIdentification(row.identKey!)} title={translate("motor.identification.apply.tooltip", $uiLanguage)}>{translate("ui.apply", $uiLanguage)}</vscode-button>
                     {:else if state.phase === "applying"}
                       <span class="action-status state-running"><i class="codicon codicon-loading codicon-modifier-spin"></i> {translate("ui.applying", $uiLanguage)}</span>
                     {:else if state.phase === "applied"}
@@ -327,7 +327,7 @@
 
         <section class="motor-section identification-settings">
           <div class="section-title">{translate("ui.identification.settings", $uiLanguage)}</div>
-          <div class="settings-grid" role="table" aria-label="Identification settings">
+          <div class="settings-grid" role="table" aria-label={translate("motor.identification.settings.aria", $uiLanguage)}>
             <div class="settings-header" role="row">
               <div role="columnheader">{translate("ui.parameter", $uiLanguage)}</div>
               <div role="columnheader">{translate("ui.value", $uiLanguage)}</div>

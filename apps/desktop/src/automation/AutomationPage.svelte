@@ -62,8 +62,8 @@
     <section class="log-panel">
       <div class="section-heading">
         {localize($taskState?.state ?? "IDLE", $uiLanguage)}
-        {#if $taskState?.taskId} · {$taskState.name} · task {$taskState.taskId}{/if}
-        {#if $taskState?.exitCode !== null && $taskState?.exitCode !== undefined} · exit {$taskState.exitCode}{/if}
+        {#if $taskState?.taskId} · {$taskState.name} · {translate("automation.task.id.label", $uiLanguage)} {$taskState.taskId}{/if}
+        {#if $taskState?.exitCode !== null && $taskState?.exitCode !== undefined} · {translate("automation.task.exit.code.label", $uiLanguage)} {$taskState.exitCode}{/if}
       </div>
       {#if $taskState?.message}<div class="automation-message">{$taskState.message}</div>{/if}
       {#if ($taskState?.firstSequence ?? 1) > 1}<div class="automation-message">{translate("ui.old.output.was.truncated.by.the.bounded.log.buffer", $uiLanguage)}</div>{/if}

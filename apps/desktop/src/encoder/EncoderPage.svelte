@@ -191,7 +191,7 @@
           <div class="primary-column">
             <section class="encoder-section">
               <div class="section-title">{translate("ui.feedback.protocol", $uiLanguage)}</div>
-              <div class="setup-grid" aria-label="Encoder feedback protocol">
+              <div class="setup-grid" aria-label={translate("ui.encoder.feedback.protocol", $uiLanguage)}>
                 <div class="field-label">{parameterLabel(ENCODER_PROTOCOL_SYMBOL, "Protocol")}</div>
                 <div>
                   {#if metadata[ENCODER_PROTOCOL_SYMBOL]}
