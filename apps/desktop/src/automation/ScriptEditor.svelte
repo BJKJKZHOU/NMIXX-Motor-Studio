@@ -42,7 +42,7 @@
         // Monaco and its worker are bundled locally, and load only in Automation.
         const [module, worker] = await Promise.all([
           import("monaco-editor"),
-          import("monaco-editor/esm/vs/editor/editor.worker?worker"),
+          import("monaco-editor/editor/editor.worker.js?worker"),
         ]);
         if (disposed) return;
         (self as unknown as {
