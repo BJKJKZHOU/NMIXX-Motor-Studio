@@ -97,13 +97,14 @@ export async function loadDocument(): Promise<void> {
   const document = await api.openScript(get(scriptSettings).path);
   scriptSettings.update((settings) => ({ ...settings, document }));
 }
-export async function runSelected(): Promise<void> {
+export async function runSelected(editorDocument?: ScriptDocument): Promise<void> {
   const settings = get(scriptSettings);
-  if (!settings.document) throw new Error("Open a script first");
+  const document = editorDocument ?? settings.document;
+  if (!document) throw new Error("Open a script first");
   const epoch = get(parameterState).epoch;
   await waitMotionUpdates(); // Wait for submitted writes; do not commit drafts.
   if (epoch !== get(parameterState).epoch) throw new Error("Device connection changed");
-  const result = await api.runScript(settings.document, settings.program, settings.timeoutSeconds);
+  const result = await api.runScript({ ...document }, settings.program, settings.timeoutSeconds);
   if (epoch !== get(parameterState).epoch) throw new Error("Device connection changed");
   ++revision;
   launchedTask = result.taskId;
