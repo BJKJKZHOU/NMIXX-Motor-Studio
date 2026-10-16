@@ -244,3 +244,12 @@ test("new motor identification and encoder preflight errors are visible, not onl
   assert.match(motor, /PARAM_MOTOR_RL_I_PEAK/);
   assert.match(motor, /PARAM_MOTOR_ALIGN_CURRENT/);
 });
+
+test("finite Action completion workers are connection-scoped", () => {
+  const tauri = readFileSync(join(desktop, "src-tauri/src/main.rs"), "utf8");
+  assert.match(tauri, /fn action_session_current\(/);
+  assert.match(tauri, /app\.is_same_session\(expected\)/);
+  assert.match(tauri, /!guard\.disconnecting/);
+  assert.match(tauri, /completion\.wait\(handle, Some\(Duration::from_millis\(100\)\)\)/);
+  assert.doesNotMatch(tauri, /completion\.wait\(handle, None\)/);
+});

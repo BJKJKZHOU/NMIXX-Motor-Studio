@@ -2,13 +2,13 @@ mod automation_commands;
 use std::sync::Mutex;
 use std::time::Duration;
 use nmixx_app::{
-    ActionCompletionWaiter, ActionHandle, ApplicationSession, AxdrStatus, CommissioningCapabilities, DEFAULT_USB_BAUD, HostSchema,
+    ActionCompletionError, ActionCompletionWaiter, ActionHandle, ApplicationSession, AxdrStatus, CommissioningCapabilities, DEFAULT_USB_BAUD, HostSchema,
     IdentificationKind, IdentificationStart, MixedScopeSeries, MotionCapabilities, MotionConfig, MotionPreview, MotionService,
     ParameterMetadata, ParameterValue, PositionValue, PreflightDomain, ProblemSnapshot, RangeMetadata, RuntimeTelemetry,
     SchemaNumber, ScopeRate, ScopeSelection, StreamState, TuningExperimentState,
 };
 use serde::{Deserialize, Serialize};
-use tauri::{Emitter, State};
+use tauri::{Emitter, Manager, State};
 
 #[derive(Default)]
 struct DesktopState {
@@ -220,12 +220,26 @@ fn spawn_parameter_change_bridge(app_handle: tauri::AppHandle, changes: std::syn
         while let Ok(ids) = changes.recv() { if !ids.is_empty() { let _ = app_handle.emit("parameters-changed", ids); } }
     });
 }
-fn spawn_action_completion(app_handle: tauri::AppHandle, completion: ActionCompletionWaiter, handle: ActionHandle, operation: String) {
+fn action_session_current(app_handle: &tauri::AppHandle, expected: &ApplicationSession) -> bool {
+    let state = app_handle.state::<Mutex<DesktopState>>();
+    state.lock().map(|guard| {
+        !guard.disconnecting && guard.app.as_ref().is_some_and(|app| app.is_same_session(expected))
+    }).unwrap_or(false)
+}
+fn spawn_action_completion(app_handle: tauri::AppHandle, app: ApplicationSession,
+    completion: ActionCompletionWaiter, handle: ActionHandle, operation: String) {
     std::thread::spawn(move || {
-        let (status, ok) = match completion.wait(handle, None) {
-            Ok(status) => (format!("{status:?}"), status == AxdrStatus::Ok),
-            Err(error) => (error.to_string(), false),
+        // Check teardown periodically without limiting the firmware Action's duration.
+        let (status, ok) = loop {
+            if !action_session_current(&app_handle, &app) { return; }
+            match completion.wait(handle, Some(Duration::from_millis(100))) {
+                Ok(status) => break (format!("{status:?}"), status == AxdrStatus::Ok),
+                Err(ActionCompletionError::Timeout) => continue,
+                Err(ActionCompletionError::Closed) => return,
+                Err(error) => break (error.to_string(), false),
+            }
         };
+        if !action_session_current(&app_handle, &app) { return; }
         // Application updates its shared Parameter cache before forwarding finite
         // Action completion to this waiter.
         let payload = ActionCompletionDto { txn: handle.txn.get(), action_id: handle.action_id, operation, status, ok };
@@ -361,7 +375,7 @@ async fn identification_start(app_handle: tauri::AppHandle, state: State<'_, Mut
         IdentificationStart::RequiresEnable => Ok(IdentificationStartDto::RequiresEnable),
         IdentificationStart::Started(handle) => {
             let dto = action_handle_dto(handle);
-            spawn_action_completion(app_handle, completion, handle, operation.to_owned());
+            spawn_action_completion(app_handle, app, completion, handle, operation.to_owned());
             Ok(IdentificationStartDto::Started { handle: dto })
         }
     }
@@ -384,7 +398,7 @@ fn start_async_semantic_action(app_handle: tauri::AppHandle, app: ApplicationSes
     let completion = app.action_completion_waiter().map_err(|error| error.to_string())?;
     let handle = start(&app).map_err(|error| error.to_string())?;
     let result = action_handle_dto(handle);
-    spawn_action_completion(app_handle, completion, handle, operation.to_owned());
+    spawn_action_completion(app_handle, app, completion, handle, operation.to_owned());
     Ok(result)
 }
 #[tauri::command]
