@@ -116,6 +116,7 @@
         <input class="compact-input timeout" type="number" min="1" max="3600" step="1" bind:value={$scriptSettings.timeoutSeconds} disabled={activeTask}/>
       </label>
       <span>{translate("automation.workspace.snapshot.note", $uiLanguage)}</span>
+      <span>{translate("automation.execution.notice", $uiLanguage)}</span>
     </div>
   {/if}
   {#if saveAsVisible && $activeScript}
