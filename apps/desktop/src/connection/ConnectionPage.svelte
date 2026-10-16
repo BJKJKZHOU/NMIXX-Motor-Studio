@@ -24,15 +24,19 @@
   }
 
   async function refreshPorts() {
+    const selected = port;
     try {
-      ports = await listDevices();
-      port = preferredPort(ports, connection?.port ?? port);
+      const discovered = await listDevices();
+      ports = discovered;
+      // Port discovery must not overwrite a port typed while the request ran.
+      if (!busy && port === selected) port = preferredPort(discovered, connection?.port ?? selected);
     } catch (error) {
       onError(error);
     }
   }
 
   async function connect() {
+    if (busy || connection) return;
     if (!port) {
       onError("No USB CDC device detected.");
       return;
