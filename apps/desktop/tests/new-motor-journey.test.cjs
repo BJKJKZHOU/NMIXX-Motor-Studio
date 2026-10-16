@@ -226,7 +226,8 @@ test("new motor from USB connection through three identifications, phase search 
     $parameters:{loading:false,saving:false},metadata:{
       PARAM_ENCODER_PROTOCOL:commonMeta,
     },writing:new Set(),phaseState:"idle",phaseMessage:"",
-    pendingPhaseHandle:null,homingState:"idle",homingMessage:"",pendingHomingHandle:null,
+    pendingPhaseHandle:null,earlyPhaseCompletion:undefined,phaseRequestGeneration:0,
+    homingState:"idle",homingMessage:"",pendingHomingHandle:null,earlyHomingCompletion:undefined,homingRequestGeneration:0,
     canWriteInMotorState:canWrite,
     edits:{select:async(key,value)=>device.write(key,value)},
     onError:error=>errors.push(String(error)),
