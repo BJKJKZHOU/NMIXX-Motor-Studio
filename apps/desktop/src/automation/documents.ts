@@ -64,7 +64,9 @@ export function closeScript(id: string) {
   if (get(activeScriptId) === id)
     activeScriptId.set(remaining[Math.min(index, remaining.length - 1)]?.id ?? null);
 }
-export function isDirty(tab: ScriptTab): boolean { return tab.source !== tab.savedSource; }
+export function isDirty(tab: ScriptTab): boolean {
+  return (!tab.path && !tab.example) || tab.source !== tab.savedSource;
+}
 export async function saveCurrentScript(path?: string): Promise<ScriptTab> {
   const current = get(activeScript);
   if (!current) throw new Error("Open a script first");

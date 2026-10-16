@@ -48,6 +48,7 @@ function setup() {
 test("script tabs retain independent live edits and selection",()=>{
   const {d}=setup();
   const a=d.newScript(),b=d.newScript();
+  assert.equal(d.isDirty(a),true); // Untitled code has no saved backing file.
   d.editScript(a.id,"from nmixx import client\nclient.run()");
   assert.match(d.scriptTabs._get()[0].source,/client.run/);
   assert.doesNotMatch(d.scriptTabs._get()[1].source,/client.run/);
