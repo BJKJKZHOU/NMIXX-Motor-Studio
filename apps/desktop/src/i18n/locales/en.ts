@@ -397,4 +397,6 @@ export const enMessages = {
   "automation.export.path.aria": "New log output file",
   "automation.execution.notice": "Scripts share the GUI Application API and device connection, not the CLI. They may change parameters and operate the motor or Scope. The Motion example uses the committed target and requires manual Enable first. Scripts run with the current OS user permissions, not in a sandbox; use only trusted files.",
   "motor.firmware.default.tooltip": "Firmware compiled default from HostSchema",
+  "actions.readback.unverified.label": "Unverified",
+  "actions.readback.unverified.explanation": "Firmware Action finished, but Parameter readback failed; inspect device state and parameters before retrying.",
 } as const;

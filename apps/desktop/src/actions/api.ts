@@ -1,6 +1,7 @@
 import { invoke } from "@tauri-apps/api/core";
+import { get } from "svelte/store";
 import { listen, type UnlistenFn } from "@tauri-apps/api/event";
-import { synchronizeParameters } from "../parameters/state";
+import { parameterState, synchronizeParameters } from "../parameters/state";
 import type { ActionCompletion, ActionHandle } from "./types";
 import type { PreflightIssue } from "../preflight/api";
 
@@ -31,12 +32,17 @@ export function clearProtection(): Promise<ActionHandle> { return reflected(invo
 export async function onActionCompleted(handler: (completion: ActionCompletion) => void): Promise<UnlistenFn> {
   let disposed = false;
   const stop = await listen<ActionCompletion>("action-completed", (event) => {
-    // Application publishes completion only after its shared readback. The client
-    // mirrors that snapshot before a page inspects identification result Parameters.
-    void synchronizeParameters().then(
-      () => { if (!disposed) handler(event.payload); },
-      () => { if (!disposed) handler(event.payload); },
-    );
+    const epoch = get(parameterState).epoch;
+    // Device completion is authoritative for the Action; cache synchronization
+    // is a separate result and must never manufacture a verified UI success.
+    void (async () => {
+      let readbackError: string | undefined;
+      try { await synchronizeParameters(); }
+      catch (error) { readbackError = String(error); }
+      if (!disposed && get(parameterState).epoch === epoch) {
+        handler(readbackError ? { ...event.payload, readbackError } : event.payload);
+      }
+    })();
   });
   return () => { disposed = true; stop(); };
 }

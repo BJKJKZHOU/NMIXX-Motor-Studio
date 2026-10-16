@@ -14,7 +14,7 @@
 
   type Props = { connection: ConnectionInfo | undefined; motorState: MotorState | null; onError?: (error: unknown) => void };
   type IdentKey = "rsLs" | "flux" | "jb";
-  type IdentPhase = "idle" | "running" | "ready" | "applying" | "applied" | "failed";
+  type IdentPhase = "idle" | "running" | "ready" | "applying" | "applied" | "failed" | "unverified";
   type IdentState = { phase: IdentPhase; message: string };
   type IdentConfig = { label: string; operation: string; validSymbol: string; resultSymbols: string[]; activeSymbols: string[] };
   type RowSpec = { activeSymbol: string; identifiedSymbol?: string; identifiedValidSymbol?: string; identKey?: IdentKey };
@@ -144,7 +144,7 @@
   function restoreIdentificationStates(committed: Record<string, ParameterValue | null>) {
     const next = { ...identStates };
     for (const key of Object.keys(IDENT_CONFIGS) as IdentKey[]) {
-      if (["running", "applying", "failed"].includes(next[key].phase)) continue;
+      if (["running", "applying", "failed", "unverified"].includes(next[key].phase)) continue;
       const valid = numericValue(committed[IDENT_CONFIGS[key].validSymbol]) === 1;
       next[key] = {
         phase: valid && identifiedMatchesActive(key, committed) ? "applied"
@@ -231,6 +231,11 @@
       setIdentState(pending.identKey, "failed", completion.status);
       return;
     }
+    if (completion.readbackError) {
+      applyCandidate = null;
+      setIdentState(pending.identKey, "unverified", completion.readbackError);
+      return;
+    }
     const config = IDENT_CONFIGS[pending.identKey];
     if (numericValue(values[config.validSymbol]) === 1) {
       applyCandidate = pending.identKey;
@@ -310,6 +315,9 @@
                       <span class="action-status state-running"><i class="codicon codicon-loading codicon-modifier-spin"></i> {translate("ui.applying", $uiLanguage)}</span>
                     {:else if state.phase === "applied"}
                       <span class="action-status state-success"><i class="codicon codicon-check"></i> {translate("ui.applied", $uiLanguage)}</span>
+                    {:else if state.phase === "unverified"}
+                      <span class="action-status muted">{translate("actions.readback.unverified.label", $uiLanguage)}</span>
+                      <span class="action-reason" role="alert">{translate("actions.readback.unverified.explanation", $uiLanguage)} {localizeFeedback(state.message, $uiLanguage)}</span>
                     {:else if state.phase === "failed"}
                       <span class="action-status state-failed" title={localizeFeedback(state.message, $uiLanguage)}><i class="codicon codicon-error"></i> {translate("ui.failed", $uiLanguage)}</span>
                       {#if state.message}<span class="action-reason" role="alert">{localizeFeedback(state.message, $uiLanguage)}</span>{/if}

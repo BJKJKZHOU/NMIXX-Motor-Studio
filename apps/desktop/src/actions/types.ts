@@ -7,4 +7,5 @@ export type ActionCompletion = ActionHandle & {
   operation: string;
   status: string;
   ok: boolean;
+  readbackError?: string;
 };

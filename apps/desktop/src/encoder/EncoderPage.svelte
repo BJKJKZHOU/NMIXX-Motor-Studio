@@ -13,7 +13,7 @@
   import { setPositionZero, startHoming as startHomingAction, startPhaseSearch as startPhaseSearchAction } from "./api";
 
   type Props = { connection: ConnectionInfo | undefined; motorState: MotorState | null; onError?: (error: unknown) => void };
-  type PhaseState = "idle" | "running" | "success" | "stopped" | "failed";
+  type PhaseState = "idle" | "running" | "success" | "stopped" | "failed" | "unverified";
   type HomingState = PhaseState;
   type EnumOption = { value: number; symbol: string; label: string };
 
@@ -143,16 +143,16 @@
       if (pendingPhaseHandle === null) { earlyPhaseCompletion = completion; return; }
       if (key !== pendingPhaseHandle) return;
       pendingPhaseHandle = null;
-      phaseState = completion.ok ? "success" : "failed";
-      phaseMessage = completion.ok ? "" : completion.status;
+      phaseState = !completion.ok ? "failed" : completion.readbackError ? "unverified" : "success";
+      phaseMessage = !completion.ok ? completion.status : completion.readbackError ?? "";
       return;
     }
     if (homingState === "running" && completion.operation === "encoder.homing") {
       if (pendingHomingHandle === null) { earlyHomingCompletion = completion; return; }
       if (key !== pendingHomingHandle) return;
       pendingHomingHandle = null;
-      homingState = completion.ok ? "success" : "failed";
-      homingMessage = completion.ok ? "" : completion.status;
+      homingState = !completion.ok ? "failed" : completion.readbackError ? "unverified" : "success";
+      homingMessage = !completion.ok ? completion.status : completion.readbackError ?? "";
     }
   }
   async function setCurrentAsZero() {
@@ -248,8 +248,9 @@
                   {#if phaseState === "running"}<span class="action-status state-running"><i class="codicon codicon-loading codicon-modifier-spin"></i> {translate("ui.running", $uiLanguage)}</span>
                   {:else if phaseState === "success"}<span class="action-status state-success"><i class="codicon codicon-check"></i> {translate("ui.success", $uiLanguage)}</span>
                   {:else if phaseState === "stopped"}<span class="action-status muted"><i class="codicon codicon-debug-stop"></i> {translate("ui.stopped", $uiLanguage)}</span>
+                  {:else if phaseState === "unverified"}<span class="action-status muted">{translate("actions.readback.unverified.label", $uiLanguage)}</span>
                   {:else if phaseState === "failed"}<span class="action-status state-failed" title={phaseMessage}><i class="codicon codicon-error"></i> {translate("ui.failed", $uiLanguage)}</span>{/if}
-                  {#if phaseState === "failed" && phaseMessage}<span class="action-reason" role="alert">{localizeFeedback(phaseMessage, $uiLanguage)}</span>{/if}
+                  {#if (phaseState === "failed" || phaseState === "unverified") && phaseMessage}<span class="action-reason" role="alert">{#if phaseState === "unverified"}{translate("actions.readback.unverified.explanation", $uiLanguage)} {/if}{localizeFeedback(phaseMessage, $uiLanguage)}</span>{/if}
                 </div>
                 <div class="field-label">{parameterLabel(MOTOR_DIR_SYMBOL, "Motor direction")}</div>
                 <div>
@@ -279,8 +280,9 @@
               {#if homingState === "running"}<div class="action-status state-running"><i class="codicon codicon-loading codicon-modifier-spin"></i> {translate("ui.homing", $uiLanguage)}</div>
               {:else if homingState === "success"}<div class="action-status state-success"><i class="codicon codicon-check"></i> {translate("ui.homed", $uiLanguage)}</div>
               {:else if homingState === "stopped"}<div class="action-status muted"><i class="codicon codicon-debug-stop"></i> {translate("ui.homing.stopped", $uiLanguage)}</div>
+              {:else if homingState === "unverified"}<div class="action-status muted">{translate("actions.readback.unverified.label", $uiLanguage)}</div>
               {:else if homingState === "failed"}<div class="action-status state-failed" title={homingMessage}><i class="codicon codicon-error"></i> {translate("ui.homing.failed", $uiLanguage)}</div>{/if}
-              {#if homingState === "failed" && homingMessage}<div class="action-reason" role="alert">{localizeFeedback(homingMessage, $uiLanguage)}</div>{/if}
+              {#if (homingState === "failed" || homingState === "unverified") && homingMessage}<div class="action-reason" role="alert">{#if homingState === "unverified"}{translate("actions.readback.unverified.explanation", $uiLanguage)} {/if}{localizeFeedback(homingMessage, $uiLanguage)}</div>{/if}
               {#if !metadata[ZERO_VALID_SYMBOL] && !setZeroAvailable() && !homingAvailable()}<div class="future-note">{translate("ui.firmware.unavailable", $uiLanguage)}</div>{/if}
             </section>
           </aside>
