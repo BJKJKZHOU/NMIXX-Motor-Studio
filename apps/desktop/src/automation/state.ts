@@ -9,7 +9,7 @@ import * as api from "./api";
 import type { LogLine, ScriptDocument, TaskSnapshot } from "./api";
 
 // Script selection is view state. Execution, ownership and logs remain in Rust.
-export const scriptSettings = writable({ path: "", logPath: "", program: "python3", timeoutSeconds: 300, document: null as ScriptDocument | null });
+export const scriptSettings = writable({ logPath: "", program: "python3", timeoutSeconds: 300 });
 export const taskState = writable<TaskSnapshot | null>(null);
 export const logs = writable<LogLine[]>([]);
 export const taskError = writable("");
@@ -84,23 +84,8 @@ export function startAutomationTracking(connected: () => boolean): () => void {
     if (isActive(get(taskState)?.state) || (connected() && get(taskState) === null)) void refreshTask();
   });
 }
-export async function ensureDocument(): Promise<void> {
-  if (get(scriptSettings).document) return;
-  const document = await api.builtinScript();
-  scriptSettings.update((settings) => settings.document ? settings : { ...settings, document });
-}
-export async function selectBuiltin(kind = "diagnosis"): Promise<void> {
-  const document = await api.builtinScript(kind);
-  scriptSettings.update((settings) => ({ ...settings, document }));
-}
-export async function loadDocument(): Promise<void> {
-  const document = await api.openScript(get(scriptSettings).path);
-  scriptSettings.update((settings) => ({ ...settings, document }));
-}
-export async function runSelected(editorDocument?: ScriptDocument): Promise<void> {
+export async function runSelected(document: ScriptDocument): Promise<void> {
   const settings = get(scriptSettings);
-  const document = editorDocument ?? settings.document;
-  if (!document) throw new Error("Open a script first");
   const epoch = get(parameterState).epoch;
   await waitMotionUpdates(); // Wait for submitted writes; do not commit drafts.
   if (epoch !== get(parameterState).epoch) throw new Error("Device connection changed");
