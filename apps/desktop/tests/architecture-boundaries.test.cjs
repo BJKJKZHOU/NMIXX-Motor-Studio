@@ -288,3 +288,12 @@ test("commissioning pages stay mounted while navigating to preserve finite Actio
   assert.match(motor, /onActionCompleted\(\(completion\) => handleActionCompleted\(completion\)\)/);
   assert.match(encoder, /register\(onActionCompleted\(handleActionCompleted\)\)/);
 });
+
+test("Control Tuning delegates tabs and keyboard/ARIA semantics to VSCode Elements", () => {
+  const sourceText = source("control/ControlTuningPage.svelte");
+  assert.match(sourceText, /<vscode-tabs class="waveform-tabs"/);
+  assert.match(sourceText, /onvsc-tabs-select=/);
+  assert.equal((sourceText.match(/<vscode-tab-header>/g) ?? []).length, 3);
+  assert.equal((sourceText.match(/<vscode-tab-panel>/g) ?? []).length, 3);
+  assert.doesNotMatch(sourceText, /class:active=\{waveformTab ===/);
+});

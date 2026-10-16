@@ -298,17 +298,23 @@
         <section class="waveform-panel">
           <div class="waveform-heading"><div class="section-title">{translate("ui.experiment.waveform", $uiLanguage)}</div><div class="experiment-status" class:failed={experimentState === "FAILED"}>{localize(experimentState, $uiLanguage)}{#if experimentSnapshot}<span>· {translate("ui.loss", $uiLanguage)} {experimentSnapshot.snapshot.lostFrames}</span>{/if}</div></div>
           {#if experimentMessage}<div class="experiment-message">{localizeFeedback(experimentMessage, $uiLanguage)}</div>{/if}
-          <div class="waveform-tabs" role="tablist" aria-label={translate("tuning.experiment.waveform.aria", $uiLanguage)}>
-            <button class:active={waveformTab === "waveform"} onclick={() => waveformTab = "waveform"}>{translate("ui.waveform", $uiLanguage)}</button>
-            <button class:active={waveformTab === "channels"} onclick={() => waveformTab = "channels"}>{translate("ui.channels", $uiLanguage)} {selectedTuningEntries().length}</button>
-            <button class:active={waveformTab === "scale"} onclick={() => waveformTab = "scale"}>{translate("ui.scale", $uiLanguage)}</button>
-          </div>
-          <div class="waveform-tab-content">
-            {#if waveformTab === "waveform"}
+          <!-- VSCode Elements owns tab selection, ARIA roles and keyboard navigation. -->
+          <vscode-tabs class="waveform-tabs"
+            selected-index={["waveform", "channels", "scale"].indexOf(waveformTab)}
+            onvsc-tabs-select={(event) => {
+              waveformTab = (["waveform", "channels", "scale"] as const)[event.detail.selectedIndex] ?? "waveform";
+            }}>
+            <vscode-tab-header>{translate("ui.waveform", $uiLanguage)}</vscode-tab-header>
+            <vscode-tab-panel>
+              <div class="waveform-tab-content">
               <div class="waveform-tools"><span>{translate("ui.time.div", $uiLanguage)}</span><strong>{tuningTimePerDiv >= 1 ? `${tuningTimePerDiv.toFixed(2)} s` : tuningTimePerDiv >= 1e-3 ? `${(tuningTimePerDiv * 1e3).toFixed(tuningTimePerDiv < 10e-3 ? 2 : 1)} ms` : `${Math.round(tuningTimePerDiv * 1e6)} µs`}</strong></div>
               <ExperimentWaveform result={experimentSnapshot} multipliers={displayMultipliers} bind:timePerDiv={tuningTimePerDiv}
                 onViewRequest={(windowSeconds, endOffsetSeconds, maxPoints) => void requestExperimentWindow(windowSeconds, endOffsetSeconds, maxPoints)} />
-            {:else if waveformTab === "channels"}
+              </div>
+            </vscode-tab-panel>
+            <vscode-tab-header>{translate("ui.channels", $uiLanguage)} {selectedTuningEntries().length}</vscode-tab-header>
+            <vscode-tab-panel>
+              <div class="waveform-tab-content">
               <div class="tuning-channel-list">
                 {#each connection.channels as channel (channel.id)}
                   <div class="tuning-channel-row"><label>
@@ -323,7 +329,11 @@
                 {/each}
                 <div class="tuning-channel-limits" class:invalid={!selectionWithinLimits()}><span>FAST {selectedFastCount()} / {connection.fastMaxChannels}</span><span>NORMAL {selectedNormalCount()} / {connection.normalMaxChannels}</span></div>
               </div>
-            {:else}
+              </div>
+            </vscode-tab-panel>
+            <vscode-tab-header>{translate("ui.scale", $uiLanguage)}</vscode-tab-header>
+            <vscode-tab-panel>
+              <div class="waveform-tab-content">
               <div class="tuning-scale-list">
                 {#each connection.channels.filter((channel) => tuningSelections[channel.id] !== undefined) as channel (channel.id)}
                   <label class="tuning-scale-row"><span>{channel.label}</span><span class="scale-editor"><span>×</span>
@@ -331,9 +341,9 @@
                   </span></label>
                 {/each}
                 <div class="tuning-scale-actions"><button onclick={resetDisplayMultipliers}>{translate("tuning.scale.reset.multiplier", $uiLanguage)}</button></div>
-              </div>
-            {/if}
-          </div>
+              </div>              </div>
+            </vscode-tab-panel>
+          </vscode-tabs>
         </section>
         <section class="motion-panel"><div class="section-title motion-title">{translate("ui.motion.command", $uiLanguage)}</div>
           <div class="motion-toolbar"><label class="motion-mode"><span>{translate("ui.mode", $uiLanguage)}</span>
@@ -448,10 +458,7 @@
   .waveform-panel, .tuning-section { border: 1px solid var(--vscode-panel-border); border-radius: 4px; background: color-mix(in srgb, var(--vscode-editor-background) 96%, var(--vscode-foreground) 4%); }
   .waveform-panel { padding: 14px; min-height: 430px; }
   .waveform-heading { display: flex; align-items: baseline; justify-content: space-between; gap: 12px; }
-  .waveform-tabs { display: flex; align-items: center; gap: 14px; margin-top: 8px; border-bottom: 1px solid var(--vscode-panel-border); }
-  .waveform-tabs button { appearance: none; border: 0; border-bottom: 1px solid transparent; background: transparent; color: var(--vscode-descriptionForeground); padding: 5px 1px 6px; margin-bottom: -1px; font: inherit; font-size: 11px; cursor: pointer; }
-  .waveform-tabs button:hover { color: var(--vscode-foreground); }
-  .waveform-tabs button.active { color: var(--vscode-foreground); border-bottom-color: var(--vscode-focusBorder); }
+  .waveform-tabs { display: block; margin-top: 8px; border: 0; --vscode-font-size: 11px; }
   .waveform-tab-content { min-width: 0; min-height: 340px; height: 340px; padding-top: 8px; }
   .waveform-tools { height: 20px; display: flex; justify-content: flex-end; gap: 6px; align-items: baseline; color: var(--vscode-descriptionForeground); font-size: 10px; }
   .waveform-tools strong { color: var(--vscode-foreground); font-weight: 500; }
