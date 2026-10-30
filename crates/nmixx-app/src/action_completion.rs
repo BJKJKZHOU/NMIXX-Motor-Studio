@@ -13,6 +13,10 @@ pub enum ActionCompletionError {
     Closed,
     #[error("{0}")]
     Interrupted(String),
+    #[error("{0}")]
+    CleanupFailed(String),
+    #[error("{0}")]
+    VerificationFailed(String),
 }
 
 /// Subscription created before a finite Action starts. It owns no device I/O and
@@ -48,10 +52,15 @@ impl ActionCompletionWaiter {
                 None => self.events.recv().map_err(|_| ActionCompletionError::Closed)?,
             };
 
-            if let SessionEvent::ActionCompleted { handle: completed, status } = event {
-                if completed == handle {
-                    return Ok(status);
+            match event {
+                SessionEvent::ActionCompleted { handle: completed, status } if completed == handle => return Ok(status),
+                SessionEvent::ActionCleanupFailed { handle: completed, message } if completed == handle => {
+                    return Err(ActionCompletionError::CleanupFailed(message));
                 }
+                SessionEvent::ActionVerificationFailed { handle: completed, message } if completed == handle => {
+                    return Err(ActionCompletionError::VerificationFailed(message));
+                }
+                _ => {}
             }
         }
     }

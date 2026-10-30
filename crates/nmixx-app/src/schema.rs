@@ -13,8 +13,8 @@ pub enum SchemaError {
     Io(String),
     #[error("failed to parse Host schema TOML: {0}")]
     Parse(String),
-    #[error("unsupported Host schema version {0}")]
-    UnsupportedVersion(u32),
+    #[error("unsupported Host schema protocol '{0}'")]
+    UnsupportedProtocol(String),
     #[error("unknown parameter type '{0}'")]
     UnknownParameterType(String),
     #[error("parameter '{parameter}' does not expose enum value '{symbol}'")]
@@ -27,7 +27,6 @@ pub enum SchemaError {
 
 #[derive(Debug, Clone, Deserialize)]
 pub struct HostSchema {
-    pub schema_version: u32,
     pub protocol: String,
     pub source: SchemaSource,
     #[serde(default)]
@@ -40,7 +39,6 @@ pub struct HostSchema {
 pub struct SchemaSource {
     pub repository: String,
     pub git_sha: String,
-    pub parameter_schema: u32,
 }
 
 #[derive(Debug, Clone, Deserialize)]
@@ -175,8 +173,8 @@ impl HostSchema {
 
     pub fn parse(text: &str) -> Result<Self, SchemaError> {
         let schema: Self = toml::from_str(text).map_err(|error| SchemaError::Parse(error.to_string()))?;
-        if schema.schema_version != 1 {
-            return Err(SchemaError::UnsupportedVersion(schema.schema_version));
+        if schema.protocol != "axdr-canfd" {
+            return Err(SchemaError::UnsupportedProtocol(schema.protocol.clone()));
         }
         schema.validate_readback()?;
         Ok(schema)
@@ -259,13 +257,11 @@ mod tests {
     fn parses_minimal_host_schema() {
         let schema = HostSchema::parse(
             r#"
-schema_version = 1
-protocol = "axdr-canfd-v1"
+protocol = "axdr-canfd"
 
 [source]
 repository = "AxDr_L_Motor"
 git_sha = "abc123"
-parameter_schema = 1
 
 [[parameters]]
 symbol = "PARAM_MOTOR_RS"
@@ -299,13 +295,11 @@ description = "Enable motor"
     #[test]
     fn parses_and_validates_parameter_readback_metadata() {
         let schema = HostSchema::parse(r#"
-schema_version = 1
-protocol = "axdr-canfd-v1"
+protocol = "axdr-canfd"
 
 [source]
 repository = "fixture"
 git_sha = "abc"
-parameter_schema = 1
 
 [[parameters]]
 symbol = "PARAM_SOURCE"
@@ -334,13 +328,11 @@ description = "derived"
     #[test]
     fn rejects_unknown_parameter_readback_target() {
         let error = HostSchema::parse(r#"
-schema_version = 1
-protocol = "axdr-canfd-v1"
+protocol = "axdr-canfd"
 
 [source]
 repository = "fixture"
 git_sha = "abc"
-parameter_schema = 1
 
 [[parameters]]
 symbol = "PARAM_SOURCE"
@@ -358,13 +350,11 @@ readback = ["PARAM_MISSING"]
     #[test]
     fn parses_parameter_default_metadata() {
         let schema = HostSchema::parse(r#"
-schema_version = 1
-protocol = "axdr-canfd-v1"
+protocol = "axdr-canfd"
 
 [source]
 repository = "fixture"
 git_sha = "abc"
-parameter_schema = 1
 
 [[parameters]]
 symbol = "PARAM_PP"
@@ -392,13 +382,11 @@ description = "rs"
     #[test]
     fn parses_persistent_metadata_and_defaults_to_false() {
         let schema = HostSchema::parse(r#"
-schema_version = 1
-protocol = "axdr-canfd-v1"
+protocol = "axdr-canfd"
 
 [source]
 repository = "fixture"
 git_sha = "abc"
-parameter_schema = 1
 
 [[parameters]]
 symbol = "PARAM_SAVED"

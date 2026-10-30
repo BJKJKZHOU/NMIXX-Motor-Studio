@@ -18,27 +18,30 @@
   import type { MotionMode } from "./types";
   import type { MotorState } from "../motor/state";
 
-  export let capabilities: MotionCapabilities | undefined;
-  export let motorState: MotorState | null = null;
-  export let onError: (error: unknown) => void = () => undefined;
+  type Props = {
+    capabilities: MotionCapabilities | undefined;
+    motorState?: MotorState | null;
+    onError?: (error: unknown) => void;
+  };
+  let { capabilities, motorState = null, onError = () => undefined }: Props = $props();
   const modeLabels: Record<MotionMode, MessageKey> = {
     position: "ui.position", speed: "ui.speed", "sensorless-speed": "ui.sensorless.speed", torque: "ui.torque",
   };
   const parameters = selectParameters(MOTION_PARAMETER_SYMBOLS);
   const edits = createParameterEditor(parameters, motionParameterCodec);
-  $: metadata = $parameters.metadata;
-  $: values = $parameters.values;
-  $: drafts = $edits.drafts;
-  $: writing = $edits.writing;
-  $: activeMode = modeFromParameter(metadata[MOTION_MODE], values[MOTION_MODE]);
-  $: hasTrajectory = activeMode === "position" || activeMode === "speed" || activeMode === "sensorless-speed";
-  $: selectedProfile = motionProfileLabel(metadata[MOTION_PROFILE], values[MOTION_PROFILE]);
-  let actionBusy = false;
-  let stopBusy = false;
-  let runFeedback = "";
-  let feedbackRevision = 0;
-  let incrementalDraft = "1";
-  $: uncommittedMotion = $edits.dirty.size > 0 || incrementalDraft !== formatHostNumber($motionState.incrementalDeltaTurn);
+  let metadata = $derived($parameters.metadata);
+  let values = $derived($parameters.values);
+  let drafts = $derived($edits.drafts);
+  let writing = $derived($edits.writing);
+  let activeMode = $derived(modeFromParameter(metadata[MOTION_MODE], values[MOTION_MODE]));
+  let hasTrajectory = $derived(activeMode === "position" || activeMode === "speed" || activeMode === "sensorless-speed");
+  let selectedProfile = $derived(motionProfileLabel(metadata[MOTION_PROFILE], values[MOTION_PROFILE]));
+  let actionBusy = $state(false);
+  let stopBusy = $state(false);
+  let runFeedback = $state("");
+  let feedbackRevision = $state(0);
+  let incrementalDraft = $state("1");
+  let uncommittedMotion = $derived($edits.dirty.size > 0 || incrementalDraft !== formatHostNumber($motionState.incrementalDeltaTurn));
   onMount(() => {
     let disposed = false;
     void initializeMotion().then(() => {
@@ -138,6 +141,11 @@
       }
     } finally { stopBusy = false; }
   }
+  function speedRpm(symbol: string): string {
+    const text = drafts[symbol]?.trim();
+    const speed = text ? Number(text) : NaN;
+    return Number.isFinite(speed) ? `≈ ${(speed * 60 / (2 * Math.PI)).toFixed(1)} RPM` : "— RPM";
+  }
   function previewLabel(): string {
     if (activeMode === "position") return $motionState.positionCommand === "incremental"
       ? `${$motionState.incrementalDeltaTurn.toFixed(3)} turn delta`
@@ -172,16 +180,16 @@
                 onblur={() => incrementalDraft = formatHostNumber($motionState.incrementalDeltaTurn)} />
             {/if}<em>turn</em>
           </div></label>
-<label class="motion-field"><span>{translate("ui.max.speed", $uiLanguage)}</span><div class="unit-field"><input class:ramModified={!!metadata[MOTION_MAX_SPEED] && $modifiedParameterIds.has(metadata[MOTION_MAX_SPEED].id)} class:dirty={dirty(MOTION_MAX_SPEED)} value={drafts[MOTION_MAX_SPEED] ?? ""} disabled={locked(MOTION_MAX_SPEED)} oninput={(event) => edits.edit(MOTION_MAX_SPEED, event.currentTarget.value)} onkeydown={(event) => parameterKeydown(event, MOTION_MAX_SPEED)} onblur={() => resetDraft(MOTION_MAX_SPEED)} /><em>rad/s</em></div></label>
+<div class="motion-field"><label class="motion-speed-label"><span>{translate("ui.max.speed", $uiLanguage)}</span><div class="unit-field"><input class:ramModified={!!metadata[MOTION_MAX_SPEED] && $modifiedParameterIds.has(metadata[MOTION_MAX_SPEED].id)} class:dirty={dirty(MOTION_MAX_SPEED)} value={drafts[MOTION_MAX_SPEED] ?? ""} disabled={locked(MOTION_MAX_SPEED)} oninput={(event) => edits.edit(MOTION_MAX_SPEED, event.currentTarget.value)} onkeydown={(event) => parameterKeydown(event, MOTION_MAX_SPEED)} onblur={() => resetDraft(MOTION_MAX_SPEED)} /><em>rad/s</em></div></label><small class="motion-speed-conversion">{speedRpm(MOTION_MAX_SPEED)}</small></div>
 
           <label class="motion-check span-2"><input type="checkbox" checked={$motionState.repeat} onchange={(event) => void setRepeat(event.currentTarget.checked)} /><span>{translate("ui.repeat", $uiLanguage)}</span></label>
         {:else if activeMode === "speed" || activeMode === "sensorless-speed"}
-<label class="motion-field span-2"><span>{translate("ui.target.speed", $uiLanguage)}</span><div class="unit-field"><input class:ramModified={!!metadata[TARGET_SPEED] && $modifiedParameterIds.has(metadata[TARGET_SPEED].id)} class:dirty={dirty(TARGET_SPEED)} value={drafts[TARGET_SPEED] ?? ""} disabled={locked(TARGET_SPEED)} oninput={(event) => edits.edit(TARGET_SPEED, event.currentTarget.value)} onkeydown={(event) => parameterKeydown(event, TARGET_SPEED)} onblur={() => resetDraft(TARGET_SPEED)} /><em>rad/s</em></div></label>
+<div class="motion-field span-2"><label class="motion-speed-label"><span>{translate("ui.target.speed", $uiLanguage)}</span><div class="unit-field"><input class:ramModified={!!metadata[TARGET_SPEED] && $modifiedParameterIds.has(metadata[TARGET_SPEED].id)} class:dirty={dirty(TARGET_SPEED)} value={drafts[TARGET_SPEED] ?? ""} disabled={locked(TARGET_SPEED)} oninput={(event) => edits.edit(TARGET_SPEED, event.currentTarget.value)} onkeydown={(event) => parameterKeydown(event, TARGET_SPEED)} onblur={() => resetDraft(TARGET_SPEED)} /><em>rad/s</em></div></label><small class="motion-speed-conversion">{speedRpm(TARGET_SPEED)}</small></div>
           {#if activeMode === "sensorless-speed" && metadata[SENSORLESS_STARTUP_CURRENT]}
 <label class="motion-field"><span>{translate("ui.startup.current", $uiLanguage)}</span><div class="unit-field"><input class:ramModified={!!metadata[SENSORLESS_STARTUP_CURRENT] && $modifiedParameterIds.has(metadata[SENSORLESS_STARTUP_CURRENT].id)} class:dirty={dirty(SENSORLESS_STARTUP_CURRENT)} value={drafts[SENSORLESS_STARTUP_CURRENT] ?? ""} disabled={locked(SENSORLESS_STARTUP_CURRENT)} oninput={(event) => edits.edit(SENSORLESS_STARTUP_CURRENT, event.currentTarget.value)} onkeydown={(event) => parameterKeydown(event, SENSORLESS_STARTUP_CURRENT)} onblur={() => resetDraft(SENSORLESS_STARTUP_CURRENT)} /><em>A</em></div></label>
           {/if}
           {#if activeMode === "sensorless-speed" && metadata[SENSORLESS_ENTRY_SPEED]}
-<label class="motion-field"><span>{translate("ui.entry.speed", $uiLanguage)}</span><div class="unit-field"><input class:ramModified={!!metadata[SENSORLESS_ENTRY_SPEED] && $modifiedParameterIds.has(metadata[SENSORLESS_ENTRY_SPEED].id)} class:dirty={dirty(SENSORLESS_ENTRY_SPEED)} value={drafts[SENSORLESS_ENTRY_SPEED] ?? ""} disabled={locked(SENSORLESS_ENTRY_SPEED)} oninput={(event) => edits.edit(SENSORLESS_ENTRY_SPEED, event.currentTarget.value)} onkeydown={(event) => parameterKeydown(event, SENSORLESS_ENTRY_SPEED)} onblur={() => resetDraft(SENSORLESS_ENTRY_SPEED)} /><em>rad/s</em></div></label>
+<div class="motion-field"><label class="motion-speed-label"><span>{translate("ui.entry.speed", $uiLanguage)}</span><div class="unit-field"><input class:ramModified={!!metadata[SENSORLESS_ENTRY_SPEED] && $modifiedParameterIds.has(metadata[SENSORLESS_ENTRY_SPEED].id)} class:dirty={dirty(SENSORLESS_ENTRY_SPEED)} value={drafts[SENSORLESS_ENTRY_SPEED] ?? ""} disabled={locked(SENSORLESS_ENTRY_SPEED)} oninput={(event) => edits.edit(SENSORLESS_ENTRY_SPEED, event.currentTarget.value)} onkeydown={(event) => parameterKeydown(event, SENSORLESS_ENTRY_SPEED)} onblur={() => resetDraft(SENSORLESS_ENTRY_SPEED)} /><em>rad/s</em></div></label><small class="motion-speed-conversion">{speedRpm(SENSORLESS_ENTRY_SPEED)}</small></div>
           {/if}
         {:else if activeMode === "torque"}
 <label class="motion-field"><span>{translate("ui.target.torque", $uiLanguage)}</span><div class="unit-field"><input class:ramModified={!!metadata[TARGET_TORQUE] && $modifiedParameterIds.has(metadata[TARGET_TORQUE].id)} class:dirty={dirty(TARGET_TORQUE)} value={drafts[TARGET_TORQUE] ?? ""} disabled={locked(TARGET_TORQUE)} oninput={(event) => edits.edit(TARGET_TORQUE, event.currentTarget.value)} onkeydown={(event) => parameterKeydown(event, TARGET_TORQUE)} onblur={() => resetDraft(TARGET_TORQUE)} /><em>N·m</em></div></label>

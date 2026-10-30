@@ -33,6 +33,7 @@ export type CommissioningCapabilities = {
   identificationJb: boolean;
   identificationApply: boolean;
   phaseSearch: boolean;
+  encoderCalibration: boolean;
   homing: boolean;
   positionSetZero: boolean;
   protectionClear: boolean;

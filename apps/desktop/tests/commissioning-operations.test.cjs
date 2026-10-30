@@ -175,22 +175,24 @@ test("Motor rejected finite Action completes with failure, not an Apply candidat
 
 function encoderHarness(){
   const page=source("encoder/EncoderPage.svelte");
-  const functions=["handleKey","phaseSearchAvailable","hasPendingEdits","startPhaseSearch","handleActionCompleted"];
+  const functions=["handleKey","phaseSearchAvailable","calibrationAvailable","encoderBusy","hasPendingEdits","startPhaseSearch","startEncoderCalibration","handleActionCompleted"];
   const actions=[], errors=[];
-  let phaseHandle={txn:7,actionId:0x1002},reject,phaseResponder=()=>phaseHandle;
+  let phaseHandle={txn:7,actionId:0x1402},reject,phaseResponder=()=>phaseHandle,calResponder=()=>({txn:9,actionId:0x1401});
   const context=vm.createContext({
-    connection:{commissioning:{phaseSearch:true}},
+    connection:{commissioning:{phaseSearch:true,encoderCalibration:true}},
+    calibrationState:"idle",calibrationMessage:"",pendingCalibrationHandle:null,earlyCalibrationCompletion:undefined,calibrationRequestGeneration:0,
     phaseState:"idle",phaseMessage:"",pendingPhaseHandle:null,earlyPhaseCompletion:undefined,phaseRequestGeneration:0,
     $edits:{dirty:new Set()},writing:new Set(),
     homingState:"idle",homingMessage:"",pendingHomingHandle:null,earlyHomingCompletion:undefined,homingRequestGeneration:0,
     onError:(error)=>errors.push(String(error)),
+    startEncoderCalibrationAction:async()=>{actions.push("encoder_calibration_start");if(reject)throw reject;return calResponder();},
     startPhaseSearchAction:async()=>{actions.push("phase_search_start");if(reject)throw reject;return phaseResponder();},
   });
   vm.runInContext(compile(functions.map(n=>extract(page,n)).join("\n")),context);
   const get=x=>vm.runInContext(x,context);
   return {actions,errors,get,start:()=>get("startPhaseSearch()"),
     complete:evt=>{context.completed=evt;return get("handleActionCompleted(completed)")},
-    setReject:e=>reject=e,setPhaseResponder:fn=>phaseResponder=fn};
+    setReject:e=>reject=e,setPhaseResponder:fn=>phaseResponder=fn,setCalResponder:fn=>calResponder=fn};
 }
 test("Encoder Phase Search cannot start with an uncommitted search current",async()=>{
   const h=encoderHarness();
@@ -207,15 +209,15 @@ test("Encoder Phase Search: start -> Running -> matching ACTION_COMPLETE -> Succ
   await h.start();
   assert.deepEqual(h.actions,["phase_search_start"]);
   assert.equal(h.get("phaseState"),"running");
-  h.complete({txn:7,actionId:0x1002,operation:"encoder.phaseSearch",status:"Ok",ok:true});
+  h.complete({txn:7,actionId:0x1402,operation:"encoder.phaseSearch",status:"Ok",ok:true});
   assert.equal(h.get("phaseState"),"success");
 });
 test("Encoder ignores stale same-operation completion from a different transaction",async()=>{
   const h=encoderHarness();
   await h.start();
-  h.complete({txn:8,actionId:0x1002,operation:"encoder.phaseSearch",status:"Ok",ok:true});
+  h.complete({txn:8,actionId:0x1402,operation:"encoder.phaseSearch",status:"Ok",ok:true});
   assert.equal(h.get("phaseState"),"running");
-  h.complete({txn:7,actionId:0x1002,operation:"encoder.phaseSearch",status:"Ok",ok:true});
+  h.complete({txn:7,actionId:0x1402,operation:"encoder.phaseSearch",status:"Ok",ok:true});
   assert.equal(h.get("phaseState"),"success");
 });
 test("Encoder correlates a completion that arrives before the start response",async()=>{
@@ -223,12 +225,12 @@ test("Encoder correlates a completion that arrives before the start response",as
   let resolveStart;
   h.setPhaseResponder(()=>new Promise(resolve=>{resolveStart=resolve;}));
   const start=h.start();
-  h.complete({txn:17,actionId:0x1002,operation:"encoder.phaseSearch",status:"Ok",ok:true});
+  h.complete({txn:17,actionId:0x1402,operation:"encoder.phaseSearch",status:"Ok",ok:true});
   assert.equal(h.get("phaseState"),"running");
-  resolveStart({txn:7,actionId:0x1002});
+  resolveStart({txn:7,actionId:0x1402});
   await start;
   assert.equal(h.get("phaseState"),"running");
-  h.complete({txn:7,actionId:0x1002,operation:"encoder.phaseSearch",status:"Ok",ok:true});
+  h.complete({txn:7,actionId:0x1402,operation:"encoder.phaseSearch",status:"Ok",ok:true});
   assert.equal(h.get("phaseState"),"success");
 });
 test("Encoder ignores a start reply after the operation was cancelled",async()=>{
@@ -237,7 +239,7 @@ test("Encoder ignores a start reply after the operation was cancelled",async()=>
   h.setPhaseResponder(()=>new Promise(resolve=>{resolveStart=resolve;}));
   const start=h.start();
   h.get('++phaseRequestGeneration; phaseState="stopped"; pendingPhaseHandle=null; earlyPhaseCompletion=undefined');
-  resolveStart({txn:7,actionId:0x1002});
+  resolveStart({txn:7,actionId:0x1402});
   await start;
   assert.equal(h.get("phaseState"),"stopped");
   assert.equal(h.get("pendingPhaseHandle"),null);
@@ -264,7 +266,7 @@ test("Motor treats successful firmware completion with failed Parameter readback
 test("Encoder does not claim calibration success when Action readback failed",async()=>{
   const h=encoderHarness();
   await h.start();
-  h.complete({txn:7,actionId:0x1002,operation:"encoder.phaseSearch",status:"Ok",ok:true,readbackError:"parameter readback lost"});
+  h.complete({txn:7,actionId:0x1402,operation:"encoder.phaseSearch",status:"Ok",ok:true,readbackError:"parameter readback lost"});
   assert.equal(h.get("phaseState"),"unverified");
   assert.match(h.get("phaseMessage"),/readback lost/);
 });
@@ -369,4 +371,49 @@ test("accepted Motor Stop with failed Parameter refresh reports ambiguous UI sta
   vm.runInContext(compile(source("actions/api.ts")),ctx);
   await assert.rejects(ctx.exports.stopMotor(),/Device accepted the command, but Parameter readback failed/);
   assert.deepEqual(calls,["motor_stop"]);
+});
+
+
+test("Encoder calibration excludes phase search until its matching completion",async()=>{
+  const h=encoderHarness();
+  await h.get("startEncoderCalibration()");
+  assert.equal(h.get("calibrationState"),"running");
+  await h.start();
+  assert.deepEqual(h.actions,["encoder_calibration_start"]);
+  h.complete({txn:8,actionId:0x1401,operation:"encoder.calibration",status:"Ok",ok:true});
+  assert.equal(h.get("calibrationState"),"running");
+  h.complete({txn:9,actionId:0x1401,operation:"encoder.calibration",status:"Ok",ok:true});
+  assert.equal(h.get("calibrationState"),"success");
+  await h.start();
+  assert.equal(h.get("phaseState"),"running");
+  await h.get("startEncoderCalibration()");
+  assert.deepEqual(h.actions,["encoder_calibration_start","phase_search_start"]);
+});
+
+test("Encoder calibration handles early completion, readback failure and rejection",async()=>{
+  const h=encoderHarness();
+  let resolve;
+  h.setCalResponder(()=>new Promise(done=>{resolve=done;}));
+  const starting=h.get("startEncoderCalibration()");
+  h.complete({txn:9,actionId:0x1401,operation:"encoder.calibration",status:"Ok",ok:true,readbackError:"read failed"});
+  resolve({txn:9,actionId:0x1401});await starting;
+  assert.equal(h.get("calibrationState"),"unverified");
+  h.setReject(new Error("Complete phase search first"));
+  await h.get("startEncoderCalibration()");
+  assert.equal(h.get("calibrationState"),"failed");
+  assert.match(h.get("calibrationMessage"),/Complete phase search/);
+});
+
+test("Encoder calibration ignores a start reply after Stop and blocks dirty settings",async()=>{
+  const h=encoderHarness();
+  h.get('$edits.dirty.add("PARAM_PHASE_I_SEARCH")');
+  await h.get("startEncoderCalibration()");assert.deepEqual(h.actions,[]);
+  h.get('$edits.dirty.clear()');
+  let resolve;
+  h.setCalResponder(()=>new Promise(done=>{resolve=done;}));
+  const starting=h.get("startEncoderCalibration()");
+  h.get('++calibrationRequestGeneration;calibrationState="stopped";pendingCalibrationHandle=null');
+  resolve({txn:9,actionId:0x1401});await starting;
+  h.complete({txn:9,actionId:0x1401,operation:"encoder.calibration",status:"ErrConfig",ok:false});
+  assert.equal(h.get("calibrationState"),"stopped");
 });

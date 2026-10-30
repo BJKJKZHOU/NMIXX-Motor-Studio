@@ -28,13 +28,12 @@
   // Motor state is not a Plot signal; runtime Current/Speed/Position/Vbus come
   // from the connection-owned 1 kHz baseline acquisition instead.
   const POLLED_SYMBOLS = ["PARAM_MOTOR_STATE", "PARAM_ENCODER_PROTOCOL", "PARAM_ENCODER_READY", "PARAM_ENCODER_VALID", "PARAM_ENCODER_FAULT"] as const;
-  const DEFAULT_SCHEMA_PATH = "../../../AxDr_L_Motor/build/host/axdr-host-schema.toml";
   const SCHEMA_PATH_STORAGE_KEY = "nmixx.connection.hostSchemaPath";
   const globalParameters = selectParameters(GLOBAL_SYMBOLS);
   $: motorState = motorStateFromParameter($globalParameters.metadata.PARAM_MOTOR_STATE, $globalParameters.values.PARAM_MOTOR_STATE);
   $: currentIq = $runtimeTelemetry.currentIq ?? null;
   $: speedWm = $runtimeTelemetry.speedWm ?? null;
-  $: positionText = runtimePosition($runtimeTelemetry.positionTurns ?? null);
+  $: positionDisplay = runtimePosition($runtimeTelemetry.positionTurns ?? null);
   $: vbus = $runtimeTelemetry.vbus ?? null;
   $: activeProblems = $problemSnapshot.active;
   $: topProblem = activeProblems[0];
@@ -42,7 +41,7 @@
   let activeControlLoop: ControlLoopPage = "current";
   let controlArchitectureExpanded = true;
   let connectionPort = "";
-  let connectionSchemaPath = DEFAULT_SCHEMA_PATH;
+  let connectionSchemaPath = "";
   let connection: ConnectionInfo | undefined;
   let connectionReady = false;
   $: enableStatus = motorEnableStatus(motorState, connectionReady);
@@ -120,13 +119,13 @@
     }
   }
   function pageTitle(page: Page): MessageKey { return [...workflowPages, ...toolPages].find((item) => item.id === page)?.titleKey ?? "ui.connection"; }
-  function runtimePosition(totalTurns: number | null): string {
-    if (totalTurns === null || !Number.isFinite(totalTurns)) return "—";
+  function runtimePosition(totalTurns: number | null): { turn: string; theta: string } {
+    if (totalTurns === null || !Number.isFinite(totalTurns)) return { turn: "—", theta: "—" };
     let turn = Math.floor(totalTurns);
     let theta = (totalTurns - turn) * Math.PI * 2;
     if (theta >= Math.PI * 2 - 1e-6) { turn += 1; theta = 0; }
     if (Object.is(turn, -0)) turn = 0;
-    return `${turn} turn + ${theta.toFixed(3)} rad`;
+    return { turn: String(turn), theta: theta.toFixed(3) };
   }
   async function refreshAllParameters() {
     if (!connectionReady || readingParameters) return;
@@ -177,7 +176,7 @@
     try {
       const storedPath = localStorage.getItem(SCHEMA_PATH_STORAGE_KEY);
       if (storedPath?.trim()) connectionSchemaPath = storedPath;
-    } catch { /* Use the development default when storage is unavailable. */ }
+    } catch { /* The Connection page can discover the local firmware schema. */ }
     const stopStatus = pollParameters(POLLED_SYMBOLS, 500, setError);
     const stopRuntime = startRuntimeTelemetryTracking(() => !!readyConnection);
     const stopAutomation = startAutomationTracking(() => !!readyConnection);
@@ -271,7 +270,12 @@
 <footer class="statusbar"><button class="language-toggle" aria-label={languageSwitchTitle($uiLanguage)}
   title={languageSwitchTitle($uiLanguage)}
   onclick={() => cycleUiLanguage($uiLanguage)}>{languageBadge($uiLanguage)}</button><div class="connection-status"><span class:connected={!!connection} class="status-dot"></span>{connection ? connectionReady ? "AxDr_L" : localize(connectionInitializing ? "Initializing…" : "Initialization incomplete", $uiLanguage) : translate("ui.disconnected", $uiLanguage)}</div><div class="status-spacer"></div>
-  <div class="live-status"><span>{translate("ui.current", $uiLanguage)} {currentIq === null ? "—" : `${currentIq.toFixed(3)} A`}</span><span>{translate("ui.speed", $uiLanguage)} {speedWm === null ? "—" : `${speedWm.toFixed(3)} rad/s`}</span><span>{translate("ui.position", $uiLanguage)} {positionText}</span><span>Vbus {vbus === null ? "—" : `${vbus.toFixed(2)} V`}</span></div>
+  <div class="live-status">
+    <span class="live-status-item"><span>{translate("ui.current", $uiLanguage)}</span> <span class="live-value current-value" title={currentIq === null ? "—" : `${currentIq.toFixed(3)} A`}>{currentIq === null ? "—" : currentIq.toFixed(3)}</span> <span>A</span></span>
+    <span class="live-status-item"><span>{translate("ui.speed", $uiLanguage)}</span> <span class="live-value speed-value" title={speedWm === null ? "—" : `${speedWm.toFixed(3)} rad/s`}>{speedWm === null ? "—" : speedWm.toFixed(3)}</span> <span>rad/s</span></span>
+    <span class="live-status-item"><span>{translate("ui.position", $uiLanguage)}</span> <span class="live-value turn-value" title={`${positionDisplay.turn} turn`}>{positionDisplay.turn}</span> <span>turn +</span> <span class="live-value angle-value">{positionDisplay.theta}</span> <span>rad</span></span>
+    <span class="live-status-item"><span>Vbus</span> <span class="live-value voltage-value" title={vbus === null ? "—" : `${vbus.toFixed(2)} V`}>{vbus === null ? "—" : vbus.toFixed(2)}</span> <span>V</span></span>
+  </div>
 </footer></div>
 
 <style>
@@ -313,6 +317,15 @@
   .control-navigation-children button { height: 31px; padding: 0 12px 0 37px; font-size: 12px; color: var(--vscode-descriptionForeground); }
   .control-navigation-children button.active { color: var(--vscode-list-activeSelectionForeground); background: var(--vscode-list-activeSelectionBackground); font-weight: 600; }
   .control-domain-page { min-width: 0; min-height: 0; display: grid; }
-  .connection-status { display: inline-flex; align-items: center; gap: 6px; }
-  .live-status { display: flex; align-items: center; justify-content: flex-end; gap: 18px; white-space: nowrap; text-align: right; }
+  .connection-status { display: inline-flex; align-items: center; gap: 6px; min-width: 0; white-space: nowrap; overflow: hidden; }
+  .live-status { display: flex; flex: 0 0 auto; align-items: center; gap: 18px; white-space: nowrap; }
+  .live-status-item { display: inline-flex; flex: 0 0 auto; align-items: center; gap: 4px; }
+  /* Reserve sign/integer digits independently of labels and units. Monospace
+     keeps decimal points stationary as values refresh, including across zero. */
+  .live-value { flex: 0 0 auto; font-family: ui-monospace, "Cascadia Mono", "DejaVu Sans Mono", monospace; font-variant-numeric: tabular-nums; text-align: right; overflow: hidden; text-overflow: ellipsis; }
+  .current-value { width: 10ch; }
+  .speed-value { width: 12ch; }
+  .turn-value { width: 11ch; }
+  .angle-value { width: 5ch; }
+  .voltage-value { width: 8ch; }
 </style>

@@ -148,8 +148,11 @@ test("Phase Search motor-state orchestration stays inside MotorActionService", (
   const phase = motorActions.slice(start, end);
   assert.match(phase, /MOTOR_STATE/);
   assert.match(phase, /MOTOR_DISABLE/);
-  assert.match(phase, /MOTOR_ENABLE/);
-  assert.match(phase, /PHASE_SEARCH_MODE/);
+  assert.doesNotMatch(phase, /MOTOR_ENABLE/);
+  assert.doesNotMatch(phase, /MOTOR_RUN/);
+  assert.match(phase, /ENC_PHASE_START/);
+  assert.match(phase, /ENC_CAL_START/);
+  assert.match(phase, /ENCODER_MODE/);
   assert.match(phase, /current_state == running/);
   assert.doesNotMatch(source("encoder/EncoderPage.svelte"), /disableMotor|enableMotor|PARAM_MOTOR_MODE/);
 });
@@ -293,7 +296,7 @@ test("Control Tuning delegates tabs and keyboard/ARIA semantics to VSCode Elemen
   const sourceText = source("control/ControlTuningPage.svelte");
   assert.match(sourceText, /<vscode-tabs class="waveform-tabs"/);
   assert.match(sourceText, /onvsc-tabs-select=/);
-  assert.equal((sourceText.match(/<vscode-tab-header>/g) ?? []).length, 3);
-  assert.equal((sourceText.match(/<vscode-tab-panel>/g) ?? []).length, 3);
+  assert.equal((sourceText.match(/<vscode-tab-header>/g) ?? []).length, 2);
+  assert.equal((sourceText.match(/<vscode-tab-panel>/g) ?? []).length, 2);
   assert.doesNotMatch(sourceText, /class:active=\{waveformTab ===/);
 });

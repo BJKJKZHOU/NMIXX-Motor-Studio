@@ -168,8 +168,11 @@ The Motor page displays this behavior and possible motor rotation as an
 informational note, not an interactive modal. Blocked preflight appears as
 "Prerequisites not met" with reasons, separately from an Action that actually
 started and failed. The global Stop control remains the way to interrupt an
-operation. Identification completion does **not** automatically disable the
-motor, and Apply remains a separate user action. Automation and CLI may still
+operation. After an identification completes (success or failure), the Application
+automatically disables the motor and verifies DISABLED before reporting completion.
+It retains IDENT mode and successful results; Apply remains a separate user action
+and works while disabled. Disable failures are reported instead of successful
+workflow completion. Automation and CLI may still
 use the explicit allowEnable option to constrain their own scripts.
 
 ## Global motor controls

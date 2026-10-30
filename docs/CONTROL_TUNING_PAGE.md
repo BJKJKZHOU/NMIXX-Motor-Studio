@@ -83,11 +83,10 @@ The left side is the experiment waveform area. The lower-left area defines the m
 
 The page skeleton is stable. Waveform-related configuration must remain inside the existing Experiment Waveform panel; it must not move Motion Command or the right-side tuning parameter column.
 
-Inside the Experiment Waveform panel, three browser-style sub-tabs share the same bounded content area:
+Inside the Experiment Waveform panel, two browser-style sub-tabs share the same bounded content area:
 
-- **Waveform** — the captured multi-channel time plot;
-- **Channels** — capture channel/rate selection;
-- **Scale** — per-channel display multiplier.
+- **Waveform** — the captured multi-channel time plot with inline Y controls;
+- **Channels** — capture channel/rate selection.
 
 Switching tabs replaces the waveform content area rather than expanding an extra settings panel above the waveform. This preserves the existing page proportions.
 
@@ -346,9 +345,41 @@ Control Tuning uses the same Scope/ECharts waveform core as the general Scope pa
 
 The compact tuning panel keeps its own tab layout:
 
-- **Waveform** — the shared Scope waveform view;
-- **Channels** — experiment capture channel/rate selection;
-- **Scale** — compact display controls for the selected channels.
+- **Waveform** — the shared Scope waveform view with inline Y controls;
+- **Channels** — experiment capture channel/rate selection.
+
+All tuning curves share one numeric Y axis. The inline channel selector chooses
+which curve's display multiplier to edit; it does not select a separate axis.
+Displayed Y = plotted value × channel multiplier (default 1). For example, speed
+500 rad/s at ×0.01 appears at Y=5 alongside current 5 A at ×1. Legend labels show
+non-unit multipliers, while hover readouts show values before the display multiplier.
+
+Position curves show displacement for this experiment: plotted position = absolute
+position − actual position read before pre-capture. Reference and feedback share
+this origin, preserving their tracking error; labels are prefixed with Δ and hover
+readouts show displacement in turns. Position channels come from the current
+HostSchema `position` type, not hardcoded IDs or labels. Each successful new capture
+gets a new origin; zooming, panning and refreshing retain it, even when the visible
+window excludes the start. Stored capture data retain the absolute position.
+
+Y min/max apply to all curves and do not reset their multipliers. The initial
+common range fits all plotted values (including relative-position envelopes). Editing a
+multiplier or bound freezes the common range across snapshot refreshes and tab
+switches, so autoscaling cannot cancel the multiplier's visual effect. There is
+no center-offset control or separate Scale tab. Display edits do not change raw
+capture values, write Parameters or change experiment capture selection.
+
+The tuning X axis starts at capture time 0. Before a position experiment moves,
+the host freezes the full planned display duration from the current trajectory
+preview (distance, effective speed limit, acceleration, deceleration and profile),
+plus 0.5 s pre-capture, 0.5 s position settling and 0.75 s post-capture. Repeat uses
+the next A/B endpoint without advancing repeat state. Samples fill this fixed
+extent; refreshing reads the capture from its start rather than a moving tail.
+The planned duration is display-only: firmware reference arrival still determines
+Stop, and the recording budget remains independent. Overruns extend the axis in
+steps instead of clipping samples. Speed/torque have no predetermined stop time
+and start with a 3 s extent that grows as needed. User zoom survives refreshes;
+double-click restores the full experiment, and a new capture resets X to its plan.
 
 Generic plotting behavior remains shared with Scope:
 

@@ -17,9 +17,12 @@
   export let snapshot: ScopeSnapshot | undefined;
   export let verticalScale = new Map<number, number>();
   export let verticalOffset = new Map<number, number>();
+  export let sharedYRange: [number, number] | undefined = undefined;
+  export let valueMultipliers = new Map<number, number>();
   export let activeChannelId: number | undefined;
   export let viewRange: [number, number] = [-0.5, 0];
-  export let valueMultiplier = new Map<number, number>();
+  // 调参的完整计划时间可能大于已采样时间；不能用样本尾部强制裁掉尚未发生的轨迹区间。
+  export let timeRange: [number, number] | undefined = undefined;
   export let showLegend = true;
   export let onViewRangeChange: (range: [number, number]) => void = () => undefined;
   export let onDoubleClick: () => void = () => undefined;
@@ -43,15 +46,12 @@
     verticalScale;
     verticalOffset;
     activeChannelId;
+    sharedYRange;
+    valueMultipliers;
     viewRange;
-    valueMultiplier;
+    timeRange;
     showLegend;
     updateChart();
-  }
-
-  function multiplier(id: number): number {
-    const value = valueMultiplier.get(id);
-    return Number.isFinite(value) && (value ?? 0) > 0 ? value! : 1;
   }
 
   function defaultScale(channel: ScopeDisplayChannel): number {
@@ -74,10 +74,21 @@
 
   function makeOption(): EChartsOption {
     const visibleAxisChannel = channels.find((channel) => channel.id === activeChannelId) ?? channels[0];
-    const axes = channels.map((channel) => {
-      const gain = multiplier(channel.id);
-      const perDiv = (verticalScale.get(channel.id) ?? defaultScale(channel)) * gain;
-      const center = (verticalOffset.get(channel.id) ?? 0) * gain;
+    const axes = sharedYRange ? [{
+      type: "value" as const,
+      name: "Y",
+      show: true,
+      position: "left" as const,
+      min: sharedYRange[0],
+      max: sharedYRange[1],
+      interval: (sharedYRange[1] - sharedYRange[0]) / verticalDivisions,
+      axisLine: { show: true, onZero: false, lineStyle: { color: "#9a9a9a" } },
+      axisTick: { show: true },
+      axisLabel: { color: "#9a9a9a", formatter: (value: number) => String(Number(value.toPrecision(6))) },
+      splitLine: { show: true, lineStyle: { color: "#303030" } },
+    }] : channels.map((channel) => {
+      const perDiv = verticalScale.get(channel.id) ?? defaultScale(channel);
+      const center = verticalOffset.get(channel.id) ?? 0;
       const half = perDiv * verticalDivisions / 2;
       const visible = channel.id === visibleAxisChannel?.id;
       const color = traceColor(channel);
@@ -89,9 +100,9 @@
         min: center - half,
         max: center + half,
         interval: perDiv,
-        axisLine: { show: visible, lineStyle: { color } },
+        axisLine: { show: visible, onZero: false, lineStyle: { color } },
         axisTick: { show: visible },
-        axisLabel: { show: visible, color },
+        axisLabel: { show: visible, color, formatter: (value: number) => String(Number(value.toPrecision(6))) },
         nameTextStyle: { color },
         splitLine: { show: visible, lineStyle: { color: "#303030" } },
       };
@@ -99,12 +110,18 @@
 
     const series = channels.map((channel, index) => {
       const source = snapshot?.series.find((item) => item.id === channel.id);
-      const gain = multiplier(channel.id);
       const color = traceColor(channel);
+      const multiplier = sharedYRange ? valueMultipliers.get(channel.id) ?? 1 : 1;
       return {
-        name: channel.label,
+        name: multiplier === 1 ? channel.label : `${channel.label} ×${multiplier}`,
         type: "line" as const,
-        yAxisIndex: index,
+        yAxisIndex: sharedYRange ? 0 : index,
+        // The tooltip reads the raw engineering value, while Y renders the scaled value.
+        ...(sharedYRange ? {
+          dimensions: ["time", "display", "raw"],
+          encode: { x: 0, y: 1, tooltip: [2] },
+          tooltip: { valueFormatter: (value: unknown) => `${value}${channel.unit ? ` ${channel.unit}` : ""}` },
+        } : {}),
         showSymbol: false,
         symbol: "none",
         animation: false,
@@ -112,7 +129,8 @@
         itemStyle: { color },
         data: (source?.times ?? []).map((time, pointIndex) => [
           time,
-          (source?.values[pointIndex] ?? 0) * gain,
+          (source?.values[pointIndex] ?? 0) * multiplier,
+          ...(sharedYRange ? [source?.values[pointIndex] ?? 0] : []),
         ]),
       };
     });
@@ -131,8 +149,8 @@
       },
       xAxis: {
         type: "value",
-        min: -availableSeconds(),
-        max: 0,
+        min: timeRange?.[0] ?? -availableSeconds(),
+        max: timeRange?.[1] ?? 0,
         axisLine: { lineStyle: { color: "#6e6e6e" } },
         axisLabel: { color: "#9a9a9a", formatter: (value: number) => `${value.toFixed(3)} s` },
         splitLine: { lineStyle: { color: "#303030" } },
@@ -171,8 +189,9 @@
     const payload = event?.batch?.[0] ?? event ?? {};
     const option = chart?.getOption() as any;
     const zoom = option?.dataZoom?.[0] ?? {};
-    const min = -availableSeconds();
-    const width = -min;
+    const min = timeRange?.[0] ?? -availableSeconds();
+    const max = timeRange?.[1] ?? 0;
+    const width = max - min;
     const startValue = Number(payload.startValue ?? zoom.startValue);
     const endValue = Number(payload.endValue ?? zoom.endValue);
     if (Number.isFinite(startValue) && Number.isFinite(endValue)) {

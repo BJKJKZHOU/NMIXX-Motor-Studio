@@ -101,6 +101,10 @@ enum MotorCommand {
         #[arg(long, default_value_t = 60)]
         timeout: u64,
     },
+    EncoderCalibration {
+        #[arg(long, default_value_t = 120)]
+        timeout: u64,
+    },
     PhaseSearch {
         #[arg(long, default_value_t = 30)]
         timeout: u64,
@@ -379,6 +383,12 @@ fn run() -> Result<(), Box<dyn Error>> {
                     println!("accepted txn={} motor stop", handle.txn.get());
                     let status = app.motor_wait_stopped(Duration::from_secs(timeout))?;
                     println!("stopped state={}", status.motor_state);
+                }
+                MotorCommand::EncoderCalibration { timeout } => {
+                    let completion = app.action_completion_waiter()?;
+                    let handle = app.encoder_calibration_start()?;
+                    println!("accepted txn={} encoder calibration", handle.txn.get());
+                    wait_for_action(&completion, handle, "encoder calibration", timeout)?;
                 }
                 MotorCommand::PhaseSearch { timeout } => {
                     let completion = app.action_completion_waiter()?;
@@ -663,11 +673,9 @@ fn parse_parameter_value(ty: ParameterType, text: &str) -> Result<ParameterValue
 fn print_schema_info(key: &str, path: &std::path::Path, schema: &HostSchema) {
     println!("key: {key}");
     println!("path: {}", path.display());
-    println!("schema_version: {}", schema.schema_version);
     println!("protocol: {}", schema.protocol);
     println!("source_repository: {}", schema.source.repository);
     println!("source_git_sha: {}", schema.source.git_sha);
-    println!("parameter_schema: {}", schema.source.parameter_schema);
     println!("parameters: {}", schema.parameters.len());
     println!("actions: {}", schema.actions.len());
 }

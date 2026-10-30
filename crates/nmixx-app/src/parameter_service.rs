@@ -576,13 +576,11 @@ mod write_reconcile_tests {
 
     fn schema() -> HostSchema {
         HostSchema::parse(r#"
-schema_version = 1
-protocol = "axdr-canfd-v1"
+protocol = "axdr-canfd"
 
 [source]
 repository = "fixture"
 git_sha = "abc"
-parameter_schema = 1
 
 [[parameters]]
 symbol = "PARAM_TEST"
@@ -597,13 +595,11 @@ description = "test"
     #[test]
     fn explicit_read_recovers_cache_after_stream_stops() {
         let schema = HostSchema::parse(r#"
-schema_version = 1
-protocol = "axdr-canfd-v1"
+protocol = "axdr-canfd"
 
 [source]
 repository = "fixture"
 git_sha = "abc"
-parameter_schema = 1
 
 [[parameters]]
 symbol = "PARAM_RUN_TEST"

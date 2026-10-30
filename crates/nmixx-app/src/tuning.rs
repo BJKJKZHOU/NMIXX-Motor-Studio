@@ -16,10 +16,15 @@ pub(super) struct TuningExperimentRuntime {
     pub(super) state: TuningExperimentState,
     pub(super) stop_requested: bool,
     pub(super) message: Option<String>,
+    // 调参只关心本次运动的位移；零点随记录保存，不能随实时窗口/缩放重新取样。
+    pub(super) position_origin_turns: Option<f64>,
+    // 显示计划随成功建立的记录冻结，不能随着实际位置接近目标而不断缩短 X 轴。
+    record_generation: u64,
+    planned_duration_seconds: Option<f64>,
 }
 impl Default for TuningExperimentRuntime {
     fn default() -> Self {
-        Self { generation: 0, state: TuningExperimentState::Idle, stop_requested: false, message: None }
+        Self { generation: 0, state: TuningExperimentState::Idle, stop_requested: false, message: None, position_origin_turns: None, record_generation: 0, planned_duration_seconds: None }
     }
 }
 
@@ -36,6 +41,14 @@ impl ApplicationSession {
     pub fn tuning_record_duration(&self) -> Result<Duration, ApplicationError> { self.with_scope(|source| source.recorded_duration(View::Tuning)) }
     pub fn tuning_record_window(&self, window: Duration, end_offset: Duration) -> Result<MixedScopeSnapshot, ApplicationError> {
         self.with_scope(|source| source.snapshot(View::Tuning, window, end_offset))
+    }
+    pub fn tuning_record_position_origin(&self) -> Result<Option<f64>, ApplicationError> {
+        let runtime = self.inner.tuning_experiment.lock().map_err(|_| ApplicationError::Poisoned)?;
+        Ok(runtime.position_origin_turns)
+    }
+    pub fn tuning_record_time_plan(&self) -> Result<(u64, Option<f64>), ApplicationError> {
+        let runtime = self.inner.tuning_experiment.lock().map_err(|_| ApplicationError::Poisoned)?;
+        Ok((runtime.record_generation, runtime.planned_duration_seconds))
     }
     fn tuning_record_stop(&self) -> Result<(), ApplicationError> {
         self.with_scope(|source| source.stop(View::Tuning, StreamState::Stopped))
@@ -88,6 +101,26 @@ impl ApplicationSession {
             )).map(|meta| meta.id).collect::<Vec<_>>();
             self.require_refresh(self.parameter_read_many(&ids)?)?;
             let mode = self.read_motion_mode()?;
+            // 位置反馈和参考必须共用实际起点，分别归零会抹掉初始跟踪误差。
+            // 在 ENABLED、预采集开始前读取一次；与选中的显示通道无关，只有参考位置也能正确画位移。
+            let has_position = selections.iter().any(|selection| self.inner.schema.parameters.iter()
+                .any(|meta| meta.id == selection.id && meta.type_name == "position"));
+            let position_origin_turns = if has_position || mode == MotionMode::Position {
+                Some(self.read_position_turns("PARAM_RUN_POSITION")?)
+            } else { None };
+            // 复用与当前固件梯形/S 曲线一致的预览计算，并计入前后采集及到位稳定时间。
+            // 此时间只用于展开横轴，绝不能替代后面的固件参考到位判断或限制采集时长。
+            let planned_duration_seconds = if mode == MotionMode::Position {
+                let target = self.inner.motion.preview_repeat_target().map_err(ApplicationError::Motion)?;
+                self.inner.motion.preview_with_parameters(&self.inner.parameters, None, position_origin_turns, target)
+                    .ok().and_then(|preview| preview.times.last().copied())
+                    .filter(|seconds| seconds.is_finite() && *seconds > 0.0)
+                    .map(|seconds| seconds + TUNING_PRE_CAPTURE.as_secs_f64()
+                        + TUNING_POSITION_SETTLE.as_secs_f64() + TUNING_POST_CAPTURE.as_secs_f64())
+            } else {
+                // 速度/转矩由用户决定何时停止，没有可由运动参数推导的有限总时长。
+                None
+            };
             // Execution must use the firmware trajectory reference, not a
             // preview duration that changes with the selected Motion profile.
             let capture_duration = self.tuning_capture_duration(selections)?;
@@ -99,6 +132,13 @@ impl ApplicationSession {
             self.with_scope(|source| source.configure(View::Tuning, selections, capture_duration))?;
             capture_owned = true;
             self.with_scope(|source| source.capture(View::Tuning, capture_duration))?;
+            // 只有新记录建立成功才替换零点；启动校验失败时，旧波形仍须使用旧零点。
+            {
+                let mut runtime = self.inner.tuning_experiment.lock().map_err(|_| ApplicationError::Poisoned)?;
+                runtime.position_origin_turns = position_origin_turns;
+                runtime.record_generation = generation;
+                runtime.planned_duration_seconds = planned_duration_seconds;
+            }
             let mut worker = self.inner.tuning_worker.lock().map_err(|_| ApplicationError::Poisoned)?;
             // A previous worker reaches a terminal state only after its cleanup.
             if let Some(old) = worker.take() {

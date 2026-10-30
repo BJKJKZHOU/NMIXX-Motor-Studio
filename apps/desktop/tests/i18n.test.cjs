@@ -172,7 +172,7 @@ test("gain source selection is locale-free and phase/experiment placeholders use
 test("Tuning, commissioning and Automation copy uses domain keys instead of numbered or hardcoded labels",()=>{
   const en=english.enMessages, zh=chinese.zhCNMessages;
   assert.equal(Object.hasOwn(en,"ui.reset.1"),false);
-  assert.equal(zh["tuning.scale.reset.multiplier"],"恢复 ×1");
+  assert.equal(zh["tuning.waveform.zoom"],"比例 ×");
   assert.equal(zh["automation.task.exit.code.label"],"退出码");
   assert.match(source("control/ControlTuningPage.svelte"),/translate\("ui\.channels", \$uiLanguage\)/);
   assert.match(source("control/ControlTuningPage.svelte"),/translate\("ui\.loss", \$uiLanguage\)/);

@@ -13,6 +13,15 @@ The source YAML also contains firmware-only fields such as `binding`, `getter`, 
 
 Firmware exports a deterministic Host-facing TOML manifest from `parameter.yaml`.
 
+The current AxDr_L_Motor firmware is authoritative. NMIXX follows its exporter,
+protocol, Parameter definitions and Action semantics as they evolve. Adapting to
+the current firmware is the primary implementation path; compatibility with older
+firmware is a separate concern and must not constrain or redefine that contract.
+
+The current manifest exports `protocol = "axdr-canfd"`, source repository/Git SHA,
+Parameters and Actions. It does not export `schema_version` or
+`source.parameter_schema`; NMIXX neither requires nor synthesizes those fields.
+
 ```text
 Parameter/parameter.yaml
         |
@@ -68,4 +77,6 @@ NMIXX does not infer a separate public API name from C symbols. If a future exte
 - Schema files are readable and diff-friendly and may contain generation comments.
 - NMIXX can resolve metadata by ID, symbol or label where appropriate.
 - Future GUI forms, CLI presentation and external APIs can consume the same metadata while keeping identity and presentation separate.
-- Schema compatibility can later be checked using `schema_version`, protocol ID, source Git SHA and a content hash.
+- Contract validation follows fields actually exported by the current firmware.
+- Tests use the current export format; firmware changes require updating host
+  behavior and fixtures together, without editing generated manifests by hand.

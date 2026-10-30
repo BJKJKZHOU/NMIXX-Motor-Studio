@@ -54,6 +54,15 @@ The development executable in `target/debug` uses the configured Vite dev URL;
 launching that executable alone is not a self-contained desktop launch. A device
 and HostSchema are needed to connect to firmware, not to display the workbench.
 
+Connection discovers `AxDr_L_Motor/build/host/axdr-host-schema.toml` in a sibling
+firmware checkout using the working directory and executable location. The path
+shown in the form is absolute; a saved custom path is preserved. Use the folder
+button to select an exported TOML file when firmware lives elsewhere. The current
+firmware's `axdr-canfd` export is the HostSchema contract. The host follows the
+current firmware's fields, parameter definitions and action semantics; it does not
+invent schema version fields that the firmware does not export.
+Discovery and file selection do not connect to the device.
+
 Bare `cargo run` at the workspace root is ambiguous because the workspace contains
 multiple binaries. To run the CLI explicitly:
 

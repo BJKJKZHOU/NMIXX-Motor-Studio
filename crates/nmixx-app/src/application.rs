@@ -21,6 +21,13 @@ use acquisition::{SharedAcquisition, View};
 mod tuning;
 use tuning::TuningExperimentRuntime;
 
+#[cfg(test)]
+#[path = "identification_tests.rs"]
+mod identification_tests;
+#[cfg(test)]
+#[path = "encoder_tests.rs"]
+mod encoder_tests;
+
 use thiserror::Error;
 use crate::{
     ActionHandle, AxdrStatus, CommissioningCapabilities, ConfigServiceError, DevicePlotCapabilities, DeviceSession,
@@ -115,14 +122,31 @@ impl ApplicationSession {
         }), workflow_owner: None, workflow_cleanup: false };
         let weak = Arc::downgrade(&app.inner);
         thread::spawn(move || {
-            while let Ok(event) = events.recv() {
+            while let Ok(mut event) = events.recv() {
                 let Some(inner) = weak.upgrade() else { break; };
+                let mut completion_error = None;
                 match &event {
                     SessionEvent::ActionCompleted { handle, status } => {
+                        if identification_kind_for_action(&inner.schema, handle.action_id).is_some() {
+                            let app = Self { inner: inner.clone(), workflow_owner: None, workflow_cleanup: false };
+                            if let Err(error) = app.disable_after_identification() {
+                                completion_error = Some(SessionEvent::ActionCleanupFailed { handle: *handle,
+                                    message: format!("Identification completed ({status:?}), but automatic Disable failed: {error}") });
+                            }
+                        }
                         // Application owns readback, even with no page/CLI subscriber. Failed
                         // reads are retained as cache errors instead of reviving old values.
                         let _ = inner.parameters.refresh_all();
                         inner.problems.sync_from_parameters(&inner.parameters, &inner.schema);
+                        if *status == AxdrStatus::Ok {
+                            for (symbol, calibration) in [("ACTION_ENC_PHASE_START", false), ("ACTION_ENC_CAL_START", true)] {
+                                if inner.schema.action_by_key(symbol).is_some_and(|action| action.id == handle.action_id) {
+                                    if let Err(message) = verify_encoder_result(&inner, calibration) {
+                                        completion_error = Some(SessionEvent::ActionVerificationFailed { handle: *handle, message });
+                                    }
+                                }
+                            }
+                        }
                         if let Some(kind) = identification_kind_for_action(&inner.schema, handle.action_id) {
                             let candidate = (*status == AxdrStatus::Ok
                                 && identification_result_valid(&inner.schema, &inner.parameters, kind))
@@ -140,6 +164,9 @@ impl ApplicationSession {
                         }
                     }
                     _ => {}
+                }
+                if let Some(error) = completion_error {
+                    event = error;
                 }
                 // Scope consumes the raw stream directly from DeviceSession.
                 // Application subscribers only need actions and device events;
@@ -335,6 +362,18 @@ impl ApplicationSession {
     fn motor_actions(&self) -> MotorActionService {
         MotorActionService::from_shared(self.inner.session.clone(), self.inner.schema.clone(), self.inner.parameters.clone())
     }
+    fn disable_after_identification(&self) -> Result<(), ApplicationError> {
+        // Completion cleanup belongs to the Application, even without a page
+        // subscriber. Do not revoke an automation workflow or change IDENT mode:
+        // the completed result must remain eligible for explicit Apply.
+        let _command = self.inner.motor_gate.stop();
+        if self.is_closing() { return Err(SessionError::Closed.into()); }
+        self.motor_actions().disable()?;
+        if self.read_motor_state()? != MotorState::Disabled {
+            return Err(ApplicationError::Motion("motor did not enter DISABLED".into()));
+        }
+        Ok(())
+    }
     pub fn identification_start(&self, kind: IdentificationKind, allow_enable: bool) -> Result<IdentificationStart, ApplicationError> {
         let _workflow = self.workflow_permit()?;
         let ticket = self.inner.motor_gate.ticket();
@@ -428,6 +467,16 @@ impl ApplicationSession {
         let _ = self.refresh_motor_context();
         Ok(handle)
     }
+    pub fn encoder_calibration_start(&self) -> Result<ActionHandle, ApplicationError> {
+        let _workflow = self.workflow_permit()?;
+        let ticket = self.inner.motor_gate.ticket();
+        let _command = self.inner.motor_gate.start(ticket)
+            .map_err(|message| ApplicationError::Motion(message.to_owned()))?;
+        self.ensure_no_tuning()?;
+        let handle = self.motor_actions_at(ticket).encoder_calibration_start()?;
+        let _ = self.refresh_motor_context();
+        Ok(handle)
+    }
     pub fn is_same_session(&self, other: &Self) -> bool { Arc::ptr_eq(&self.inner, &other.inner) }
 
     pub fn disconnect(&self) -> Result<(), ApplicationError> {
@@ -492,7 +541,7 @@ impl ApplicationSession {
                 .map(f64::from)
         };
         self.inner.motion
-            .preview_with_parameters(&self.inner.parameters, None, current_position_turn)
+            .preview_with_parameters(&self.inner.parameters, None, current_position_turn, None)
             .map_err(ApplicationError::Motion)
     }
     pub fn motion_run(&self) -> Result<Option<ActionHandle>, ApplicationError> {
@@ -641,6 +690,27 @@ impl ApplicationSession {
     }
 }
 
+
+fn verify_encoder_result(inner: &ApplicationInner, calibration: bool) -> Result<(), String> {
+    let read = |symbol: &str| -> Result<u8, String> {
+        let meta = inner.schema.parameter_by_key(symbol).ok_or_else(|| format!("Missing {symbol}"))?;
+        match inner.parameters.cached(meta.id).map_err(|error| error.to_string())? {
+            Some(ParameterValue::U8(value)) => Ok(value),
+            _ => Err(format!("Encoder result is unverified: {symbol} is unavailable")),
+        }
+    };
+    let state = inner.schema.parameter_by_key("PARAM_MOTOR_STATE").ok_or("Missing motor state")?;
+    let mode = inner.schema.parameter_by_key("PARAM_MOTOR_MODE").ok_or("Missing motor mode")?;
+    if read(&state.symbol)? != state.enum_u8("DISABLED").map_err(|error| error.to_string())?
+        || read(&mode.symbol)? != mode.enum_u8("ENCODER_CAL").map_err(|error| error.to_string())? {
+        return Err("Encoder task finished without DISABLED / ENCODER_CAL readback".into());
+    }
+    let valid = read("PARAM_CAL_VALID")?;
+    if (calibration && valid != 2) || (!calibration && !matches!(valid, 1 | 2)) {
+        return Err("Encoder task finished without a valid saved calibration result".into());
+    }
+    Ok(())
+}
 
 fn identification_kind_for_action(schema: &HostSchema, action_id: u16) -> Option<IdentificationKind> {
     [

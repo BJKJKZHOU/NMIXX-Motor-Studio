@@ -28,6 +28,9 @@ const REQUEST_TIMEOUT: Duration = Duration::from_secs(2);
 #[derive(Debug, Clone)]
 pub enum SessionEvent {
     ActionCompleted { handle: ActionHandle, status: AxdrStatus },
+    /// Application cleanup failed after a finite device Action completed.
+    ActionCleanupFailed { handle: ActionHandle, message: String },
+    ActionVerificationFailed { handle: ActionHandle, message: String },
     DeviceEvent(CanFdFrame),
     FastData(CanFdFrame),
     NormalData(CanFdFrame),

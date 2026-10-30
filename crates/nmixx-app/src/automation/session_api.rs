@@ -194,11 +194,13 @@ impl AutomationApi for SessionWorkflowApi {
                 self.owned.lock().map_err(|_|"workflow lock poisoned")?.identified = None;
                 Ok(accepted(handle,true))
             }
-            "encoder.phase_search" => {
+            "encoder.phase_search" | "encoder.calibrate" => {
                 let timeout = seconds(&params,"timeoutSeconds",60.,0.05,300.)?;
                 let completion = self.app.action_completion_waiter().map_err(|e|e.to_string())?;
                 self.claim_motion(control)?;
-                let handle = self.app.phase_search_start().map_err(|e|e.to_string())?;
+                let handle = if method == "encoder.calibrate" {
+                    self.app.encoder_calibration_start()
+                } else { self.app.phase_search_start() }.map_err(|e|e.to_string())?;
                 self.wait_action(&completion,handle,timeout,control)?;
                 self.owned.lock().map_err(|_|"workflow lock poisoned")?.motor = false;
                 Ok(accepted(handle,true))

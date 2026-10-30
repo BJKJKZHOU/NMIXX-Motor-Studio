@@ -53,7 +53,7 @@ fn wait_value(parameters: &ParameterService, value: f32) {
     }
 }
 fn schema() -> HostSchema {
-    let mut text = String::from("schema_version=1\nprotocol=\"axdr-canfd-v1\"\n[source]\nrepository=\"test\"\ngit_sha=\"test\"\nparameter_schema=1\n");
+    let mut text = String::from("protocol=\"axdr-canfd\"\n[source]\nrepository=\"test\"\ngit_sha=\"test\"\n");
     for (id, symbol, ty) in [(4, "PARAM_ADC_VBUS", "f32"), (17, "PARAM_RUN_IQ", "f32"),
         (18, "PARAM_RUN_UD", "f32"), (1280, "PARAM_RUN_WM", "f32"),
         (1281, "PARAM_RUN_POSITION", "position")] {

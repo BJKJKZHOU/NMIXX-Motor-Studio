@@ -131,6 +131,13 @@ impl MotionService {
         Ok(Some((target, target_is_b)))
     }
 
+    pub(crate) fn preview_repeat_target(&self) -> Result<Option<f64>, String> {
+        if !self.get().repeat { return Ok(None); }
+        let runtime = self.repeat.lock().map_err(|_| "Motion repeat lock poisoned")?;
+        // 预估往返下一程的时长时只读 A/B；不能初始化或推进往返状态，否则会改变真正 Run 的方向。
+        Ok(if runtime.pending_target_is_b == Some(true) { runtime.endpoint_a } else { runtime.endpoint_b })
+    }
+
     pub(crate) fn repeat_pending_target(&self) -> Result<Option<f64>, String> {
         let runtime = self.repeat.lock().map_err(|_| "Motion repeat lock poisoned")?;
         let target = match runtime.pending_target_is_b {
@@ -167,6 +174,7 @@ impl MotionService {
         parameters: &ParameterService,
         effective_speed_limit: Option<f64>,
         current_position_turn_override: Option<f64>,
+        position_target_override: Option<f64>,
     ) -> Result<MotionPreview, String> {
         let config = self.get();
         validate_host_config(&config)?;
@@ -215,20 +223,26 @@ impl MotionService {
                 if max_speed <= 0.0 {
                     return Err("Position Max Speed must be positive before Run".to_owned());
                 }
-                let distance_turn = match config.position_command {
-                    PositionCommand::Incremental => config.incremental_delta_turn,
-                    PositionCommand::Absolute => {
-                        // The display preview may use the latest 1 kHz Plot
-                        // position from RuntimeTelemetry. Do not write that f32
-                        // projection back into the exact typed Position Parameter.
-                        // Execution-time Run still reads PARAM_RUN_POSITION from
-                        // the device before deriving an absolute/incremental target.
-                        let current = match current_position_turn_override {
-                            Some(value) if value.is_finite() => value,
-                            _ => position_to_turns(position("PARAM_RUN_POSITION")?),
-                        };
-                        let target = position_to_turns(position("PARAM_TARGET_POSITION")?);
-                        target - current
+                // 调参往返的下一程可能返回 A 点，不能用仍停留在 B 点的参数目标估计为零距离。
+                let distance_turn = if let Some(target) = position_target_override {
+                    target - current_position_turn_override
+                        .unwrap_or(position_to_turns(position("PARAM_RUN_POSITION")?))
+                } else {
+                    match config.position_command {
+                        PositionCommand::Incremental => config.incremental_delta_turn,
+                        PositionCommand::Absolute => {
+                            // The display preview may use the latest 1 kHz Plot
+                            // position from RuntimeTelemetry. Do not write that f32
+                            // projection back into the exact typed Position Parameter.
+                            // Execution-time Run still reads PARAM_RUN_POSITION from
+                            // the device before deriving an absolute/incremental target.
+                            let current = match current_position_turn_override {
+                                Some(value) if value.is_finite() => value,
+                                _ => position_to_turns(position("PARAM_RUN_POSITION")?),
+                            };
+                            let target = position_to_turns(position("PARAM_TARGET_POSITION")?);
+                            target - current
+                        }
                     }
                 };
                 Ok(position_preview(distance_turn, max_speed, acc, dec, limit, profile))
@@ -439,6 +453,23 @@ fn torque_preview(target: f64) -> MotionPreview {
 mod tests {
     use super::*;
     #[test]
+    fn preview_next_repeat_leg_does_not_advance_execution() {
+        let service = MotionService::default();
+        service.set(MotionConfig { repeat: true, incremental_delta_turn: 30.0, ..MotionConfig::default() }).unwrap();
+        assert_eq!(service.preview_repeat_target().unwrap(), None);
+        assert_eq!(service.repeat_target(4000.0, None).unwrap(), Some((4030.0, true)));
+        assert_eq!(service.preview_repeat_target().unwrap(), Some(4030.0));
+        service.repeat_mark_started(true).unwrap();
+        assert_eq!(service.preview_repeat_target().unwrap(), Some(4000.0));
+        assert_eq!(service.preview_repeat_target().unwrap(), Some(4000.0));
+        assert_eq!(service.repeat_target(4030.0, None).unwrap(), Some((4000.0, false)));
+        service.repeat_mark_started(false).unwrap();
+        assert_eq!(service.preview_repeat_target().unwrap(), Some(4030.0));
+        service.cancel_repeat_leg().unwrap();
+        assert_eq!(service.preview_repeat_target().unwrap(), None);
+    }
+
+    #[test]
     fn host_config_only_validates_incremental_delta() {
         let service = MotionService::default();
         let mut config = service.get();
@@ -487,13 +518,11 @@ mod tests {
     #[test]
     fn motion_mode_uses_schema_values_not_fixed_ordinals() {
         let schema = HostSchema::parse(r#"
-schema_version = 1
-protocol = "axdr-canfd-v1"
+protocol = "axdr-canfd"
 
 [source]
 repository = "fixture"
 git_sha = "abc"
-parameter_schema = 1
 
 [[parameters]]
 symbol = "PARAM_MOTOR_MODE"

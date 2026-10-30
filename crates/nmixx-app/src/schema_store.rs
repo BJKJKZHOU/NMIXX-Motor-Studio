@@ -203,12 +203,10 @@ mod tests {
     fn builds_stable_key_from_schema_source() {
         let schema = HostSchema::parse(
             r#"
-schema_version = 1
-protocol = "axdr-canfd-v1"
+protocol = "axdr-canfd"
 [source]
 repository = "AxDr_L_Motor"
 git_sha = "abc123"
-parameter_schema = 1
 "#,
         )
         .unwrap();

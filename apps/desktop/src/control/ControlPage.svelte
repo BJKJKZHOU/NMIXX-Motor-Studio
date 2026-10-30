@@ -5,11 +5,17 @@
   import { selectParameters } from "../parameters/state";
   import { createParameterEditor } from "../parameters/editor";
   import { modifiedParameterIds } from "../parameters/persistence";
-  import { parameterEnumValue } from "../parameters/codec";
+  import { parameterEnumValue, parameterEnumSymbol } from "../parameters/codec";
+  import { canWriteInMotorState } from "../parameters/writeState";
   import type { MotorState } from "../motor/state";
   type ControlLoopPage = "current" | "speed" | "position";
   type Props = { connection: ConnectionInfo | undefined; motorState: MotorState | null; loop?: ControlLoopPage; onError?: (error: unknown) => void };
   const CURRENT_BW = "PARAM_CTRL_CURRENT_BW_HZ";
+  const CURRENT_CONTROLLER = "PARAM_CTRL_CURRENT_CONTROLLER";
+  const SPEED_CONTROLLER = "PARAM_CTRL_SPEED_CONTROLLER";
+  const CURRENT_LADRC_BW = "PARAM_CTRL_LADRC_BW_HZ";
+  const CURRENT_LADRC_ESO = "PARAM_CTRL_LADRC_ESO_BW_HZ";
+  const SPEED_LADRC_BW = "PARAM_CTRL_SPEED_LADRC_BW_HZ";
   const CURRENT_SOURCE = "PARAM_CTRL_CURRENT_SOURCE";
   const ID_KP = "PARAM_CTRL_ID_KP";
   const ID_KI = "PARAM_CTRL_ID_KI";
@@ -23,7 +29,7 @@
   const SPEED_EFFECTIVE_KI = "PARAM_CTRL_SPEED_KI_EFFECTIVE";
   const POSITION_KP = "PARAM_CTRL_POSITION_KP";
   const ESO_BW = "PARAM_CTRL_MECH_ESO_BW_HZ";
-  const SYMBOLS = [CURRENT_BW, CURRENT_SOURCE, ID_KP, ID_KI, IQ_KP, IQ_KI, SPEED_BW, SPEED_SOURCE, SPEED_KP, SPEED_KI, SPEED_EFFECTIVE_KP, SPEED_EFFECTIVE_KI, POSITION_KP, ESO_BW];
+  const SYMBOLS = [CURRENT_CONTROLLER, SPEED_CONTROLLER, CURRENT_LADRC_BW, CURRENT_LADRC_ESO, SPEED_LADRC_BW, CURRENT_BW, CURRENT_SOURCE, ID_KP, ID_KI, IQ_KP, IQ_KI, SPEED_BW, SPEED_SOURCE, SPEED_KP, SPEED_KI, SPEED_EFFECTIVE_KP, SPEED_EFFECTIVE_KI, POSITION_KP, ESO_BW];
   let { connection, motorState, loop = "current", onError = () => undefined }: Props = $props();
   const parameters = selectParameters(SYMBOLS);
   const edits = createParameterEditor(parameters);
@@ -32,13 +38,37 @@
   let drafts = $derived($edits.drafts);
   let writing = $derived($edits.writing);
   let loading = $derived($parameters.loading);
+  let currentController = $derived(controllerSymbol(CURRENT_CONTROLLER));
+  let speedController = $derived(controllerSymbol(SPEED_CONTROLLER));
   function label(symbol: string, fallback: string): string { return localize(metadata[symbol]?.label ?? fallback, $uiLanguage); }
   function unit(symbol: string): string { return metadata[symbol]?.unit ?? ""; }
-  function locked(symbol: string): boolean { return $parameters.loading || $parameters.saving || motorState === "RUN" || writing.has(symbol) || !metadata[symbol]?.access.includes("w"); }
+  function locked(symbol: string): boolean { return !connection || $parameters.loading || $parameters.saving || motorState === "RUN" || writing.has(symbol) || !canWriteInMotorState(metadata[symbol], motorState); }
   function dirty(symbol: string): boolean { return $edits.dirty.has(symbol); }
   function numeric(value: ParameterValue | null | undefined): number | null { return !value || value.type === "position" ? null : Number(value.value); }
   function enumValue(symbol: string, enumSymbol: string): number | null {
     return parameterEnumValue(metadata[symbol], enumSymbol) ?? null;
+  }
+  function controllerSymbol(symbol: string): string {
+    const raw = numeric(values[symbol]);
+    return raw === null ? "" : parameterEnumSymbol(metadata[symbol], raw) ?? "";
+  }
+  function controllerName(symbol: string): string {
+    return symbol ? symbol.replace(/^(CURRENT|SPEED)_CTRL_/, "") : "—";
+  }
+  function controllerOptions(symbol: string) {
+    return (metadata[symbol]?.allowedSymbols ?? []).filter((item) => {
+      const value = enumValue(symbol, item);
+      return value !== null && Number.isInteger(value) && value >= 0 && value <= 255;
+    });
+  }
+  async function setController(symbol: string, select: HTMLSelectElement) {
+    const selected = select.value;
+    const value = enumValue(symbol, selected);
+    try {
+      if (locked(symbol) || $edits.dirty.size > 0 || writing.size > 0 || value === null || !controllerOptions(symbol).includes(selected)) return;
+      await edits.select(symbol, { type: "u8", value });
+    } catch (error) { onError(error); }
+    finally { select.value = controllerSymbol(symbol); }
   }
   function effectiveText(symbol: string): string {
     const value = values[symbol];
@@ -74,10 +104,14 @@
       <div class="control-sheet">
         {#if loop === "current"}
         <section class="loop-section">
-          <div class="loop-heading"><div><div class="section-title">{translate("ui.current.loop", $uiLanguage)}</div><div class="section-subtitle">{translate("ui.d.q.current.regulation", $uiLanguage)}</div></div><label class="algorithm-select">{translate("ui.controller", $uiLanguage)}<select disabled><option>PI</option></select></label></div>
+          <div class="loop-heading"><div><div class="section-title">{translate("ui.current.loop", $uiLanguage)}</div><div class="section-subtitle">{translate("ui.d.q.current.regulation", $uiLanguage)}</div></div><label class="algorithm-select">{translate("ui.controller", $uiLanguage)}<select aria-label={translate("control.current.controller", $uiLanguage)} disabled={locked(CURRENT_CONTROLLER) || $edits.dirty.size > 0 || writing.size > 0} value={currentController} onchange={(event) => void setController(CURRENT_CONTROLLER, event.currentTarget)}>
+            {#if !currentController}<option value="">—</option>{/if}
+            {#each controllerOptions(CURRENT_CONTROLLER) as option}<option value={option}>{controllerName(option)}</option>{/each}
+          </select></label></div>
           <div class="diagram current-diagram">
             <div class="signal-chip">{translate("ui.id.iq.ref", $uiLanguage)}</div><div class="arrow">→</div><div class="sum-node">Σ</div><div class="arrow">→</div>
-            <div class="control-block wide-block"><div class="block-title">{translate("ui.pi.current.controller", $uiLanguage)}</div>
+            <div class="control-block wide-block"><div class="block-title">{controllerName(currentController)} · {translate("control.current.controller", $uiLanguage)}</div>
+{#if currentController === "CURRENT_CTRL_PI"}
 {#if metadata[CURRENT_SOURCE]}<div class="block-field"><span>{label(CURRENT_SOURCE, "Gain Source")}</span><select class:ramModified={$modifiedParameterIds.has(metadata[CURRENT_SOURCE].id)} class="compact-select" disabled={locked(CURRENT_SOURCE)} value={sourceText(CURRENT_SOURCE)} onchange={(event) => void setSource(CURRENT_SOURCE, event.currentTarget.value as "bandwidth" | "manual")}><option value="bandwidth">{translate("ui.bandwidth", $uiLanguage)}</option><option value="manual">{translate("ui.manual", $uiLanguage)}</option></select></div>{/if}
 {#if metadata[CURRENT_BW]}<div class="block-field"><span>{label(CURRENT_BW, "Bandwidth")}</span><span class="editor"><input class:ramModified={$modifiedParameterIds.has(metadata[CURRENT_BW].id)} class:dirty={dirty(CURRENT_BW)} class="compact-input mono" value={drafts[CURRENT_BW] ?? ""} disabled={locked(CURRENT_BW)} oninput={(event) => edits.edit(CURRENT_BW, event.currentTarget.value)} onkeydown={(event) => keydown(event, CURRENT_BW)} onblur={() => edits.discard(CURRENT_BW)} /><span class="unit">{unit(CURRENT_BW)}</span></span></div>{/if}
 <div class="gain-grid">
@@ -86,16 +120,26 @@
 {#if metadata[IQ_KP]}<div><span>{translate("ui.manual.iq.kp", $uiLanguage)}</span><input class:ramModified={$modifiedParameterIds.has(metadata[IQ_KP].id)} class:dirty={dirty(IQ_KP)} class="compact-input mono gain-input" value={drafts[IQ_KP] ?? ""} disabled={locked(IQ_KP)} oninput={(event) => edits.edit(IQ_KP, event.currentTarget.value)} onkeydown={(event) => keydown(event, IQ_KP)} onblur={() => edits.discard(IQ_KP)} /></div>{/if}
 {#if metadata[IQ_KI]}<div><span>{translate("ui.manual.iq.ki", $uiLanguage)}</span><input class:ramModified={$modifiedParameterIds.has(metadata[IQ_KI].id)} class:dirty={dirty(IQ_KI)} class="compact-input mono gain-input" value={drafts[IQ_KI] ?? ""} disabled={locked(IQ_KI)} oninput={(event) => edits.edit(IQ_KI, event.currentTarget.value)} onkeydown={(event) => keydown(event, IQ_KI)} onblur={() => edits.discard(IQ_KI)} /></div>{/if}
 </div>
+{:else if currentController === "CURRENT_CTRL_LADRC"}
+{#if metadata[CURRENT_LADRC_BW]}<div class="block-field"><span>{label(CURRENT_LADRC_BW, "Bandwidth")}</span><span class="editor"><input aria-label={label(CURRENT_LADRC_BW, "Bandwidth")} class:ramModified={$modifiedParameterIds.has(metadata[CURRENT_LADRC_BW].id)} class:dirty={dirty(CURRENT_LADRC_BW)} class="compact-input mono" value={drafts[CURRENT_LADRC_BW] ?? ""} disabled={locked(CURRENT_LADRC_BW)} oninput={(event) => edits.edit(CURRENT_LADRC_BW, event.currentTarget.value)} onkeydown={(event) => keydown(event, CURRENT_LADRC_BW)} onblur={() => edits.discard(CURRENT_LADRC_BW)} /><span class="unit">{unit(CURRENT_LADRC_BW)}</span></span></div>{/if}
+{#if metadata[CURRENT_LADRC_ESO]}<div class="block-field"><span>{label(CURRENT_LADRC_ESO, "Bandwidth")}</span><span class="editor"><input aria-label={label(CURRENT_LADRC_ESO, "Bandwidth")} class:ramModified={$modifiedParameterIds.has(metadata[CURRENT_LADRC_ESO].id)} class:dirty={dirty(CURRENT_LADRC_ESO)} class="compact-input mono" value={drafts[CURRENT_LADRC_ESO] ?? ""} disabled={locked(CURRENT_LADRC_ESO)} oninput={(event) => edits.edit(CURRENT_LADRC_ESO, event.currentTarget.value)} onkeydown={(event) => keydown(event, CURRENT_LADRC_ESO)} onblur={() => edits.discard(CURRENT_LADRC_ESO)} /><span class="unit">{unit(CURRENT_LADRC_ESO)}</span></span></div>{/if}
+{:else if currentController === "CURRENT_CTRL_DPCC"}
+<p class="state-note">{translate("control.dpcc.model", $uiLanguage)}</p>
+{/if}
             </div><div class="arrow">→</div><div class="signal-chip">Ud / Uq</div>
           </div>
           <div class="feedback-row"><span>{translate("ui.current.feedback", $uiLanguage)}</span><span class="feedback-line">───────────────↩</span></div>
         </section>
         {:else if loop === "speed"}
         <section class="loop-section">
-          <div class="loop-heading"><div><div class="section-title">{translate("ui.speed.loop", $uiLanguage)}</div><div class="section-subtitle">{translate("ui.mechanical.speed.to.q.axis.current.reference", $uiLanguage)}</div></div><label class="algorithm-select">{translate("ui.controller", $uiLanguage)}<select disabled><option>PI</option></select></label></div>
+          <div class="loop-heading"><div><div class="section-title">{translate("ui.speed.loop", $uiLanguage)}</div><div class="section-subtitle">{translate("ui.mechanical.speed.to.q.axis.current.reference", $uiLanguage)}</div></div><label class="algorithm-select">{translate("ui.controller", $uiLanguage)}<select aria-label={translate("control.speed.controller", $uiLanguage)} disabled={locked(SPEED_CONTROLLER) || $edits.dirty.size > 0 || writing.size > 0} value={speedController} onchange={(event) => void setController(SPEED_CONTROLLER, event.currentTarget)}>
+            {#if !speedController}<option value="">—</option>{/if}
+            {#each controllerOptions(SPEED_CONTROLLER) as option}<option value={option}>{controllerName(option)}</option>{/each}
+          </select></label></div>
           <div class="diagram speed-diagram">
             <div class="signal-chip">{translate("ui.ωm.ref", $uiLanguage)}</div><div class="arrow">→</div><div class="sum-node">Σ</div><div class="arrow">→</div>
-            <div class="control-block"><div class="block-title">{translate("ui.pi.speed.controller", $uiLanguage)}</div>
+            <div class="control-block"><div class="block-title">{controllerName(speedController)} · {translate("control.speed.controller", $uiLanguage)}</div>
+{#if speedController === "SPEED_CTRL_PI"}
 {#if metadata[SPEED_SOURCE]}<div class="block-field"><span>{label(SPEED_SOURCE, "Gain Source")}</span><select class:ramModified={$modifiedParameterIds.has(metadata[SPEED_SOURCE].id)} class="compact-select" disabled={locked(SPEED_SOURCE)} value={sourceText(SPEED_SOURCE)} onchange={(event) => void setSource(SPEED_SOURCE, event.currentTarget.value as "bandwidth" | "manual")}><option value="bandwidth">{translate("ui.bandwidth", $uiLanguage)}</option><option value="manual">{translate("ui.manual", $uiLanguage)}</option></select></div>{/if}
 {#if metadata[SPEED_BW]}<div class="block-field"><span>{label(SPEED_BW, "Bandwidth")}</span><span class="editor"><input class:ramModified={$modifiedParameterIds.has(metadata[SPEED_BW].id)} class:dirty={dirty(SPEED_BW)} class="compact-input mono" value={drafts[SPEED_BW] ?? ""} disabled={locked(SPEED_BW)} oninput={(event) => edits.edit(SPEED_BW, event.currentTarget.value)} onkeydown={(event) => keydown(event, SPEED_BW)} onblur={() => edits.discard(SPEED_BW)} /><span class="unit">{unit(SPEED_BW)}</span></span></div>{/if}
 <div class="gain-grid two">
@@ -104,6 +148,9 @@
 {#if metadata[SPEED_EFFECTIVE_KP]}<div><span>{translate("ui.effective.kp", $uiLanguage)}</span><strong class="mono">{effectiveText(SPEED_EFFECTIVE_KP)}</strong></div>{/if}
 {#if metadata[SPEED_EFFECTIVE_KI]}<div><span>{translate("ui.effective.ki", $uiLanguage)}</span><strong class="mono">{effectiveText(SPEED_EFFECTIVE_KI)}</strong></div>{/if}
 </div>
+{:else if speedController === "SPEED_CTRL_LADRC"}
+{#if metadata[SPEED_LADRC_BW]}<div class="block-field"><span>{label(SPEED_LADRC_BW, "Bandwidth")}</span><span class="editor"><input aria-label={label(SPEED_LADRC_BW, "Bandwidth")} class:ramModified={$modifiedParameterIds.has(metadata[SPEED_LADRC_BW].id)} class:dirty={dirty(SPEED_LADRC_BW)} class="compact-input mono" value={drafts[SPEED_LADRC_BW] ?? ""} disabled={locked(SPEED_LADRC_BW)} oninput={(event) => edits.edit(SPEED_LADRC_BW, event.currentTarget.value)} onkeydown={(event) => keydown(event, SPEED_LADRC_BW)} onblur={() => edits.discard(SPEED_LADRC_BW)} /><span class="unit">{unit(SPEED_LADRC_BW)}</span></span></div>{/if}
+{/if}
             </div><div class="arrow">→</div><div class="signal-chip">{translate("ui.iq.ref", $uiLanguage)}</div>
           </div>
           <div class="speed-feedback-path"><div class="feedback-source-note">{translate("ui.feedback.observer.path", $uiLanguage)}</div><div class="feedback-path-line">
@@ -124,6 +171,7 @@
           <div class="feedback-row"><span>{translate("ui.encoder.position", $uiLanguage)}</span><span class="feedback-line">───────────────↩</span></div>
         </section>
         {/if}
+        {#if loop !== "position"}<div class="state-note">{translate("control.firmware.selection", $uiLanguage)}</div>{/if}
         {#if motorState === "RUN"}<div class="state-note">{translate("ui.control.parameter.writes.are.locked.while.the.motor.is.run", $uiLanguage)}</div>{/if}
       </div>
     {/if}

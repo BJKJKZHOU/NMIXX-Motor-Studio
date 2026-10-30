@@ -302,6 +302,33 @@ impl PreflightService {
         Ok(issues)
     }
 
+    pub fn check_encoder_calibration(&self) -> Result<Vec<PreflightIssue>, PreflightError> {
+        // Calibration ends with phase search, so its prerequisites also apply.
+        let mut issues = self.check_phase_search()?;
+        self.require_flag("PARAM_CAL_VALID", true, PreflightDomain::Encoder,
+            "Complete phase search before encoder calibration.", &mut issues)?;
+        for (symbol, reason) in [
+            (MOTOR_FLUX, "Active motor flux must be positive before encoder calibration."),
+            ("PARAM_MOTOR_J", "Motor inertia must be positive before encoder calibration."),
+            ("PARAM_CTRL_MECH_ESO_BW_HZ", "Mechanical observer bandwidth must be positive before encoder calibration."),
+            ("PARAM_MOTION_WM_ACC", "Acceleration must be positive before encoder calibration."),
+            ("PARAM_MOTION_WM_DEC", "Deceleration must be positive before encoder calibration."),
+        ] {
+            self.require_positive(symbol, PreflightDomain::Motor, reason, &mut issues)?;
+        }
+        // Current firmware ENC_CAL_WM: 1000 rpm, independent of the user target.
+        // Compare in f32, matching the exported effective-limit value at equality.
+        if let Some(limit) = self.require_positive("PARAM_LIMIT_WM_EFFECTIVE", PreflightDomain::LimitsSafety,
+            "Effective speed limit must allow 1000 rpm for encoder calibration.", &mut issues)? {
+            let calibration_speed = 1000.0_f32 * std::f32::consts::TAU / 60.0;
+            if (limit as f32) < calibration_speed {
+                self.push_issue("PARAM_LIMIT_WM_EFFECTIVE", PreflightDomain::LimitsSafety,
+                    "Effective speed limit must allow 1000 rpm for encoder calibration.", &mut issues)?;
+            }
+        }
+        Ok(issues)
+    }
+
     fn require_clear_protection(
         &self,
         issues: &mut Vec<PreflightIssue>,
@@ -481,7 +508,7 @@ mod onboarding_tests {
             (IDENT_JB_EXCITE_RATIO, 0x0923), (IDENT_JB_EXCITE_HZ, 0x0924),
         ];
         let mut schema = String::from(
-            "schema_version = 1\nprotocol = \"axdr-canfd-v1\"\n[source]\nrepository = \"fixture\"\ngit_sha = \"abc\"\nparameter_schema = 1\n"
+            "protocol = \"axdr-canfd\"\n[source]\nrepository = \"fixture\"\ngit_sha = \"abc\"\n"
         );
         for (symbol, id) in entries {
             let typ = if *symbol == EVENT_ERROR || *symbol == EVENT_TRIP { "u32" } else { "f32" };

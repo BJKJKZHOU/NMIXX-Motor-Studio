@@ -69,6 +69,11 @@ If the current endpoint remains available, refreshing should preserve it. Otherw
 the page may select a reasonable discovered default while leaving the final choice
 visible to the user.
 
+The available-port picker lists all discovered endpoints independently of the
+editable endpoint text. Typing or retaining a debugger path must not filter out
+the motor board's USB CDC port. Choosing an endpoint only updates the form;
+Connect remains an explicit user action.
+
 ## HostSchema path
 
 The HostSchema path is an explicit development/configuration input.

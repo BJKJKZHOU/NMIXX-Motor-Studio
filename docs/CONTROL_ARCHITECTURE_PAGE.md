@@ -123,27 +123,35 @@ The exact diagram changes with the selected firmware capability. Do not render u
 
 Controller selection belongs on Control Architecture because it changes the control structure itself.
 
-Examples of future choices may include:
+Available choices come from the connected firmware's controller Parameters:
 
 ```text
 Current Loop
     PI
     LADRC
-    ...
+    DPCC
 
 Speed Loop
     PI
-    P + ESO
     LADRC
-    ...
 
 Position Loop
     P
-    stiffness / damping
-    ...
 ```
 
 The GUI must derive available choices from firmware/Application capabilities or host-visible Parameters. It must not hard-code future algorithms that the connected firmware does not expose.
+
+Current and Speed selectors use `PARAM_CTRL_CURRENT_CONTROLLER` and
+`PARAM_CTRL_SPEED_CONTROLLER`. Their selected values come from Parameter readback;
+a failed write restores the readback selection. Switching obeys `write_state`
+(currently DISABLED-only) and is blocked while edits are pending. Missing or
+unknown controller values are shown as unavailable instead of assuming PI.
+
+The active block shows PI gains, current LADRC feedback/LESO gains, or speed LADRC
+gain as appropriate. DPCC identifies its motor-model dependency. Speed LADRC
+shares the mechanical ESO. These selectors describe the configured sensored
+controllers; firmware retains its own controller policy for identification,
+sensorless operation and encoder calibration.
 
 If the current firmware exposes only one controller type, the page may show that controller in the reserved controller-selection location. A disabled selector is acceptable as a temporary implementation placeholder, but it must not imply that unsupported choices already exist.
 
@@ -251,7 +259,7 @@ The current child diagrams are still an early structural version, but the second
 
 Next implementation work should:
 
-- keep the controller-selection location reserved for firmware-exposed controller choices;
+- extend controller-specific blocks only as firmware-exposed choices evolve;
 - add filters, feedforward, feedback selection and controller-specific blocks only when their firmware/Application contracts exist;
 - replace generic feedback/observer labels with exact signal names only when those signals are authoritative;
 - show inter-loop relationships through clear input/output signals such as `Wm Ref` and `Iq Ref`, without forcing all three loops into one giant combined diagram.

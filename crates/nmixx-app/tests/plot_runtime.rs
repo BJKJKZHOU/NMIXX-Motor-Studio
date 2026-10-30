@@ -92,13 +92,11 @@ fn mixed_scope_context() -> (DevicePlotCapabilities, HostSchema, Vec<ScopeSelect
         ],
     };
     let schema = HostSchema::parse(r#"
-schema_version = 1
-protocol = "axdr-canfd-v1"
+protocol = "axdr-canfd"
 
 [source]
 repository = "fixture"
 git_sha = "abc"
-parameter_schema = 1
 
 [[parameters]]
 symbol = "PARAM_ADC_IA"

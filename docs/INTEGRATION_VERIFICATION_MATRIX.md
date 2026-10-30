@@ -632,6 +632,10 @@ without an unsafe Apply button.
 **Shared consumers:** Encoder page, Motion, status bar Position, Problems, Automation  
 **Normative references:** `ENCODER_PAGE.md`, `APPLICATION_PREFLIGHT.md`, `UI_INTERACTION_RULES.md`
 
+Current encoder task contract supersedes the historical mode/Run sequence below:
+ENCODER_CAL + DISABLED, then ACTION_ENC_PHASE_START or ACTION_ENC_CAL_START.
+Firmware owns Enable/Run and saving, and finishes disabled. See ENCODER_PAGE.md.
+
 ### Code review pass — 2026-09-28
 
 One shared Application defect was found and corrected in this pass:
@@ -701,16 +705,16 @@ implemented functionality.
 - [x] **[CODE]** Authoritative preflight is repeated inside `MotorActionService`; GUI cannot bypass it.
 - [x] **[CODE]** Page calls one semantic `phase_search_start` API and does not assemble Motor Mode/Enable/Run itself.
 - [x] **[CODE]** Semantic Phase Search now rejects RUN rather than silently changing a running operation.
-- [x] **[CODE]** From ENABLED in another mode, Application disables, switches PHASE_SEARCH while DISABLED, then enables.
-- [x] **[CODE]** From DISABLED, Application writes PHASE_SEARCH mode, enables, verifies ENABLED, then starts finite Run.
-- [x] **[CODE]** Already-ENABLED PHASE_SEARCH avoids a redundant Disable/Enable cycle.
+- [x] **[CODE]** From ENABLED, Application disables and selects ENCODER_CAL before the dedicated encoder task Action.
+- [x] **[CODE]** From DISABLED, Application selects ENCODER_CAL and starts the dedicated task Action without Enable/Run commands.
+- [x] **[CODE]** Both encoder task Actions require DISABLED; firmware owns their Enable/Run sequence.
 - [x] **[CODE]** MotorGate/workflow checkpoint fences every state-changing dispatch.
 - [x] **[CODE]** Global Stop uses the shared motor Stop path; Encoder page owns no phase-specific Abort/Stop command.
-- [x] **[CODE]** Firmware Motor Stop in PHASE_SEARCH calls `Servo_Phase_Abort()` and returns motor state to ENABLED.
-- [ ] **[HW]** Start Phase Search from DISABLED and verify the complete automatic mode/Enable/Run sequence.
+- [x] **[CODE]** Firmware Motor Stop aborts the active encoder procedure and disables; final validity is read back.
+- [ ] **[HW]** Start Phase Search from DISABLED and verify ENCODER_CAL, the dedicated Action, automatic saving and final Disable.
 - [ ] **[HW]** Leave the motor ENABLED in another mode, start Phase Search, and verify the new semantic transition works.
 - [ ] **[HW]** Attempt Phase Search while RUN and confirm it is rejected without altering the running operation.
-- [ ] **[HW]** Press global Stop during Phase Search and verify prompt abort/recoverable ENABLED state.
+- [ ] **[HW]** Press global Stop during Phase Search and verify abort, DISABLED state and calibration validity readback.
 
 ### Phase Search completion / automatic calibration
 

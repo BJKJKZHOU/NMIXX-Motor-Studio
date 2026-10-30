@@ -95,10 +95,15 @@ function deviceFixture() {
       device.values.PARAM_IDENT_J_RESULT={type:"f32",value:0.00003};
       device.values.PARAM_IDENT_B_RESULT={type:"f32",value:0.000001};
     }
+    // Application cleanup runs after firmware completion, before notifying pages.
+    device.commands.push(["ACTION","ACTION_MOTOR_DISABLE"]);
+    device.motorState="DISABLED";
     return{...device.last.handle,operation:{rsLs:"identification.rsLs",flux:"identification.flux",jb:"identification.jb"}[key],status:"Ok",ok:true};
   };
   device.apply=async key=>{
     assert.equal(device.candidate,key);
+    assert.equal(device.mode,"IDENT");
+    assert.equal(device.motorState,"DISABLED");
     device.commands.push(["ACTION","ACTION_IDENT_APPLY",key]);
     const pairs=key==="rsLs"?[
       ["PARAM_MOTOR_RS","PARAM_IDENT_RS_RESULT"],["PARAM_MOTOR_LD","PARAM_IDENT_LS_RESULT"],["PARAM_MOTOR_LQ","PARAM_IDENT_LS_RESULT"],
@@ -175,7 +180,8 @@ test("new motor from USB connection through three identifications, phase search 
     assert.equal(motor.get(`identStates.${key}.phase`),"ready");
     await motor.get(`applyIdentification("${key}")`);
     assert.equal(motor.get(`identStates.${key}.phase`),"applied");
-    assert.equal(device.motorState,"ENABLED");
+    assert.equal(device.motorState,"DISABLED");
+    assert.equal(device.mode,"IDENT");
   }
   await identify("rsLs");
   assert.equal(device.values.PARAM_MOTOR_RS.value,0.38);
@@ -185,7 +191,7 @@ test("new motor from USB connection through three identifications, phase search 
   assert.equal(motor.get("identStates.flux.phase"),"blocked");
   assert.match(motor.get("identStates.flux.message"),/Align/);
   motor.ctx.motorState=device.motorState;
-  assert.equal(motor.get('isWritable("PARAM_MOTOR_ALIGN_CURRENT")'),false);
+  assert.equal(motor.get('isWritable("PARAM_MOTOR_ALIGN_CURRENT")'),true);
   
   const global=handlers("App.svelte",["toggleMotorEnable"],{
     connectionReady:true,motorState:device.motorState,globalActionBusy:false,
@@ -200,7 +206,6 @@ test("new motor from USB connection through three identifications, phase search 
       device.motorState="ENABLED";
     },
   });
-  await global.get("toggleMotorEnable()");
   assert.equal(device.motorState,"DISABLED");
   motor.ctx.motorState=device.motorState;
   assert.equal(motor.get('isWritable("PARAM_MOTOR_ALIGN_CURRENT")'),true);
@@ -214,13 +219,14 @@ test("new motor from USB connection through three identifications, phase search 
   // encoder feedback produces failure before phase search may energize.
   const enc=handlers("encoder/EncoderPage.svelte",[
     "handleKey","isWritable","phaseSearchAvailable","hasPendingEdits","setU8",
-    "startPhaseSearch","handleActionCompleted",
+    "startPhaseSearch","encoderBusy","handleActionCompleted",
   ],{
     connection,motorState:device.motorState,
     $parameters:{loading:false,saving:false},metadata:{
       PARAM_ENCODER_PROTOCOL:commonMeta,
     },writing:new Set(),$edits:{dirty:new Set()},phaseState:"idle",phaseMessage:"",
     pendingPhaseHandle:null,earlyPhaseCompletion:undefined,phaseRequestGeneration:0,
+    calibrationState:"idle",calibrationMessage:"",pendingCalibrationHandle:null,earlyCalibrationCompletion:undefined,calibrationRequestGeneration:0,
     homingState:"idle",homingMessage:"",pendingHomingHandle:null,earlyHomingCompletion:undefined,homingRequestGeneration:0,
     canWriteInMotorState:canWrite,
     edits:{select:async(key,value)=>device.write(key,value)},
@@ -228,20 +234,16 @@ test("new motor from USB connection through three identifications, phase search 
     startPhaseSearchAction:async()=>{
       if(!device.encoderReady)throw Error("Encoder not ready");
       assert.equal(device.motorState,"DISABLED");
-      device.commands.push(["PARAM_WRITE","PARAM_MOTOR_MODE","PHASE_SEARCH"]);
-      device.mode="PHASE_SEARCH";
-      device.commands.push(["ACTION","ACTION_MOTOR_ENABLE"]);
-      device.motorState="ENABLED";
-      device.commands.push(["ACTION","ACTION_MOTOR_RUN"]);
+      device.commands.push(["PARAM_WRITE","PARAM_MOTOR_MODE","ENCODER_CAL"]);
+      device.mode="ENCODER_CAL";
+      device.commands.push(["ACTION","ACTION_ENC_PHASE_START"]);
       device.motorState="RUN";
-      return{txn:6,actionId:0x1002};
+      return{txn:6,actionId:0x1402};
     },
   });
   await enc.get("startPhaseSearch()");
   assert.equal(enc.get("phaseState"),"failed");
   assert.match(enc.get("phaseMessage"),/Encoder not ready/);
-  global.ctx.motorState=device.motorState;
-  await global.get("toggleMotorEnable()");
   enc.ctx.motorState=device.motorState;
   assert.equal(device.motorState,"DISABLED");
   assert.equal(enc.get('isWritable("PARAM_ENCODER_PROTOCOL")'),true);
@@ -249,8 +251,8 @@ test("new motor from USB connection through three identifications, phase search 
   assert.equal(device.encoderReady,true);
   await enc.get("startPhaseSearch()");
   assert.equal(enc.get("phaseState"),"running");
-  enc.ctx.completed={txn:6,actionId:0x1002,operation:"encoder.phaseSearch",status:"Ok",ok:true};
-  device.calValid=true;device.motorState="ENABLED";
+  enc.ctx.completed={txn:6,actionId:0x1402,operation:"encoder.phaseSearch",status:"Ok",ok:true};
+  device.calValid=true;device.motorState="DISABLED";
   enc.get("handleActionCompleted(completed)");
   assert.equal(enc.get("phaseState"),"success");
 
@@ -268,13 +270,7 @@ test("new motor from USB connection through three identifications, phase search 
     showSavedFeedback:()=>{},
     onError:error=>errors.push(String(error)),
   });
-  const beforeSave=device.commands.length;
-  await save.get("savePersistentParameters()");
-  assert.equal(device.commands.length,beforeSave);
-  global.ctx.motorState=device.motorState;
-  await global.get("toggleMotorEnable()");
   assert.equal(device.motorState,"DISABLED");
-  save.ctx.motorState="DISABLED";
   await save.get("savePersistentParameters()");
   assert.deepEqual(device.commands.at(-1),["ACTION","ACTION_CONFIG_SAVE"]);
   const motion=handlers("motion/MotionPage.svelte",["setMode"],{

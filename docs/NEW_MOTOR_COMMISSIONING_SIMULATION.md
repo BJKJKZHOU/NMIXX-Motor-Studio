@@ -18,7 +18,7 @@
 | 6 | 当前仍 ENABLED；尝试调整 Align/I-F | 页面按照 HostSchema `write_state: disabled` 禁止发送写入，要求用户点击全局 Disable | 使能状态变红色 DISABLED 后方可修改；不得仅凭 Action ACK 乐观切换 UI | 页面联动模拟 |
 | 7 | 在 Motor 设置 Align、I/F 后依次 Flux Start / Apply、J/B Start / Apply | 使用当前参数进入 IDENT；每次通过 Action 完成事件与 Valid 结果更新候选，再由 Apply 写入活动模型 | 分别 Running → Ready → Applied，Rs/Ld/Lq/Flux/J/B 使用同一数据所有权 | 页面模拟与 Rust Current 预检 |
 | 8 | Encoder 首次点击 Phase Search，但反馈未 Ready | Application 预检拒绝，UI 不假装寻相成功 | Failed，直接展示 Encoder not ready | 页面处理器模拟；实际通信待测 |
-| 9 | 全局 Disable → Encoder 选择正确反馈协议 / SPI 类型 → 等待反馈有效 → 再次 Phase Search | 依 Application 编排切换 PHASE_SEARCH、Enable、Run；有限 Action 返回后刷新校准结果 | Running → Success；校准有效与方向偏置须以固件回读为准 | 页面模拟；校准数值未实测 |
+| 9 | 全局 Disable → Encoder 选择正确反馈协议 / SPI 类型 → 等待反馈有效 → 再次 Phase Search | 依 Application 编排在禁能状态选择 ENCODER_CAL，发送 ACTION_ENC_PHASE_START；有限 Action 完成后读回禁能状态与校准结果 | Running → Success；校准有效与方向偏置须以固件回读为准 | 页面模拟；校准数值未实测 |
 | 10 | Disable 后执行全局 Save | `ACTION_CONFIG_SAVE`；设备 ENABLED 时 Save 不可提交 | 保存完成后持久化基线更新；不把 Action 接受误认为通用运控完成 | 页面处理器模拟 |
 | 11 | 在 DISABLED 状态从 Motion 选择 Position，填写有意义的 Max Speed、Acc/Dec，再全局 Enable | 模式 Parameter Write → 确认编码器已 Ready 和相位校准有效 → Enable | 模式页面与全局 ENABLED 状态同步；未提交草稿不得 Run | 模式切换与全局控制模拟 |
 | 12 | 打开 Control Tuning，手工选择可用 Iq FAST 通道，点击 Run | `tuning_experiment_start`，准备采集后 Application 发运动命令；按有限 Position 轨迹完成与受控 Stop 规则收尾 | PREPARING → RUNNING → COMPLETED；按钮与实验状态联动，完成后保留快照 | 页面处理器模拟；实际采集路径暂缓 |

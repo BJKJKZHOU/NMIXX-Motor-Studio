@@ -12,11 +12,14 @@ use crate::{
 const MOTOR_MODE: &str = "PARAM_MOTOR_MODE";
 const MOTOR_STATE: &str = "PARAM_MOTOR_STATE";
 const IDENT_MODE: &str = "IDENT";
-const PHASE_SEARCH_MODE: &str = "PHASE_SEARCH";
+const ENCODER_MODE: &str = "ENCODER_CAL";
+const ENC_PHASE_START: &str = "ACTION_ENC_PHASE_START";
+const ENC_CAL_START: &str = "ACTION_ENC_CAL_START";
 const MOTOR_STATE_DISABLED: &str = "DISABLED";
 const MOTOR_STATE_ENABLED: &str = "ENABLED";
 const MOTOR_STATE_RUN: &str = "RUN";
 const MOTOR_ENABLE: &str = "ACTION_MOTOR_ENABLE";
+#[cfg(test)]
 const MOTOR_RUN: &str = "ACTION_MOTOR_RUN";
 const MOTOR_STOP: &str = "ACTION_MOTOR_STOP";
 const MOTOR_DISABLE: &str = "ACTION_MOTOR_DISABLE";
@@ -33,7 +36,7 @@ pub enum MotorActionError {
     MissingParameter(String),
     #[error("required action '{0}' is not exposed by the HostSchema")]
     MissingAction(String),
-    #[error("phase-search preflight failed: {0}")]
+    #[error("encoder commissioning preflight failed: {0}")]
     PreflightFailed(String),
     #[error("parameter '{0}' does not contain a u8 value")]
     InvalidParameterValue(String),
@@ -190,83 +193,52 @@ impl MotorActionService {
         self.start_action(IDENT_APPLY)
     }
 
-    /// Start servo phase search as one application-level operation.
-    ///
-    /// The current AxDr_L firmware exposes phase search through the generic
-    /// motor mode + enable + run primitives. Clients must not depend on that
-    /// device-side composition, so it is contained here.
+    /// Both encoder tasks start disabled; firmware owns Enable, Run and saving.
     pub fn phase_search_start(&self) -> Result<ActionHandle, MotorActionError> {
-        let issues = PreflightService::new(self.parameters.clone()).check_phase_search()?;
+        self.encoder_start(false)
+    }
+
+    pub fn encoder_calibration_start(&self) -> Result<ActionHandle, MotorActionError> {
+        self.encoder_start(true)
+    }
+
+    fn encoder_start(&self, calibration: bool) -> Result<ActionHandle, MotorActionError> {
+        let preflight = PreflightService::new(self.parameters.clone());
+        let issues = if calibration { preflight.check_encoder_calibration()? }
+                     else { preflight.check_phase_search()? };
         if let Some(issue) = issues.into_iter().next() {
             return Err(MotorActionError::PreflightFailed(issue.reason));
         }
-
-        let mode = self
-            .schema
-            .parameter_by_key(MOTOR_MODE)
+        let mode = self.schema.parameter_by_key(MOTOR_MODE)
             .ok_or_else(|| MotorActionError::MissingParameter(MOTOR_MODE.to_owned()))?;
-        let phase_search = mode.enum_u8(PHASE_SEARCH_MODE)?;
-        let state = self
-            .schema
-            .parameter_by_key(MOTOR_STATE)
+        let encoder_mode = mode.enum_u8(ENCODER_MODE)?;
+        let state = self.schema.parameter_by_key(MOTOR_STATE)
             .ok_or_else(|| MotorActionError::MissingParameter(MOTOR_STATE.to_owned()))?;
         let disabled = state.enum_u8(MOTOR_STATE_DISABLED)?;
         let enabled = state.enum_u8(MOTOR_STATE_ENABLED)?;
         let running = state.enum_u8(MOTOR_STATE_RUN)?;
-
-        let enable = self
-            .schema
-            .action_by_key(MOTOR_ENABLE)
-            .ok_or_else(|| MotorActionError::MissingAction(MOTOR_ENABLE.to_owned()))?;
-        let disable = self
-            .schema
-            .action_by_key(MOTOR_DISABLE)
+        let key = if calibration { ENC_CAL_START } else { ENC_PHASE_START };
+        let action = self.schema.action_by_key(key)
+            .ok_or_else(|| MotorActionError::MissingAction(key.to_owned()))?;
+        let disable = self.schema.action_by_key(MOTOR_DISABLE)
             .ok_or_else(|| MotorActionError::MissingAction(MOTOR_DISABLE.to_owned()))?;
-        let run = self
-            .schema
-            .action_by_key(MOTOR_RUN)
-            .ok_or_else(|| MotorActionError::MissingAction(MOTOR_RUN.to_owned()))?;
 
         let mut current_state = read_u8(&self.parameters, state)?;
-        if current_state == running {
-            return Err(MotorActionError::MotorRunning);
-        }
-
-        let current_mode = read_u8(&self.parameters, mode)?;
-
-        // Motor mode is DISABLED-only in the current firmware. Keep that
-        // device-side detail inside the semantic operation: if the drive is
-        // already ENABLED in another mode, disable it before selecting
-        // PHASE_SEARCH, then restore ENABLED before the finite Run.
-        if current_state == enabled && current_mode != phase_search {
+        if current_state == running { return Err(MotorActionError::MotorRunning); }
+        if current_state == enabled {
             self.check_dispatch()?;
             self.session.action_start(disable.id)?;
             current_state = read_u8(&self.parameters, state)?;
-            if current_state != disabled {
-                return Err(MotorActionError::InvalidParameterValue(MOTOR_STATE.to_owned()));
-            }
         }
-
-        if current_state == disabled {
-            self.check_dispatch()?;
-            self.parameters.write(mode.id, ParameterValue::U8(phase_search))?;
-
-            // Enable is an immediate Action: a successful action_start response
-            // means firmware has already executed Motor_Enable().
-            self.check_dispatch()?;
-            self.session.action_start(enable.id)?;
-
-            current_state = read_u8(&self.parameters, state)?;
-            if current_state != enabled {
-                return Err(MotorActionError::InvalidParameterValue(MOTOR_STATE.to_owned()));
-            }
+        if current_state != disabled {
+            return Err(MotorActionError::InvalidParameterValue(MOTOR_STATE.to_owned()));
         }
-
-        // If the drive was already ENABLED in PHASE_SEARCH mode, no redundant
-        // Disable/Enable cycle is needed. The returned handle represents the
-        // finite Run/phase-search operation.
+        if read_u8(&self.parameters, mode)? != encoder_mode {
+            self.check_dispatch()?;
+            self.parameters.write(mode.id, ParameterValue::U8(encoder_mode))?;
+        }
         self.check_dispatch()?;
-        Ok(self.session.action_start(run.id)?)
+        Ok(self.session.action_start(action.id)?)
     }
 
     fn start_action(&self, key: &str) -> Result<ActionHandle, MotorActionError> {
@@ -310,6 +282,7 @@ mod first_motor_wire_tests {
     const RSLS_ID: u16 = 0x1201;
     const FLUX_ID: u16 = 0x1202;
     const JB_ID: u16 = 0x1203;
+    const PHASE_ID: u16 = 0x1402;
 
     #[derive(Debug, Clone, PartialEq, Eq)]
     enum Sent {
@@ -353,7 +326,7 @@ mod first_motor_wire_tests {
                     match id {
                         ENABLE_ID => { model.parameters.insert(MOTOR_STATE_ID, ParameterValue::U8(1)); }
                         DISABLE_ID => { model.parameters.insert(MOTOR_STATE_ID, ParameterValue::U8(0)); }
-                        RUN_ID | RSLS_ID | FLUX_ID | JB_ID => {
+                        RUN_ID | RSLS_ID | FLUX_ID | JB_ID | PHASE_ID => {
                             model.parameters.insert(MOTOR_STATE_ID, ParameterValue::U8(2));
                         }
                         _ => {}
@@ -403,10 +376,10 @@ mod first_motor_wire_tests {
         let actions: &[(&str, u16)] = &[
             (MOTOR_ENABLE, ENABLE_ID), (MOTOR_DISABLE, DISABLE_ID),
             (MOTOR_RUN, RUN_ID), (IDENT_RS_LS_START, RSLS_ID),
-            (IDENT_FLUX_START, FLUX_ID), (IDENT_JB_START, JB_ID),
+            (IDENT_FLUX_START, FLUX_ID), (IDENT_JB_START, JB_ID), (ENC_PHASE_START, PHASE_ID),
         ];
         let mut schema = String::from(
-            "schema_version = 1\nprotocol = \"axdr-canfd-v1\"\n[source]\nrepository = \"fixture\"\ngit_sha = \"abc\"\nparameter_schema = 1\n"
+            "protocol = \"axdr-canfd\"\n[source]\nrepository = \"fixture\"\ngit_sha = \"abc\"\n"
         );
         for (symbol, id, typ) in entries {
             schema.push_str(&format!(
@@ -414,7 +387,7 @@ mod first_motor_wire_tests {
                 if *symbol == MOTOR_MODE { "rw" } else { "ro" }
             ));
             if *symbol == MOTOR_MODE {
-                schema.push_str("allowed_symbols = [\"TORQUE\", \"IDENT\", \"PHASE_SEARCH\"]\nwrite_state = \"disabled\"\n");
+                schema.push_str("allowed_symbols = [\"TORQUE\", \"IDENT\", \"ENCODER_CAL\"]\nwrite_state = \"disabled\"\n");
             }
             if *symbol == MOTOR_STATE {
                 schema.push_str("allowed_symbols = [\"DISABLED\", \"ENABLED\", \"RUN\"]\n");
@@ -508,8 +481,7 @@ mod first_motor_wire_tests {
             Sent::Action(JB_ID),
             Sent::Action(DISABLE_ID),
             Sent::Write(MOTOR_MODE_ID, 2),
-            Sent::Action(ENABLE_ID),
-            Sent::Action(RUN_ID),
+            Sent::Action(PHASE_ID),
         ]);
     }
 }

@@ -10,7 +10,7 @@
   import { parameterEnumSymbol, parameterEnumValue } from "../parameters/codec";
   import { onActionCompleted, onMotorStopIssued } from "../actions/api";
   import type { ActionCompletion, ActionHandle } from "../actions/types";
-  import { setPositionZero, startHoming as startHomingAction, startPhaseSearch as startPhaseSearchAction } from "./api";
+  import { setPositionZero, startHoming as startHomingAction, startPhaseSearch as startPhaseSearchAction, startEncoderCalibration as startEncoderCalibrationAction } from "./api";
 
   type Props = { connection: ConnectionInfo | undefined; motorState: MotorState | null; onError?: (error: unknown) => void };
   type PhaseState = "idle" | "running" | "success" | "stopped" | "failed" | "unverified";
@@ -22,9 +22,10 @@
   const ENCODER_PROTOCOL_SYMBOL = "PARAM_ENCODER_PROTOCOL";
   const ENCODER_SPI_TYPE_SYMBOL = "PARAM_ENCODER_SPI_TYPE";
   const ABZ_PPR_SYMBOL = "PARAM_ENCODER_ABZ_PPR";
+  const CAL_VALID_SYMBOL = "PARAM_CAL_VALID";
   const ZERO_VALID_SYMBOL = "PARAM_POSITION_ZERO_VALID";
   const ALL_PARAMETER_SYMBOLS = [PHASE_CURRENT_SYMBOL, MOTOR_DIR_SYMBOL,
-    ENCODER_PROTOCOL_SYMBOL, ENCODER_SPI_TYPE_SYMBOL, ABZ_PPR_SYMBOL, ZERO_VALID_SYMBOL];
+    ENCODER_PROTOCOL_SYMBOL, ENCODER_SPI_TYPE_SYMBOL, ABZ_PPR_SYMBOL, ZERO_VALID_SYMBOL, CAL_VALID_SYMBOL];
 
   let { connection, motorState, onError = () => undefined }: Props = $props();
   const parameters = selectParameters(ALL_PARAMETER_SYMBOLS);
@@ -42,6 +43,11 @@
   let pendingPhaseHandle = $state<string | null>(null);
   let earlyPhaseCompletion: ActionCompletion | undefined;
   let phaseRequestGeneration = 0;
+  let calibrationState = $state<PhaseState>("idle");
+  let calibrationMessage = $state("");
+  let pendingCalibrationHandle = $state<string | null>(null);
+  let earlyCalibrationCompletion: ActionCompletion | undefined;
+  let calibrationRequestGeneration = 0;
   let homingState = $state<HomingState>("idle");
   let homingMessage = $state("");
   let pendingHomingHandle = $state<string | null>(null);
@@ -51,8 +57,9 @@
 
   $effect(() => {
     connection;
-    ++phaseRequestGeneration; ++homingRequestGeneration;
+    ++phaseRequestGeneration; ++homingRequestGeneration; ++calibrationRequestGeneration;
     phaseState = "idle"; phaseMessage = ""; pendingPhaseHandle = null; earlyPhaseCompletion = undefined;
+    calibrationState = "idle"; calibrationMessage = ""; pendingCalibrationHandle = null; earlyCalibrationCompletion = undefined;
     homingState = "idle"; homingMessage = ""; pendingHomingHandle = null; earlyHomingCompletion = undefined;
     zeroActionBusy = false;
   });
@@ -69,13 +76,17 @@
         ++phaseRequestGeneration; pendingPhaseHandle = null; earlyPhaseCompletion = undefined;
         phaseState = "stopped"; phaseMessage = "";
       }
+      if (calibrationState === "running") {
+        ++calibrationRequestGeneration; pendingCalibrationHandle = null; earlyCalibrationCompletion = undefined;
+        calibrationState = "stopped"; calibrationMessage = "";
+      }
       if (homingState === "running") {
         ++homingRequestGeneration; pendingHomingHandle = null; earlyHomingCompletion = undefined;
         homingState = "stopped"; homingMessage = "";
       }
     }));
     return () => {
-      disposed = true; ++phaseRequestGeneration; ++homingRequestGeneration;
+      disposed = true; ++phaseRequestGeneration; ++homingRequestGeneration; ++calibrationRequestGeneration;
       listeners.forEach((stop) => stop());
     };
   });
@@ -92,6 +103,14 @@
   function isWritable(symbol: string): boolean { return !$parameters.loading && !$parameters.saving && canWriteInMotorState(metadata[symbol], motorState); }
   function hasPendingEdits() { return $edits.dirty.size > 0 || writing.size > 0; }
   function phaseSearchAvailable(): boolean { return connection?.commissioning?.phaseSearch ?? false; }
+  function calibrationAvailable(): boolean { return connection?.commissioning?.encoderCalibration ?? false; }
+  function encoderBusy(): boolean { return phaseState === "running" || calibrationState === "running" || homingState === "running"; }
+  function calibrationStatusText(): string {
+    const valid = numericValue(CAL_VALID_SYMBOL);
+    return valid === 0 ? translate("encoder.calibration.none", $uiLanguage)
+      : valid === 1 ? translate("encoder.calibration.phase.only", $uiLanguage)
+      : valid === 2 ? translate("encoder.calibration.valid", $uiLanguage) : "—";
+  }
   function setZeroAvailable(): boolean { return connection?.commissioning?.positionSetZero ?? false; }
   function homingAvailable(): boolean { return connection?.commissioning?.homing ?? false; }
   function enumLabel(symbol: string): string { return symbol.replace(/^ENC_PROTOCOL_/, "").replace(/^ENC_SPI_/, "").replaceAll("_", " "); }
@@ -122,7 +141,7 @@
   function handleKeydown(event: KeyboardEvent, symbol: string) { edits.keydown(event, symbol, onError); }
 
   async function startPhaseSearch() {
-    if (!connection || !phaseSearchAvailable() || phaseState === "running" || hasPendingEdits()) return;
+    if (!connection || !phaseSearchAvailable() || encoderBusy() || hasPendingEdits()) return;
     const request = ++phaseRequestGeneration;
     phaseState = "running"; phaseMessage = ""; pendingPhaseHandle = null; earlyPhaseCompletion = undefined;
     try {
@@ -138,6 +157,23 @@
       }
     }
   }
+  async function startEncoderCalibration() {
+    if (!connection || !calibrationAvailable() || encoderBusy() || hasPendingEdits()) return;
+    const request = ++calibrationRequestGeneration;
+    calibrationState = "running"; calibrationMessage = ""; pendingCalibrationHandle = null; earlyCalibrationCompletion = undefined;
+    try {
+      const handle = handleKey(await startEncoderCalibrationAction());
+      if (request !== calibrationRequestGeneration || calibrationState !== "running") return;
+      pendingCalibrationHandle = handle;
+      const early = earlyCalibrationCompletion;
+      earlyCalibrationCompletion = undefined;
+      if (early && handleKey(early) === handle) handleActionCompleted(early);
+    } catch (error) {
+      if (request === calibrationRequestGeneration) {
+        calibrationState = "failed"; calibrationMessage = String(error); onError(error);
+      }
+    }
+  }
   function handleActionCompleted(completion: ActionCompletion) {
     const key = handleKey(completion);
     if (phaseState === "running" && completion.operation === "encoder.phaseSearch") {
@@ -146,6 +182,14 @@
       pendingPhaseHandle = null;
       phaseState = !completion.ok ? "failed" : completion.readbackError ? "unverified" : "success";
       phaseMessage = !completion.ok ? completion.status : completion.readbackError ?? "";
+      return;
+    }
+    if (calibrationState === "running" && completion.operation === "encoder.calibration") {
+      if (pendingCalibrationHandle === null) { earlyCalibrationCompletion = completion; return; }
+      if (key !== pendingCalibrationHandle) return;
+      pendingCalibrationHandle = null;
+      calibrationState = !completion.ok ? "failed" : completion.readbackError ? "unverified" : "success";
+      calibrationMessage = !completion.ok ? completion.status : completion.readbackError ?? "";
       return;
     }
     if (homingState === "running" && completion.operation === "encoder.homing") {
@@ -157,13 +201,13 @@
     }
   }
   async function setCurrentAsZero() {
-    if (!setZeroAvailable() || zeroActionBusy) return;
+    if (!setZeroAvailable() || zeroActionBusy || encoderBusy()) return;
     zeroActionBusy = true;
     try { await setPositionZero(); }
     catch (error) { onError(error); } finally { zeroActionBusy = false; }
   }
   async function startHoming() {
-    if (!homingAvailable() || homingState === "running" || hasPendingEdits()) return;
+    if (!homingAvailable() || encoderBusy() || hasPendingEdits()) return;
     const request = ++homingRequestGeneration;
     homingState = "running"; homingMessage = ""; pendingHomingHandle = null; earlyHomingCompletion = undefined;
     try {
@@ -198,7 +242,7 @@
                 <div>
                   {#if metadata[ENCODER_PROTOCOL_SYMBOL]}
                     <select class:ramModified={$modifiedParameterIds.has(metadata[ENCODER_PROTOCOL_SYMBOL].id)} class="compact-select"
-                      disabled={!isWritable(ENCODER_PROTOCOL_SYMBOL) || writing.has(ENCODER_PROTOCOL_SYMBOL) || phaseState === "running"}
+                      disabled={!isWritable(ENCODER_PROTOCOL_SYMBOL) || writing.has(ENCODER_PROTOCOL_SYMBOL) || encoderBusy()}
                       value={encoderProtocolValue ?? ""} onchange={(event) => void setU8(ENCODER_PROTOCOL_SYMBOL, Number(event.currentTarget.value))}>
                       {#each enumOptions(ENCODER_PROTOCOL_SYMBOL) as option}<option value={option.value}>{option.label}</option>{/each}
                     </select>
@@ -209,7 +253,7 @@
                   <div>
                     {#if metadata[ENCODER_SPI_TYPE_SYMBOL]}
                       <select class:ramModified={$modifiedParameterIds.has(metadata[ENCODER_SPI_TYPE_SYMBOL].id)} class="compact-select"
-                        disabled={!isWritable(ENCODER_SPI_TYPE_SYMBOL) || writing.has(ENCODER_SPI_TYPE_SYMBOL) || phaseState === "running"}
+                        disabled={!isWritable(ENCODER_SPI_TYPE_SYMBOL) || writing.has(ENCODER_SPI_TYPE_SYMBOL) || encoderBusy()}
                         value={encoderSpiTypeValue ?? ""} onchange={(event) => void setU8(ENCODER_SPI_TYPE_SYMBOL, Number(event.currentTarget.value))}>
                         {#each enumOptions(ENCODER_SPI_TYPE_SYMBOL) as option}<option value={option.value}>{option.label}</option>{/each}
                       </select>
@@ -220,7 +264,7 @@
                   <div class="field-label">{parameterLabel(ABZ_PPR_SYMBOL, "PPR")}</div>
                   <div><span class="inline-editor">
                     <input class:ramModified={$modifiedParameterIds.has(metadata[ABZ_PPR_SYMBOL].id)} class="compact-input mono"
-                      value={drafts[ABZ_PPR_SYMBOL] ?? ""} disabled={!isWritable(ABZ_PPR_SYMBOL) || writing.has(ABZ_PPR_SYMBOL) || phaseState === "running"}
+                      value={drafts[ABZ_PPR_SYMBOL] ?? ""} disabled={!isWritable(ABZ_PPR_SYMBOL) || writing.has(ABZ_PPR_SYMBOL) || encoderBusy()}
                       oninput={(event) => edits.edit(ABZ_PPR_SYMBOL, event.currentTarget.value)} onkeydown={(event) => handleKeydown(event, ABZ_PPR_SYMBOL)} onblur={() => edits.discard(ABZ_PPR_SYMBOL)} />
                     <span class="unit">{unitFor(ABZ_PPR_SYMBOL)}</span>
                   </span></div>
@@ -235,7 +279,7 @@
                   {#if metadata[PHASE_CURRENT_SYMBOL]}
                     <span class="inline-editor">
                       <input class:ramModified={$modifiedParameterIds.has(metadata[PHASE_CURRENT_SYMBOL].id)} class="compact-input mono"
-                        value={drafts[PHASE_CURRENT_SYMBOL] ?? ""} disabled={!isWritable(PHASE_CURRENT_SYMBOL) || writing.has(PHASE_CURRENT_SYMBOL) || phaseState === "running"}
+                        value={drafts[PHASE_CURRENT_SYMBOL] ?? ""} disabled={!isWritable(PHASE_CURRENT_SYMBOL) || writing.has(PHASE_CURRENT_SYMBOL) || encoderBusy()}
                         oninput={(event) => edits.edit(PHASE_CURRENT_SYMBOL, event.currentTarget.value)} onkeydown={(event) => handleKeydown(event, PHASE_CURRENT_SYMBOL)} onblur={() => edits.discard(PHASE_CURRENT_SYMBOL)} />
                       <span class="unit">{unitFor(PHASE_CURRENT_SYMBOL)}</span>
                     </span>
@@ -244,7 +288,7 @@
                 <div class="field-label">{translate("ui.phase.search", $uiLanguage)}</div>
                 <div class="action-line">
                   <!-- svelte-ignore a11y_click_events_have_key_events, a11y_no_static_element_interactions (vscode-button provides button semantics and keyboard handling) -->
-                  <vscode-button secondary disabled={!phaseSearchAvailable() || phaseState === "running" || hasPendingEdits()}
+                  <vscode-button secondary disabled={!phaseSearchAvailable() || encoderBusy() || hasPendingEdits()}
                     title={phaseSearchAvailable() ? "Start phase search" : "Required phase-search capabilities are not exposed by this firmware"}
                     onclick={() => void startPhaseSearch()}>{translate("ui.start", $uiLanguage)}</vscode-button>
                   {#if phaseState === "running"}<span class="action-status state-running"><i class="codicon codicon-loading codicon-modifier-spin"></i> {translate("ui.running", $uiLanguage)}</span>
@@ -254,11 +298,27 @@
                   {:else if phaseState === "failed"}<span class="action-status state-failed" title={phaseMessage}><i class="codicon codicon-error"></i> {translate("ui.failed", $uiLanguage)}</span>{/if}
                   {#if (phaseState === "failed" || phaseState === "unverified") && phaseMessage}<span class="action-reason" role="alert">{#if phaseState === "unverified"}{translate("actions.readback.unverified.explanation", $uiLanguage)} {/if}{localizeFeedback(phaseMessage, $uiLanguage)}</span>{/if}
                 </div>
+                <div class="field-label">{translate("encoder.calibration.state", $uiLanguage)}</div>
+                <div class="readonly-value">{calibrationStatusText()}</div>
+                <div class="field-label">{translate("encoder.calibration.title", $uiLanguage)}</div>
+                <div class="action-line">
+                  <!-- svelte-ignore a11y_click_events_have_key_events, a11y_no_static_element_interactions (vscode-button provides keyboard handling) -->
+                  <vscode-button secondary disabled={!calibrationAvailable() || encoderBusy() || hasPendingEdits() || motorState === "RUN"}
+                    title={translate("encoder.calibration.note", $uiLanguage)}
+                    onclick={() => void startEncoderCalibration()}>{translate("encoder.calibration.start", $uiLanguage)}</vscode-button>
+                  {#if calibrationState === "running"}<span class="action-status state-running"><i class="codicon codicon-loading codicon-modifier-spin"></i> {translate("ui.running", $uiLanguage)}</span>
+                  {:else if calibrationState === "success"}<span class="action-status state-success"><i class="codicon codicon-check"></i> {translate("ui.success", $uiLanguage)}</span>
+                  {:else if calibrationState === "stopped"}<span class="action-status muted"><i class="codicon codicon-debug-stop"></i> {translate("ui.stopped", $uiLanguage)}</span>
+                  {:else if calibrationState === "unverified"}<span class="action-status muted">{translate("actions.readback.unverified.label", $uiLanguage)}</span>
+                  {:else if calibrationState === "failed"}<span class="action-status state-failed" title={calibrationMessage}><i class="codicon codicon-error"></i> {translate("ui.failed", $uiLanguage)}</span>{/if}
+                  {#if (calibrationState === "failed" || calibrationState === "unverified") && calibrationMessage}<span class="action-reason" role="alert">{localizeFeedback(calibrationMessage, $uiLanguage)}</span>{/if}
+                </div>
+                <div class="calibration-note">{translate("encoder.calibration.note", $uiLanguage)}</div>
                 <div class="field-label">{parameterLabel(MOTOR_DIR_SYMBOL, "Motor direction")}</div>
                 <div>
                   {#if metadata[MOTOR_DIR_SYMBOL]}
                     <select class:ramModified={$modifiedParameterIds.has(metadata[MOTOR_DIR_SYMBOL].id)} class="compact-select"
-                      disabled={!isWritable(MOTOR_DIR_SYMBOL) || writing.has(MOTOR_DIR_SYMBOL) || phaseState === "running"}
+                      disabled={!isWritable(MOTOR_DIR_SYMBOL) || writing.has(MOTOR_DIR_SYMBOL) || encoderBusy()}
                       value={motorDirectionValue} onchange={(event) => void setMotorDirection(event.currentTarget.value as "normal" | "reversed")}>
                       <option value="normal">{translate("ui.normal", $uiLanguage)}</option><option value="reversed">{translate("ui.reversed", $uiLanguage)}</option>
                     </select>
@@ -273,11 +333,11 @@
               <div class="reference-row"><span class="field-label">{parameterLabel(ZERO_VALID_SYMBOL, "Zero reference")}</span><span class="readonly-value">{localize(zeroReferenceText(), $uiLanguage)}</span></div>
               <div class="reference-actions">
                 <!-- svelte-ignore a11y_click_events_have_key_events, a11y_no_static_element_interactions (vscode-button provides button semantics and keyboard handling) -->
-                <vscode-button secondary disabled={!setZeroAvailable() || zeroActionBusy}
+                <vscode-button secondary disabled={!setZeroAvailable() || zeroActionBusy || encoderBusy()}
                   title={setZeroAvailable() ? "Set current position as mechanical zero" : "Position-zero operation is not exposed by this firmware"}
                   onclick={() => void setCurrentAsZero()}>{translate("ui.set.current.as.zero", $uiLanguage)}</vscode-button>
                 <!-- svelte-ignore a11y_click_events_have_key_events, a11y_no_static_element_interactions (vscode-button provides button semantics and keyboard handling) -->
-                <vscode-button secondary disabled={!homingAvailable() || homingState === "running" || hasPendingEdits()}
+                <vscode-button secondary disabled={!homingAvailable() || encoderBusy() || hasPendingEdits()}
                   title={homingAvailable() ? "Start software homing" : "Homing operation is not exposed by this firmware"}
                   onclick={() => void startHoming()}>{translate("ui.software.homing", $uiLanguage)}</vscode-button>
               </div>
@@ -297,6 +357,7 @@
 </div>
 
 <style>
+  .calibration-note { grid-column: 1 / -1; color: var(--vscode-descriptionForeground); font-size: 11px; line-height: 1.6; max-width: 440px; }
   .encoder-root { min-width: 0; min-height: 0; display: grid; grid-template-rows: auto 1fr; }
   .encoder-content { min-width: 0; min-height: 0; overflow: auto; padding: 22px 28px 36px; }
   .encoder-sheet { max-width: 980px; }

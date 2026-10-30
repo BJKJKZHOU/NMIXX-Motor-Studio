@@ -1,4 +1,5 @@
 mod automation_commands;
+mod schema_path;
 use std::sync::Mutex;
 use std::time::Duration;
 use nmixx_app::{
@@ -197,6 +198,8 @@ struct TuningExperimentStatusDto { state: &'static str, message: Option<String> 
 struct TuningExperimentSnapshotDto {
     status: TuningExperimentStatusDto, config: ScopeConfigDto, snapshot: ScopeSnapshotDto,
     recorded_seconds: f64, window_seconds: f64, end_offset_seconds: f64,
+    position_origin_turns: Option<f64>, position_channel_ids: Vec<u16>,
+    capture_id: u64, planned_duration_seconds: Option<f64>,
 }
 fn stream_state_name(state: StreamState) -> &'static str {
     match state { StreamState::Stopped => "STOPPED", StreamState::Live => "LIVE", StreamState::Capturing => "CAPTURING", StreamState::Paused => "PAUSED" }
@@ -252,9 +255,10 @@ fn action_handle_dto(handle: ActionHandle) -> ActionHandleDto { ActionHandleDto 
 fn device_list() -> Result<Vec<String>, String> { ApplicationSession::available_usb_ports().map_err(|error| error.to_string()) }
 #[tauri::command]
 async fn device_connect(app_handle: tauri::AppHandle, state: State<'_, Mutex<DesktopState>>, port: String, schema_path: String, baud: Option<u32>) -> Result<ConnectionDto, String> {
+    let schema_path = schema_path::resolve_schema_path(&schema_path)?;
+    let schema = HostSchema::load(&schema_path).map_err(|error| error.to_string())?;
     disconnect_application(&state)?;
     let motion = state.lock().map_err(|_| "desktop state is poisoned".to_owned())?.motion.clone();
-    let schema = HostSchema::load(&schema_path).map_err(|error| error.to_string())?;
     let app = ApplicationSession::open_usb_with_motion(&port, baud.unwrap_or(DEFAULT_USB_BAUD), schema, motion)
         .map_err(|error| error.to_string())?;
     for (id, result) in app.parameter_refresh_all().map_err(|error| error.to_string())? {
@@ -426,6 +430,10 @@ async fn phase_search_start(app_handle: tauri::AppHandle, state: State<'_, Mutex
     start_async_semantic_action(app_handle, application(&state)?, "encoder.phaseSearch", |app| app.phase_search_start())
 }
 #[tauri::command]
+async fn encoder_calibration_start(app_handle: tauri::AppHandle, state: State<'_, Mutex<DesktopState>>) -> Result<ActionHandleDto, String> {
+    start_async_semantic_action(app_handle, application(&state)?, "encoder.calibration", |app| app.encoder_calibration_start())
+}
+#[tauri::command]
 async fn homing_start(app_handle: tauri::AppHandle, state: State<'_, Mutex<DesktopState>>) -> Result<ActionHandleDto, String> {
     start_async_semantic_action(app_handle, application(&state)?, "encoder.homing", |app| app.homing_start())
 }
@@ -491,11 +499,17 @@ fn tuning_experiment_status(state: State<'_, Mutex<DesktopState>>) -> Result<Tun
 #[tauri::command]
 fn tuning_experiment_snapshot(state: State<'_, Mutex<DesktopState>>, window_seconds: Option<f64>, end_offset_seconds: Option<f64>, max_points: Option<usize>) -> Result<TuningExperimentSnapshotDto, String> {
     let app = application(&state)?;
+    // 零点属于整次采集，而非下方裁剪/抽稀后的窗口；回看历史也必须保持同一位移基准。
+    let position_origin_turns = app.tuning_record_position_origin().map_err(|error| error.to_string())?;
+    let position_channel_ids = app.parameter_metadata().iter()
+        .filter(|meta| meta.type_name == "position").map(|meta| meta.id).collect();
+    let (capture_id, planned_duration_seconds) = app.tuning_record_time_plan().map_err(|error| error.to_string())?;
     let status = app.tuning_experiment_status().map_err(|error| error.to_string())?;
     let config = app.tuning_record_config().map_err(|error| error.to_string())?;
     let scope_status = app.tuning_record_status().map_err(|error| error.to_string())?;
     let recorded_seconds = app.tuning_record_duration().map_err(|error| error.to_string())?.as_secs_f64();
-    let default_window = if matches!(status.state, TuningExperimentState::Preparing | TuningExperimentState::Running | TuningExperimentState::Stopping) { 3.0 } else { recorded_seconds.max(0.0005) };
+    // 默认读取从采集起点到当前的全部记录；只取尾部会让已经画出的加速段随刷新消失。
+    let default_window = recorded_seconds.max(0.0005);
     let window_seconds = window_seconds.unwrap_or(default_window).clamp(0.0005, recorded_seconds.max(0.0005));
     let max_offset = (recorded_seconds - window_seconds).max(0.0);
     let end_offset_seconds = end_offset_seconds.unwrap_or(0.0).clamp(0.0, max_offset);
@@ -513,6 +527,7 @@ fn tuning_experiment_snapshot(state: State<'_, Mutex<DesktopState>>, window_seco
             series,
         },
         recorded_seconds, window_seconds, end_offset_seconds,
+        position_origin_turns, position_channel_ids, capture_id, planned_duration_seconds,
     })
 }
 #[tauri::command]
@@ -560,6 +575,7 @@ fn scope_snapshot(state: State<'_, Mutex<DesktopState>>, window_seconds: Option<
 fn main() {
     tauri::Builder::default().plugin(tauri_plugin_dialog::init()).manage(Mutex::new(DesktopState::default()))
         .invoke_handler(tauri::generate_handler![
+            schema_path::default_schema_path,
             automation_commands::automation_builtin, automation_commands::automation_open_script,
             automation_commands::automation_save_script,
             automation_commands::automation_start, automation_commands::automation_snapshot,
@@ -569,7 +585,7 @@ fn main() {
             problems_clear_history, phase_search_preflight,
             identification_preflight, identification_start, identification_apply_candidate, identification_apply,
             motor_enable, motor_stop, motor_disable, protection_clear, config_save_available, config_save,
-            phase_search_start, homing_start, encoder_set_zero, motion_get, motion_set, motion_preview, motion_run, motion_stop,
+            phase_search_start, encoder_calibration_start, homing_start, encoder_set_zero, motion_get, motion_set, motion_preview, motion_run, motion_stop,
             tuning_experiment_defaults, tuning_experiment_start, tuning_experiment_stop, tuning_experiment_status,
             tuning_experiment_snapshot, scope_configure, scope_live, scope_pause, scope_stop, scope_clear, scope_status, scope_snapshot,
         ])

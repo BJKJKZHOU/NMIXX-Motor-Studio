@@ -62,9 +62,8 @@
   let experimentSnapshot = $state<TuningExperimentSnapshot | undefined>(undefined);
   let experimentRefreshBusy = false;
   let generation = 0;
-  let waveformTab = $state<"waveform" | "channels" | "scale">("waveform");
+  let waveformTab = $state<"waveform" | "channels">("waveform");
   let tuningSelections = $state<Record<number, "fast" | "normal">>({});
-  let displayMultipliers = $state<Record<number, number>>({});
   let tuningSelectionMode = $state<MotionMode | undefined>(undefined);
   let tuningSelectionRevision = 0;
   let tuningTimePerDiv = $state(20e-3);
@@ -84,7 +83,7 @@
     ++generation;
     tuningSelectionMode = undefined;
     if (!activeConnection) {
-      tuningSelections = {}; displayMultipliers = {}; experimentState = "IDLE";
+      tuningSelections = {}; experimentState = "IDLE";
       experimentMessage = ""; experimentSnapshot = undefined;
     }
   });
@@ -195,9 +194,8 @@
       const defaults = await tuningExperimentDefaults();
       if (token !== generation || mode !== tuningSelectionMode || selectionRevision !== tuningSelectionRevision) return;
       const next: Record<number, "fast" | "normal"> = {};
-      const nextMultipliers = { ...displayMultipliers };
-      for (const selection of defaults) { next[selection.id] = selection.rate; if (!(selection.id in nextMultipliers)) nextMultipliers[selection.id] = 1; }
-      tuningSelections = next; displayMultipliers = nextMultipliers;
+      for (const selection of defaults) next[selection.id] = selection.rate;
+      tuningSelections = next;
     } catch (error) { if (token === generation) onError(error); }
   }
   function toggleTuningChannel(id: number, checked: boolean) {
@@ -207,7 +205,6 @@
       const channel = connection?.channels.find((item) => item.id === id);
       if (!channel) return;
       next[id] = channel.supportsFast ? "fast" : "normal";
-      if (!(id in displayMultipliers)) displayMultipliers = { ...displayMultipliers, [id]: 1 };
     } else delete next[id];
     tuningSelections = next;
     ++tuningSelectionRevision;
@@ -221,14 +218,6 @@
   async function setMotionProfile(value: number) {
     if (motionLocked() || locked(MOTION_PROFILE)) return;
     try { await edits.select(MOTION_PROFILE, { type: "u8", value }); } catch (error) { onError(error); }
-  }
-  function setDisplayMultiplier(id: number, value: number) {
-    if (Number.isFinite(value) && value > 0) displayMultipliers = { ...displayMultipliers, [id]: value };
-  }
-  function resetDisplayMultipliers() {
-    const next = { ...displayMultipliers };
-    for (const id of Object.keys(tuningSelections)) next[Number(id)] = 1;
-    displayMultipliers = next;
   }
   function experimentActive(): boolean { return experimentState === "PREPARING" || experimentState === "RUNNING" || experimentState === "STOPPING"; }
   function motionLocked(): boolean { return $parameters.loading || $parameters.saving || motorState === "RUN" || motionActionBusy || stopActionBusy || experimentActive(); }
@@ -245,7 +234,8 @@
       const active = status.state === "PREPARING" || status.state === "RUNNING" || status.state === "STOPPING";
       const finalTransition = (status.state === "COMPLETED" || status.state === "FAILED") && (previousState !== status.state || !experimentSnapshot);
       if (active || finalTransition) {
-        const snapshot = await readTuningExperimentSnapshot(tuningTimePerDiv * 10, 0);
+        // Time/div 是显示结果，不能再反过来截取“最近一段”；全程横轴需要保留运动起点的数据。
+        const snapshot = await readTuningExperimentSnapshot();
         if (token === generation && commandRevision === experimentCommandRevision) experimentSnapshot = snapshot;
       }
     } catch (error) {
@@ -307,15 +297,15 @@
           <!-- VSCode Elements owns tab selection, ARIA roles and keyboard navigation. -->
           <vscode-tabs class="waveform-tabs"
             aria-label={translate("tuning.experiment.waveform.aria", $uiLanguage)}
-            selected-index={["waveform", "channels", "scale"].indexOf(waveformTab)}
+            selected-index={["waveform", "channels"].indexOf(waveformTab)}
             onvsc-tabs-select={(event: CustomEvent<{ selectedIndex: number }>) => {
-              waveformTab = (["waveform", "channels", "scale"] as const)[event.detail.selectedIndex] ?? "waveform";
+              waveformTab = (["waveform", "channels"] as const)[event.detail.selectedIndex] ?? "waveform";
             }}>
             <vscode-tab-header>{translate("ui.waveform", $uiLanguage)}</vscode-tab-header>
             <vscode-tab-panel>
               <div class="waveform-tab-content">
               <div class="waveform-tools"><span>{translate("ui.time.div", $uiLanguage)}</span><strong>{tuningTimePerDiv >= 1 ? `${tuningTimePerDiv.toFixed(2)} s` : tuningTimePerDiv >= 1e-3 ? `${(tuningTimePerDiv * 1e3).toFixed(tuningTimePerDiv < 10e-3 ? 2 : 1)} ms` : `${Math.round(tuningTimePerDiv * 1e6)} µs`}</strong></div>
-              <ExperimentWaveform result={experimentSnapshot} multipliers={displayMultipliers} bind:timePerDiv={tuningTimePerDiv}
+              <ExperimentWaveform result={experimentSnapshot} bind:timePerDiv={tuningTimePerDiv}
                 onViewRequest={(windowSeconds, endOffsetSeconds, maxPoints) => void requestExperimentWindow(windowSeconds, endOffsetSeconds, maxPoints)} />
               </div>
             </vscode-tab-panel>
@@ -337,18 +327,6 @@
                 <div class="tuning-channel-limits" class:invalid={!selectionWithinLimits()}><span>FAST {selectedFastCount()} / {connection.fastMaxChannels}</span><span>NORMAL {selectedNormalCount()} / {connection.normalMaxChannels}</span></div>
               </div>
               </div>
-            </vscode-tab-panel>
-            <vscode-tab-header>{translate("ui.scale", $uiLanguage)}</vscode-tab-header>
-            <vscode-tab-panel>
-              <div class="waveform-tab-content">
-              <div class="tuning-scale-list">
-                {#each connection.channels.filter((channel) => tuningSelections[channel.id] !== undefined) as channel (channel.id)}
-                  <label class="tuning-scale-row"><span>{channel.label}</span><span class="scale-editor"><span>×</span>
-                    <input class="compact-input mono" type="number" min="0.000001" step="any" value={displayMultipliers[channel.id] ?? 1} onchange={(event) => setDisplayMultiplier(channel.id, Number(event.currentTarget.value))} />
-                  </span></label>
-                {/each}
-                <div class="tuning-scale-actions"><button onclick={resetDisplayMultipliers}>{translate("tuning.scale.reset.multiplier", $uiLanguage)}</button></div>
-              </div>              </div>
             </vscode-tab-panel>
           </vscode-tabs>
         </section>
@@ -466,21 +444,15 @@
   .waveform-panel { padding: 14px; min-height: 430px; }
   .waveform-heading { display: flex; align-items: baseline; justify-content: space-between; gap: 12px; }
   .waveform-tabs { display: block; margin-top: 8px; border: 0; --vscode-font-size: 11px; }
-  .waveform-tab-content { min-width: 0; min-height: 340px; height: 340px; padding-top: 8px; }
+  .waveform-tab-content { min-width: 0; min-height: 380px; height: 380px; padding-top: 8px; display: flex; flex-direction: column; }
   .waveform-tools { height: 20px; display: flex; justify-content: flex-end; gap: 6px; align-items: baseline; color: var(--vscode-descriptionForeground); font-size: 10px; }
   .waveform-tools strong { color: var(--vscode-foreground); font-weight: 500; }
-  .tuning-channel-list, .tuning-scale-list { height: 100%; overflow: auto; }
-  .tuning-channel-row, .tuning-scale-row { min-height: 30px; display: grid; grid-template-columns: minmax(0, 1fr) 94px; align-items: center; gap: 10px; border-bottom: 1px solid color-mix(in srgb, var(--vscode-panel-border) 55%, transparent); font-size: 12px; }
+  .tuning-channel-list { height: 100%; overflow: auto; }
+  .tuning-channel-row { min-height: 30px; display: grid; grid-template-columns: minmax(0, 1fr) 94px; align-items: center; gap: 10px; border-bottom: 1px solid color-mix(in srgb, var(--vscode-panel-border) 55%, transparent); font-size: 12px; }
   .tuning-channel-row label { min-width: 0; display: grid; grid-template-columns: auto minmax(0, 1fr) auto; align-items: center; gap: 7px; }
   .tuning-channel-row small { color: var(--vscode-descriptionForeground); font-size: 10px; }
   .tuning-channel-limits { display: flex; gap: 16px; padding-top: 8px; color: var(--vscode-descriptionForeground); font-size: 10px; }
   .tuning-channel-limits.invalid { color: var(--nmixx-status-errorForeground); }
-  .tuning-scale-row > span:first-child { min-width: 0; }
-  .scale-editor { display: grid; grid-template-columns: auto 1fr; gap: 5px; align-items: center; }
-  .scale-editor input { width: 72px; }
-  .tuning-scale-actions { display: flex; justify-content: flex-end; padding-top: 8px; }
-  .tuning-scale-actions button { appearance: none; border: 0; background: transparent; color: var(--vscode-descriptionForeground); padding: 3px 0; font: inherit; font-size: 11px; cursor: pointer; }
-  .tuning-scale-actions button:hover { color: var(--vscode-foreground); }
   .experiment-status { color: var(--vscode-descriptionForeground); font-size: 10px; font-weight: 600; }
   .experiment-status.failed, .experiment-message { color: var(--nmixx-status-errorForeground); }
   .experiment-message { margin: -3px 0 8px; font-size: 11px; }

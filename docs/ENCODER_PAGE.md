@@ -231,37 +231,38 @@ Without a valid mechanical zero, position limits cannot be enabled because their
 
 The GUI must not reproduce motor-state orchestration required to perform phase search or homing.
 
-The current AxDr_L firmware starts phase search by selecting `PHASE_SEARCH` motor mode, executing the synchronous motor-enable action, and then using the finite motor-run action. That device-side composition is hidden by the Rust Application API:
+The current firmware groups phase search and harmonic encoder calibration under
+`ENCODER_CAL`. `ACTION_ENC_PHASE_START` (0x1402) starts phase search;
+`ACTION_ENC_CAL_START` (0x1401) starts harmonic calibration. Both require DISABLED.
+Ordinary Motor Run does not start either task.
 
-```text
-GUI / CLI / Automation
-        |
-        v
-phaseSearch.start()
-        |
-        v
-MotorActionService
-        |
-        +-- PARAM_MOTOR_MODE = PHASE_SEARCH
-        +-- ACTION_MOTOR_ENABLE
-        +-- successful Enable response means Enable is complete
-        +-- ACTION_MOTOR_RUN
-        +-- wait for the finite Run/phase-search completion
-        +-- expose that completion as semantic phase-search completion
-```
+The Application rejects RUN, disables an ENABLED motor, selects ENCODER_CAL while
+disabled, and sends only the requested task Action. Firmware owns Enable/Run,
+phase application, automatic saving and final Disable. The mode remains ENCODER_CAL.
+Clients use the semantic Application operations, not their own mode/Enable sequence.
 
-The desktop client calls the semantic phase-search command. It does not know or reproduce the firmware sequence.
+Encoder calibration appears below phase search. Its prerequisites include a valid
+phase alignment, healthy feedback, positive flux/inertia/observer bandwidth and
+acceleration/deceleration, and an effective speed limit of at least 1000 rpm.
+The firmware spins at 1000 rpm, samples angle error, applies harmonic correction,
+then repeats phase search and saves. There is no separate Apply button or fabricated
+percentage progress. Global Stop cancels the task; failure/cancellation may invalidate
+phase alignment, so the actual readback remains authoritative.
 
-Motor-state orchestration is part of that semantic operation as well:
+`PARAM_CAL_VALID`: 0 = no alignment, 1 = phase aligned only, 2 = phase aligned and
+encoder calibrated. The page shows this persistent state independently of the last
+button operation. Setup fields and competing tasks are locked while a task runs,
+including intermediate disabled fitting/saving stages. Firmware also rejects
+parameter writes throughout the active encoder procedure.
 
-- if the motor is `RUN`, Phase Search is rejected and the shared Stop operation must be used first;
-- if the motor is `ENABLED` in another mode, Application disables it, selects `PHASE_SEARCH` while DISABLED, then enables again;
-- if the motor is already `ENABLED` in `PHASE_SEARCH`, Application does not perform a redundant Disable/Enable cycle;
-- if the motor is `DISABLED`, Application selects `PHASE_SEARCH`, enables, and starts the finite Run.
+Completion is matched by transaction and Action ID. Application refreshes the cache
+and verifies DISABLED, ENCODER_CAL and the expected calibration validity before
+reporting success. A rejected start, failed completion or failed readback is reported.
+The firmware completion includes saving; acceptance alone is never success.
 
-The Encoder page must not add its own Enable/Disable sequence to compensate for firmware mode-write restrictions.
-
-This is intentionally an Application-level compatibility adapter. If firmware later exposes a native phase-search Action, only the Application implementation needs to change; Encoder GUI, CLI and automation semantics stay stable.
+CLI: `nmixxctl ... motor phase-search` or `nmixxctl ... motor encoder-calibration`.
+Automation uses `encoder.phase_search` or `encoder.calibrate` through the same
+Application operations and waits for completion.
 
 The same rule applies to future Set Zero and Homing operations: clients call semantic Application operations, while any required lower-level Parameter/Action composition remains inside the Application layer.
 

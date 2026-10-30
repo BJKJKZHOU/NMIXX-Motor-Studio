@@ -104,13 +104,11 @@ mod tests {
     fn discovers_firmware_motion_profile_and_shared_speed_target() {
         let schema = HostSchema::parse(
             r#"
-schema_version = 1
-protocol = "axdr-canfd-v1"
+protocol = "axdr-canfd"
 
 [source]
 repository = "AxDr_L_Motor"
 git_sha = "abc"
-parameter_schema = 1
 
 [[parameters]]
 symbol = "PARAM_MOTOR_MODE"
