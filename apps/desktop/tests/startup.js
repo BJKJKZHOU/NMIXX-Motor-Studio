@@ -87,10 +87,10 @@ mockIPC((command, args) => {
   if (command === "default_schema_path") return "/firmware/build/host/axdr-host-schema.toml";
   if (command === "plugin:dialog|open") return "/selected/axdr-host-schema.toml";
   if (command === "device_list" && fixture.has("ports")) return window.__nmixxPorts ?? ["/dev/serial/by-id/usb-MICROLINK_MICROLINK_CMSIS-DAP_012345ABCDEF-if01"];
-  if (command === "device_list") return fixture.has("motor-controls") || fixture.has("controllers") || fixture.has("encoder") || fixture.has("motion") ? ["COM7"] : [];
+  if (command === "device_list") return fixture.has("motor-controls") || fixture.has("controllers") || fixture.has("encoder") || fixture.has("motion") || fixture.has("tuning-navigation") ? ["COM7"] : [];
   if (command === "action_list") return [];
   if (command === "device_disconnect") return;
-  if (fixture.has("motor-controls") || fixture.has("controllers") || fixture.has("encoder") || fixture.has("motion")) {
+  if (fixture.has("motor-controls") || fixture.has("controllers") || fixture.has("encoder") || fixture.has("motion") || fixture.has("tuning-navigation")) {
     if (command === "device_connect") return {
       port: "COM7", fastMaxChannels: 4, normalMaxChannels: 8,
       fastBlockSamples: 5, fastRateHz: 20000, normalRateHz: 1000,
@@ -195,14 +195,16 @@ mockIPC((command, args) => {
 }, { shouldMockEvents: true });
 
 if (fixture.has("tuning-tabs")) {
+  const { getInstanceByDom } = await import("echarts/core");
+  window.__tuningChart = () => getInstanceByDom(document.querySelector(".tuning-root .scope-echarts-view"));
+}
+if (fixture.has("tuning-tabs") && !fixture.has("tuning-navigation")) {
   const { setUiLanguage } = await import("../src/i18n");
   setUiLanguage("en");
   await import("@vscode-elements/elements/dist/bundled.js");
   await import("../src/theme.css");
   const { mount } = await import("svelte");
   const { default: ControlTuningPage } = await import("../src/control/ControlTuningPage.svelte");
-  const { getInstanceByDom } = await import("echarts/core");
-  window.__tuningChart = () => getInstanceByDom(document.querySelector(".scope-echarts-view"));
   mount(ControlTuningPage, {
     target: document.getElementById("app"),
     props: {

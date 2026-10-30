@@ -14,12 +14,13 @@
   } from "../motion/parameters";
   import type { MotionMode, MotionState } from "../motion/types";
   import type { MotorState } from "../motor/state";
+  import { createTuningViewSettings, type TuningViewSettings } from "./tuningViewSettings";
   import ExperimentWaveform from "./ExperimentWaveform.svelte";
   import { readTuningExperimentSnapshot, startTuningExperiment, stopTuningExperiment,
     tuningExperimentDefaults, tuningExperimentStatus } from "./tuningExperiment";
   import type { TuningExperimentSnapshot, TuningExperimentState, TuningExperimentSelection } from "./tuningExperiment";
 
-  type Props = { connection: ConnectionInfo | undefined; motorState: MotorState | null; onError?: (error: unknown) => void };
+  type Props = { connection: ConnectionInfo | undefined; motorState: MotorState | null; viewSettings?: TuningViewSettings; onError?: (error: unknown) => void };
   type LoopSpec = { titleKey: MessageKey; bandwidth: string; source: string; gains: string[] };
   const CURRENT_BW = "PARAM_CTRL_CURRENT_BW_HZ";
   const CURRENT_SOURCE = "PARAM_CTRL_CURRENT_SOURCE";
@@ -45,7 +46,7 @@
   const motionModeLabels: Record<MotionMode, MessageKey> = {
     position: "ui.position", speed: "ui.speed", "sensorless-speed": "ui.sensorless.speed", torque: "ui.torque",
   };
-  let { connection, motorState, onError = () => undefined }: Props = $props();
+  let { connection, motorState, viewSettings = createTuningViewSettings(), onError = () => undefined }: Props = $props();
   const parameters = selectParameters(SYMBOLS);
   const edits = createParameterEditor(parameters, motionParameterCodec);
   let metadata = $derived($parameters.metadata);
@@ -305,7 +306,7 @@
             <vscode-tab-panel>
               <div class="waveform-tab-content">
               <div class="waveform-tools"><span>{translate("ui.time.div", $uiLanguage)}</span><strong>{tuningTimePerDiv >= 1 ? `${tuningTimePerDiv.toFixed(2)} s` : tuningTimePerDiv >= 1e-3 ? `${(tuningTimePerDiv * 1e3).toFixed(tuningTimePerDiv < 10e-3 ? 2 : 1)} ms` : `${Math.round(tuningTimePerDiv * 1e6)} µs`}</strong></div>
-              <ExperimentWaveform result={experimentSnapshot} bind:timePerDiv={tuningTimePerDiv}
+              <ExperimentWaveform result={experimentSnapshot} {viewSettings} bind:timePerDiv={tuningTimePerDiv}
                 onViewRequest={(windowSeconds, endOffsetSeconds, maxPoints) => void requestExperimentWindow(windowSeconds, endOffsetSeconds, maxPoints)} />
               </div>
             </vscode-tab-panel>

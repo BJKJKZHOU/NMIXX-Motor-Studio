@@ -262,6 +262,74 @@ def main() -> int:
                     finally:
                         context.close()
 
+                    # 通过真正的 App 导航销毁/重建页面，验证显示偏好不依赖组件存活。
+                    context = browser.new_context(viewport={"width": 1400, "height": 900})
+                    context.add_init_script("localStorage.setItem('nmixx.ui.language', 'en')")
+                    page = context.new_page()
+                    errors = []
+                    page.on("pageerror", lambda error: errors.append(str(error)))
+                    try:
+                        page.goto(url + "?tuning-tabs=1&tuning-navigation=1", wait_until="networkidle")
+                        page.locator(".connection-actions vscode-button").click()
+                        expect(page.locator(".connection-status")).to_contain_text("AxDr_L")
+                        tuning_nav = page.locator('nav.activity-bar button[title="Control Tuning"]')
+                        motor_nav = page.locator('nav.activity-bar button[title="Motor"]')
+                        tuning_nav.click()
+                        expect(page.locator(".tuning-root .scope-echarts-view canvas")).to_be_visible()
+                        channel = page.get_by_role("combobox", name="Channel", exact=True)
+                        gain = page.get_by_label("Scale ×", exact=True)
+                        y_min = page.get_by_label("Y min", exact=True)
+                        y_max = page.get_by_label("Y max", exact=True)
+                        gain.fill("5")
+                        gain.press("Enter")
+                        channel.select_option("1282")
+                        gain.fill("0.01")
+                        gain.press("Enter")
+                        y_min.fill("-10")
+                        y_min.press("Enter")
+                        y_max.fill("10")
+                        y_max.press("Enter")
+                        page.evaluate("window.__tuningChart().dispatchAction({type:'dataZoom', startValue:.2, endValue:.8})")
+                        page.evaluate("window.__tuningChart().dispatchAction({type:'legendToggleSelect', name:'Vbus'})")
+                        page.wait_for_function("window.__tuningChart().getOption().legend[0].selected.Vbus === false")
+                        for _ in range(2):
+                            motor_nav.click()
+                            expect(page.locator(".tuning-root .scope-echarts-view")).to_have_count(0)
+                            tuning_nav.click()
+                            expect(gain).to_have_value("0.01")
+                            expect(channel).to_have_value("1282")
+                            expect(y_min).to_have_value("-10")
+                            expect(y_max).to_have_value("10")
+                            page.wait_for_function("window.__tuningChart().getOption().dataZoom[0].startValue === .2")
+                            restored = page.evaluate("window.__tuningChart().getOption()")
+                            assert restored["dataZoom"][0]["endValue"] == .8
+                            assert restored["legend"][0]["selected"]["Vbus"] is False
+                            assert restored["series"][0]["name"] == "Iq ×5"
+                        # 新实验重置横轴，继续保留用于对比的倍率、Y 范围和图例显隐。
+                        motor_nav.click()
+                        page.evaluate("window.__tuningCaptureId = 2; window.__tuningPlannedSeconds = 4")
+                        tuning_nav.click()
+                        expect(gain).to_have_value("0.01")
+                        expect(y_max).to_have_value("10")
+                        page.wait_for_function("window.__tuningChart().getOption().dataZoom[0].endValue === 4")
+                        assert page.evaluate("window.__tuningChart().getOption().dataZoom[0].startValue") == 0
+                        assert page.evaluate("window.__tuningChart().getOption().legend[0].selected.Vbus") is False
+                        # 新连接不能继承旧会话采集编号对应的局部视图。
+                        page.locator('nav.activity-bar button[title="Connection"]').click()
+                        page.locator(".connection-actions vscode-button").click()
+                        expect(page.locator(".connection-status")).to_contain_text("Disconnected")
+                        page.locator(".connection-actions vscode-button").click()
+                        expect(page.locator(".connection-status")).to_contain_text("AxDr_L")
+                        tuning_nav.click()
+                        expect(channel).to_have_value("17")
+                        expect(gain).to_have_value("1")
+                        assert page.evaluate("window.__tuningChart().getOption().legend[0].selected.Vbus") is True
+                        assert not errors, errors
+                        assert not page.evaluate("window.__nmixxStartupRequests.some(x => ['parameter_write','motion_run','motor_enable','tuning_experiment_start'].includes(x))")
+                        print("PASS chromium: Tuning view survives App navigation; new capture resets only X; reconnect clears session view")
+                    finally:
+                        context.close()
+
                     # Script text stays editable. Run dispatches only the current editor
                     # snapshot, and Cancel uses the shared Automation task API.
                     context = browser.new_context(viewport={"width": 1400, "height": 900})

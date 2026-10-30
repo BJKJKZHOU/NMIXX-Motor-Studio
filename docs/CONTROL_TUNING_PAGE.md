@@ -381,6 +381,14 @@ steps instead of clipping samples. Speed/torque have no predetermined stop time
 and start with a 3 s extent that grows as needed. User zoom survives refreshes;
 double-click restores the full experiment, and a new capture resets X to its plan.
 
+Display settings are owned by the app shell for the current connection. Navigating
+to another page and back restores the selected channel, per-channel multipliers,
+common Y range, X zoom/pan and legend visibility. The page reloads the actual record
+from Application instead of retaining a stale waveform snapshot. A new experiment
+resets only X to its planned extent; Y settings and channel visibility remain.
+Disconnecting or replacing the connection clears the saved view because capture
+IDs and channel definitions belong to the device session.
+
 Generic plotting behavior remains shared with Scope:
 
 - ECharts owns waveform rendering, continuous horizontal zoom/pan, coordinate transforms and hover behavior;

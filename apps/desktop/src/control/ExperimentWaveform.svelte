@@ -2,28 +2,25 @@
   import { onDestroy } from "svelte";
   import { uiLanguage, translate } from "../i18n";
   import ScopeEchartsView from "../analysis/scope/ScopeEchartsView.svelte";
+  import { createTuningViewSettings, type TuningViewSettings } from "./tuningViewSettings";
   import { tuningWaveform, tuningTimeRange } from "./tuningWaveform";
   import type { TuningExperimentSnapshot } from "./tuningExperiment";
 
   type Props = {
     result: TuningExperimentSnapshot | undefined;
     timePerDiv?: number;
+    viewSettings?: TuningViewSettings;
     onViewRequest?: (windowSeconds: number, endOffsetSeconds: number, maxPoints: number) => void;
   };
-  let { result, timePerDiv = $bindable(20e-3), onViewRequest = () => undefined }: Props = $props();
+  let { result, viewSettings = createTuningViewSettings(), timePerDiv = $bindable(20e-3), onViewRequest = () => undefined }: Props = $props();
   type Range = [number, number];
   const horizontalDivisions = 10;
-  let selectedId = $state<number | undefined>();
-  let manualRange = $state<Range | undefined>();
-  let multipliers = $state<Record<number, number>>({});
-  let manualTimeRange = $state<Range | undefined>();
-  let lastCaptureId = $state<number | undefined>();
   let timeRange = $derived<Range>(result ? tuningTimeRange(result) : [0, 3]);
-  let viewRange = $derived<Range>(manualTimeRange ?? timeRange);
+  let viewRange = $derived<Range>($viewSettings.timeRange ?? timeRange);
   let viewRequestTimer: ReturnType<typeof setTimeout> | undefined;
   let display = $derived(result ? tuningWaveform(result) : undefined);
   let channels = $derived(display?.channels ?? []);
-  let active = $derived(channels.find((channel) => channel.id === selectedId) ?? channels[0]);
+  let active = $derived(channels.find((channel) => channel.id === $viewSettings.selectedId) ?? channels[0]);
   let defaultRange = $derived.by((): Range => {
     let min = Infinity;
     let max = -Infinity;
@@ -39,14 +36,14 @@
     const margin = Math.max((max - min) * 0.1, Math.abs(max) * 0.01, 0.001);
     return [min - margin, max + margin];
   });
-  let sharedYRange = $derived(manualRange ?? defaultRange);
-  let valueMultipliers = $derived(new Map(channels.map((channel) => [channel.id, multipliers[channel.id] ?? 1])));
+  let sharedYRange = $derived($viewSettings.yRange ?? defaultRange);
+  let valueMultipliers = $derived(new Map(channels.map((channel) => [channel.id, $viewSettings.multipliers[channel.id] ?? 1])));
 
   $effect(() => {
-    if (result && result.captureId !== lastCaptureId) {
-      // 新运动恢复全程视图；同次实验刷新时保留用户放大的区间，不被采样时长反复重置。
-      lastCaptureId = result.captureId;
-      manualTimeRange = undefined;
+    if (result && result.captureId !== $viewSettings.captureId) {
+      // 只在真正的新实验恢复全程横轴；返回同一次实验不能把页面重建误当成新运动。
+      // 比例和 Y 轴属于调图偏好，新实验也继续保留。
+      viewSettings.patch({ captureId: result.captureId, timeRange: undefined });
     }
   });
   $effect(() => { timePerDiv = (viewRange[1] - viewRange[0]) / horizontalDivisions; });
@@ -58,18 +55,17 @@
     const samples = display?.snapshot.series.find((series) => series.id === active.id)?.values ?? [];
     if (input.value.trim() && Number.isFinite(value) && value > 0
       && samples.every((sample) => !Number.isFinite(sample) || Number.isFinite(sample * value))) {
-      // A gain changes only this curve; freeze the common axis so it cannot cancel the gain.
-      manualRange = [...sharedYRange];
-      multipliers[active.id] = value;
+      // 倍率只改变曲线，公共 Y 轴范围同时固定，避免自动缩放抵消倍率效果。
+      viewSettings.patch({ yRange: [...sharedYRange], multipliers: { ...$viewSettings.multipliers, [active.id]: value } });
     }
-    input.value = numberText(multipliers[active.id] ?? 1);
+    input.value = numberText($viewSettings.multipliers[active.id] ?? 1);
   }
   function setBound(index: 0 | 1, input: HTMLInputElement) {
     const next: Range = [...sharedYRange];
     next[index] = Number(input.value);
     if (input.value.trim() && next.every(Number.isFinite) && next[0] < next[1]
       && Number.isFinite(next[1] - next[0])) {
-      manualRange = next;
+      viewSettings.patch({ yRange: next });
     }
     input.value = numberText(sharedYRange[index]);
   }
@@ -88,11 +84,11 @@
     }, delay);
   }
   function handleViewRangeChange(range: Range) {
-    manualTimeRange = range;
+    viewSettings.patch({ timeRange: range });
     scheduleViewRequest(range);
   }
   function returnToFull() {
-    manualTimeRange = undefined;
+    viewSettings.patch({ timeRange: undefined });
     scheduleViewRequest(timeRange, 0);
   }
   onDestroy(() => { if (viewRequestTimer) clearTimeout(viewRequestTimer); });
@@ -108,12 +104,12 @@
     {#if active}
       <div class="waveform-y-controls">
         <label class="axis-channel">{translate("tuning.waveform.channel", $uiLanguage)}
-          <select value={active.id} onchange={(event) => selectedId = Number(event.currentTarget.value)}>
+          <select value={active.id} onchange={(event) => viewSettings.patch({ selectedId: Number(event.currentTarget.value) })}>
             {#each channels as channel (channel.id)}<option value={channel.id}>{channel.label}{channel.unit ? ` (${channel.unit})` : ""}</option>{/each}
           </select>
         </label>
         <label>{translate("tuning.waveform.zoom", $uiLanguage)}
-          <input type="number" min="0.000001" step="any" value={multipliers[active.id] ?? 1} onchange={(event) => setMultiplier(event.currentTarget)} onkeydown={commitOnEnter} />
+          <input type="number" min="0.000001" step="any" value={$viewSettings.multipliers[active.id] ?? 1} onchange={(event) => setMultiplier(event.currentTarget)} onkeydown={commitOnEnter} />
         </label>
         <label>{translate("tuning.waveform.y.min", $uiLanguage)}
           <input type="number" step="any" value={numberText(sharedYRange[0])} onchange={(event) => setBound(0, event.currentTarget)} onkeydown={commitOnEnter} />
@@ -126,6 +122,8 @@
     <div class="waveform-chart">
       <ScopeEchartsView {channels} snapshot={display?.snapshot} {sharedYRange} {valueMultipliers}
         activeChannelId={active?.id} {viewRange} {timeRange} showLegend={true}
+        hiddenChannelIds={$viewSettings.hiddenChannelIds}
+        onChannelVisibilityChange={(hiddenChannelIds) => viewSettings.patch({ hiddenChannelIds })}
         onViewRangeChange={handleViewRangeChange} onDoubleClick={returnToFull} />
     </div>
   </div>

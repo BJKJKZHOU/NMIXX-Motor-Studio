@@ -24,6 +24,8 @@
   // 调参的完整计划时间可能大于已采样时间；不能用样本尾部强制裁掉尚未发生的轨迹区间。
   export let timeRange: [number, number] | undefined = undefined;
   export let showLegend = true;
+  export let hiddenChannelIds: number[] | undefined = undefined;
+  export let onChannelVisibilityChange: (ids: number[]) => void = () => undefined;
   export let onViewRangeChange: (range: [number, number]) => void = () => undefined;
   export let onDoubleClick: () => void = () => undefined;
 
@@ -51,6 +53,7 @@
     viewRange;
     timeRange;
     showLegend;
+    hiddenChannelIds;
     updateChart();
   }
 
@@ -66,6 +69,11 @@
   function traceColor(channel: ScopeDisplayChannel): string {
     const index = Math.max(0, channels.findIndex((item) => item.id === channel.id));
     return traceColors[index % traceColors.length];
+  }
+
+  function seriesName(channel: ScopeDisplayChannel): string {
+    const multiplier = sharedYRange ? valueMultipliers.get(channel.id) ?? 1 : 1;
+    return multiplier === 1 ? channel.label : `${channel.label} ×${multiplier}`;
   }
 
   function availableSeconds(): number {
@@ -113,7 +121,7 @@
       const color = traceColor(channel);
       const multiplier = sharedYRange ? valueMultipliers.get(channel.id) ?? 1 : 1;
       return {
-        name: multiplier === 1 ? channel.label : `${channel.label} ×${multiplier}`,
+        name: seriesName(channel),
         type: "line" as const,
         yAxisIndex: sharedYRange ? 0 : index,
         // The tooltip reads the raw engineering value, while Y renders the scaled value.
@@ -139,7 +147,11 @@
       animation: false,
       backgroundColor: "transparent",
       grid: { left: 76, right: 36, top: showLegend ? 42 : 18, bottom: 42, containLabel: false },
-      legend: showLegend ? { top: 4, right: 14, textStyle: { color: "#bdbdbd" } } : { show: false },
+      legend: showLegend ? {
+        top: 4, right: 14, textStyle: { color: "#bdbdbd" },
+        ...(hiddenChannelIds ? { selected: Object.fromEntries(channels.map((channel) =>
+          [seriesName(channel), !hiddenChannelIds!.includes(channel.id)])) } : {}),
+      } : { show: false },
       tooltip: {
         trigger: "axis",
         axisPointer: { type: "cross" },
@@ -215,6 +227,12 @@
         if (applyingOption) return;
         const range = zoomRange(event);
         if (range) onViewRangeChange(range);
+      });
+      chart.on("legendselectchanged", (event: any) => {
+        if (applyingOption || !hiddenChannelIds) return;
+        // 图例名称会随倍率改变；按通道 ID 保存显隐，避免改倍率或重建图表后已隐藏曲线重新出现。
+        onChannelVisibilityChange(channels.filter((channel) => event.selected[seriesName(channel)] === false)
+          .map((channel) => channel.id));
       });
       chart.getZr().on("dblclick", onDoubleClick);
     }

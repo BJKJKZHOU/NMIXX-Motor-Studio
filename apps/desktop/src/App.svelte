@@ -14,6 +14,7 @@
   import LimitsPage from "./limits/LimitsPage.svelte";
   import ControlPage from "./control/ControlPage.svelte";
   import ControlTuningPage from "./control/ControlTuningPage.svelte";
+  import { createTuningViewSettings } from "./control/tuningViewSettings";
   import MotionPage from "./motion/MotionPage.svelte";
   import EventsPage from "./events/EventsPage.svelte";
   import { clearProblemsProjection, problemSnapshot, refreshProblems, startProblemsTracking } from "./problems/state";
@@ -57,6 +58,7 @@
   let saveFeedbackTimer: ReturnType<typeof setTimeout> | undefined;
   let readingParameters = false;
   let connectionGeneration = 0;
+  const tuningViewSettings = createTuningViewSettings();
   let problemsOpen = false;
 
   const workflowPages: Array<{ id: Page; titleKey: MessageKey; icon: string }> = [
@@ -80,6 +82,7 @@
   }
   async function setConnection(next: ConnectionInfo | undefined) {
     const token = ++connectionGeneration;
+    tuningViewSettings.reset();
     clearAutomationProjection();
     clearProblemsProjection();
     clearRuntimeTelemetry();
@@ -251,7 +254,7 @@
           <button class:active={activeControlLoop === "position"} onclick={() => activeControlLoop = "position"}>{translate("ui.position.loop", $uiLanguage)}</button>
         </div>{/if}
       </aside><div class="control-domain-page"><ControlPage connection={readyConnection} {motorState} loop={activeControlLoop} onError={setError} /></div></div>
-    {:else if activePage === "tuning"}<div class="domain-page-container"><ControlTuningPage connection={readyConnection} {motorState} onError={setError} /></div>
+    {:else if activePage === "tuning"}<div class="domain-page-container"><ControlTuningPage connection={readyConnection} viewSettings={tuningViewSettings} {motorState} onError={setError} /></div>
     {:else if activePage === "motion"}<div class="domain-page-container"><MotionPage capabilities={readyConnection?.motion} {motorState} onError={setError} /></div>
     {:else if activePage === "parameters"}<div class="domain-page-container"><ParameterTablePage connection={readyConnection} {motorState} onError={setError} /></div>
     {:else if activePage === "events"}<div class="domain-page-container"><EventsPage connection={readyConnection} onNavigate={(page) => activePage = page} onError={setError} /></div>
