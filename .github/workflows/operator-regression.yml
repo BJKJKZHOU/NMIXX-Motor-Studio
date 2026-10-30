@@ -1,0 +1,73 @@
+name: Operator Regression
+
+on:
+  push:
+    branches:
+      - main
+      - dev/nmixx-unified
+  pull_request:
+    branches:
+      - main
+      - dev/nmixx-unified
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  desktop:
+    name: Frontend user flows
+    runs-on: ubuntu-latest
+    defaults:
+      run:
+        working-directory: apps/desktop
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: "22"
+          cache: npm
+          cache-dependency-path: apps/desktop/package-lock.json
+      - run: npm ci
+      - name: Test user operations, parameter state and Scope components
+        run: npm run test:all
+      - name: Compile Svelte UI and verify types
+        run: npm run build
+
+  browser:
+    name: Browser operator simulation (mock IPC)
+    runs-on: ubuntu-latest
+    defaults:
+      run:
+        working-directory: apps/desktop
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: "22"
+          cache: npm
+          cache-dependency-path: apps/desktop/package-lock.json
+      - run: npm ci
+      - name: Install Playwright and Chromium
+        run: |
+          python3 -m venv .venv-ui
+          .venv-ui/bin/pip install -r scripts/requirements-startup.txt
+          .venv-ui/bin/python -m playwright install --with-deps chromium
+      - name: Exercise real Svelte UI with mocked Tauri IPC
+        run: .venv-ui/bin/python scripts/test-startup.py --browser chromium
+
+  application:
+    name: Rust Application and simulated protocol
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: dtolnay/rust-toolchain@stable
+      - name: Install Linux WebKit / GTK and serial system dependencies
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y --no-install-recommends \
+            libgtk-3-dev libwebkit2gtk-4.1-dev libayatana-appindicator3-dev \
+            librsvg2-dev libudev-dev patchelf
+      - uses: Swatinem/rust-cache@v2
+      - name: Test Rust workspace
+        run: cargo test --workspace --locked

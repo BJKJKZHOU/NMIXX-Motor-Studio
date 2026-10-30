@@ -5,6 +5,10 @@ export function listDevices(): Promise<string[]> {
   return invoke<string[]>("device_list");
 }
 
+export function defaultSchemaPath(): Promise<string | null> {
+  return invoke<string | null>("default_schema_path");
+}
+
 export function connectDevice(port: string, schemaPath: string, baud?: number): Promise<ConnectionInfo> {
   return invoke<ConnectionInfo>("device_connect", { port, schemaPath, baud });
 }

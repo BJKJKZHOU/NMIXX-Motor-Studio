@@ -1,5 +1,7 @@
 # UI Interaction Rules
 
+> **Normative interaction contract.** These rules are not implementation notes and must not be changed merely because current code differs. See `docs/README.md`.
+
 ## Purpose
 
 This document defines interaction rules shared by NMIXX Motor Studio pages. These rules belong to the application workbench rather than to any one Motor, Encoder, Control, Tuning or Analysis page.
@@ -20,8 +22,9 @@ Current page
     domain-specific configuration and actions
 
 Bottom status bar
+    compact 中 / EN language toggle
     connection/device identity
-    live Current / Speed / Position
+    live Current / Speed / Position / Vbus
 ```
 
 Do not duplicate the same information in all three areas.
@@ -34,11 +37,33 @@ The intended top-toolbar composition is:
 
 The action group is aligned to the left edge of the main content area and must not extend over the left Activity Bar. The Problems indicator is aligned to the far right.
 
+## Interface language
+
+The desktop is **Chinese by default**. A compact `中 / EN` toggle appears in
+the **bottom-left status bar**, before connection status. Clicking it switches
+Chinese and English without reconnecting the device, changing a Parameter, or
+starting an Action. Persist a valid selection in `nmixx.ui.language` and
+restore it on the next launch; missing, invalid or inaccessible local storage
+must retain Chinese as the initial language.
+
+Translate normal workflow navigation, control labels, prompts, confirmation
+feedback and human-oriented HostSchema labels. Keep standard engineering
+symbols and units **unchanged in either language**, including `Rs`, `Ld`,
+`Lq`, `Flux`, `Id`, `Iq`, `Kp`, `Ki`, `RPM`, `rad/s`, `A`,
+`N·m`, `FAST` and `NORMAL`. Do not translate raw `PARAM_*`, `ACTION_*`,
+enumeration wire values, log contents, script source, or protocol error codes.
+Translated display copy is never written back to the firmware.
+
+The firmware's DISABLED/ENABLED/RUN state retains its uppercase protocol
+spelling where required (notably the global enable toggle). Status messages
+translate only their human-facing descriptions. Unknown diagnostics fall back
+to the source text rather than concealing essential failure details.
+
 ## Human-facing labels
 
-HostSchema `label` is the user-facing name for Parameters and Actions. Business pages, notifications, validation errors and accessibility text must use the label rather than firmware macro/symbol names.
+HostSchema `label` is the user-facing name for Parameters and metadata-driven expert surfaces. Semantic business operations such as Identification, Phase Search or Set Zero may use stable product labels owned by that workflow instead of exposing the underlying firmware Action metadata.
 
-`symbol` remains the stable programmatic key used by Application/GUI code to look up metadata and actions. It may be shown deliberately in expert/debug surfaces such as the generic Parameters table, logs or diagnostics, but it is not a fallback UI label.
+`symbol` remains the stable programmatic key used by Application code and expert tooling. It may be shown deliberately in expert/debug surfaces such as the generic Parameters table, logs or diagnostics, but it is never a fallback UI label for normal business pages.
 
 If expected metadata is unavailable, normal business UI should show an unavailable/missing state or an explicit human fallback defined by that workflow. It must not expose `PARAM_*`, `ACTION_*` or C variable-style names merely because schema lookup failed.
 
@@ -47,21 +72,39 @@ If expected metadata is unavailable, normal business UI should show an unavailab
 `Enable / Disable` and `Stop` are separate persistent motor controls in the top toolbar.
 
 ```text
-DISABLED   [ Enable ]   [ Stop ]
-ENABLED    [ Disable ]  [ Stop ]
-RUN        [ Disable ]  [ Stop ]
+DISABLED   [ DISABLED (red) ]   [ Stop ]
+ENABLED    [ ENABLED (green) ] [ Stop ]
+RUN        [ ENABLED (green) ] [ Stop ]
 ```
 
-The `Enable / Disable` control is one stable stateful button, not two separate buttons. Its label, icon and color show the action that will occur when it is pressed:
+The global motor Enable/Disable control is one stable **current-state** button, not two separate actions. Its uppercase label and color reflect the authoritative firmware Motor State, not the action pressing it will issue:
 
-- when the motor is disabled, the button presents `Enable` with the enable visual treatment;
-- when the motor is enabled or running, the same button presents `Disable` with the disable visual treatment.
+- `DISABLED`: red `DISABLED`, press to send `ACTION_MOTOR_ENABLE`;
+- `ENABLED`: green `ENABLED`, press to send `ACTION_MOTOR_DISABLE`;
+- `RUN`: green `ENABLED` (power stage still enabled), press to send `ACTION_MOTOR_DISABLE`;
+- disconnected/unknown state: neutral `UNKNOWN`, no Enable/Disable command available.
 
-The control must not rely on color alone. Text, icon and color change together so its action remains unambiguous across themes and for users who do not distinguish the colors reliably.
+The tooltip names the **next action** explicitly; the visible text/icon/color report **current state**. An Action acknowledgement must not optimistically reverse the state before canonical `PARAM_MOTOR_STATE` readback. If the Action is rejected, the displayed state remains unchanged. Colors remain paired with literal state text; they are not the sole status signal.
 
-`Stop` remains a separate button because stopping motion and changing motor enable state are different operations. The Stop control keeps a stable location even when it is currently unavailable; when no stoppable operation is active it is disabled/muted rather than removed.
+`Stop` remains a separate button because stopping motion and changing motor enable state are different operations. The host must not decide that Stop is unavailable merely because the current motor state is DISABLED or ENABLED. While a device is connected, pressing Stop immediately invokes the shared Application motor-stop semantic; the control is disabled only when the session is unavailable or a Stop request is already being issued.
 
 `Run` is not a generic global action. Run/Start belongs to the domain that defines what operation will execute.
+
+## Domain Start actions and informational dialogs
+
+Starting an explicit motor-domain operation (such as Rs/Ls, Flux or J/B
+identification) must not require a second operational Enable/Continue decision
+inside a modal dialog. One Start requests the semantic Application action;
+Application performs firmware mode changes, required Enable/Disable sequencing
+and preflight. The GUI reports readiness and outcomes beside the originating
+operation. It must not synthesize its own mode or motor-state commands.
+
+Safety/rotation information belongs in non-interactive, visible context near
+the action. A dialog used only to explain something does not issue control
+commands. Normal operation must not depend on confirming a modal to proceed.
+Global Stop/Disable remain independently available and authoritative motor
+state always comes from firmware readback. File chooser dialogs and explicitly
+required destructive-operation confirmation are separate concerns.
 
 ## Global parameter controls
 
@@ -109,6 +152,33 @@ This state is session-wide, not page-local:
 
 Do not confuse this with an input draft. A draft is text that has not yet been committed with Enter; the RAM-modified state begins only after the write succeeds.
 
+### Parameter editor commit semantics
+
+Numeric/text Parameter editors use one consistent commit model across business pages and the generic Parameters page:
+
+```text
+typing
+    -> local draft only
+
+Enter
+    -> validate draft
+    -> write active device RAM
+    -> read back canonical value
+    -> update the shared Parameter view
+
+Escape
+    -> discard draft and restore the current RAM value
+
+blur with an uncommitted draft
+    -> discard draft and restore the current RAM value
+```
+
+A normal Parameter editor must not write on every keystroke, and leaving the field must not implicitly commit a partially edited value.
+
+Discrete controls such as an enum selector, radio group or checkbox may commit immediately when one interaction produces one complete value. Their write still goes through the shared Parameter API and the committed device value remains authoritative.
+
+`Run`, `Start`, `Apply` or another later action must not be used as an implicit commit step for ordinary Parameter edits. If a workflow needs an execution-time value that is not itself a device Parameter (for example an incremental position delta that must be combined with the current position), that value is explicitly host-owned command state rather than an uncommitted Parameter draft.
+
 ## Stateful paired actions
 
 When two actions are mutually exclusive transitions of the same resource, use one stateful button in a stable location rather than two adjacent Start/Stop-style buttons.
@@ -117,12 +187,12 @@ Examples include:
 
 ```text
 Enable <-> Disable
-Start <-> Stop
 Record <-> Stop recording
-Start search <-> Abort search
 ```
 
-Use this pattern when the actions operate on the same task/resource and only one side is meaningful at a time. The button always describes the action that pressing it will perform.
+Use this pattern only when the domain itself owns both transitions of that resource and only one side is meaningful at a time. Most action buttons describe what pressing them will perform. **The global motor Enable/Disable button is explicitly different:** it displays the actual device enable state (`DISABLED`/`ENABLED`), with the next action explained by its tooltip.
+
+Motor operations are the important exception. Identification, Phase Search, Motion and Control Tuning share the workbench-level motor `Stop` semantic. Their page-level Start/Run controls must not invent an independent Abort/Stop path merely to form a visual pair. A domain page may expose a local Stop convenience control, but it must call the exact same Application motor-stop operation as the global Stop control.
 
 Do not merge unrelated actions merely because their names form a verbal pair. In particular, the global `Enable / Disable` button does not absorb the separate global `Stop` action, and domain-specific `Run` does not become a global toggle.
 
@@ -255,14 +325,21 @@ but single-device sessions should remain visually minimal.
 The right side is right-aligned and keeps this stable order:
 
 ```text
-Current    Speed    Position
+Current    Speed    Position    Vbus
 ```
 
 The intended meanings are:
 
 - **Current**: actual q-axis current `Iq` unless a future product decision explicitly changes the displayed quantity;
 - **Speed**: mechanical speed;
-- **Position**: user mechanical position, retaining the multi-turn `Turn + Theta` representation when appropriate.
+- **Position**: user mechanical position. The persistent status display is derived
+  from the 1 kHz baseline Plot total-turn signal and formats it as `Turn + Theta`
+  for presentation only; it does not replace the exact typed Position Parameter.
+- **Vbus**: sampled DC-bus voltage from the same connection-owned 1 kHz baseline.
+
+Current, Speed, Position and Vbus therefore share one runtime source. The device
+samples that baseline at 1 kHz; the desktop projects the latest values at its
+normal UI refresh cadence rather than issuing four independent Parameter reads.
 
 Page-specific acquisition information such as Scope state, FAST sample rate, selected channels or stream-loss counters belongs to Analysis, not to the global status bar.
 
@@ -272,8 +349,8 @@ Color reinforces state/action meaning but never carries it alone.
 
 Initial product convention:
 
-- `Enable`: green enable treatment;
-- `Disable`: red disable treatment;
+- global motor `DISABLED` state: red state treatment;
+- global motor `ENABLED` state, including firmware `RUN`: green state treatment;
 - `Stop`: visually distinct stop treatment with a stop-square symbol;
 - problem severity: distinct Info / Warning / Error-or-Fault treatment while always retaining icon semantics.
 

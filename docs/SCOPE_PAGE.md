@@ -1,5 +1,7 @@
 # Scope page interaction design
 
+> **Normative Scope interaction contract.** Implementation must conform to this behavior; do not rewrite this rule to excuse a temporary acquisition implementation. See `docs/README.md`.
+
 ## Purpose
 
 The Scope page is the general-purpose time-domain analysis surface in NMIXX Motor Studio. It behaves as a compact engineering waveform viewer for continuous acquisition and history inspection.
@@ -11,7 +13,7 @@ Triggering is intentionally excluded from the current Scope milestone.
 Scope owns:
 
 - channel selection and FAST/NORMAL acquisition rate selection;
-- continuous Run/Stop acquisition;
+- continuous Run/Stop waveform recording;
 - time-domain history viewing;
 - per-channel vertical scale and position;
 - continuous horizontal zoom and history pan;
@@ -27,6 +29,51 @@ Scope does not currently own:
 - control-tuning experiment sequencing.
 
 Trigger and Single-shot behavior must not be invented in the GUI before their acquisition semantics exist in the Application layer.
+
+## Shared acquisition and trace visibility
+
+The Application connection owns one physical acquisition stream, not this page.
+It continuously acquires the available baseline Iq, mechanical speed, position and
+Vbus NORMAL channels and retains ten seconds of recent history. The user-owned Scope
+record itself starts STOPPED on connection; baseline acquisition must not silently
+put Scope into LIVE before the user presses Run. A baseline trace
+is already a device channel before it is visible. Selecting/hiding it at its
+baseline rate changes only the view; all traces may be hidden without stopping
+runtime feedback. Existing history is available when a trace is revealed.
+
+The connection-owned runtime channels are special only when viewed at their
+baseline NORMAL rate:
+
+```text
+PARAM_RUN_IQ
+PARAM_RUN_WM
+PARAM_RUN_POSITION
+PARAM_ADC_VBUS
+```
+
+Selecting or hiding one of those channels at NORMAL is a **visibility change only**.
+It does not start/stop acquisition and does not add/remove a device Plot channel,
+because the 1 kHz baseline already owns that source. Changing one of the same IDs
+to FAST stops being the free baseline view and becomes a normal Scope acquisition
+demand.
+
+Before the first Scope Run, selected baseline NORMAL traces show the rolling
+baseline history while the Scope recording state remains STOPPED. This is a
+preview, not an implicit Scope recording. Pressing Run creates the first independent
+Scope record, seeds available recent baseline history, changes Scope to LIVE, and
+then appends new samples. After Stop, the frozen Scope record is authoritative;
+the page must not silently substitute newer baseline samples into that frozen
+record.
+
+Only the merged baseline + live Scope + active Tuning demand is sent to firmware.
+Duplicate parameter IDs are transmitted once; a required FAST source serves a
+NORMAL consumer by integer decimation. Device limits apply to this merged demand,
+including hidden baseline channels, not merely the checkbox count. Selecting a new
+non-baseline signal or changing its sample rate can change device configuration.
+
+Scope and Control Tuning use the same decoded samples but own separate recording
+buffers. They must not replace each other's channel settings or frozen samples.
+See `SHARED_ACQUISITION.md` for precision, rate and validation boundaries.
 
 ## Plot infrastructure boundary
 
@@ -144,7 +191,16 @@ No new transport path or device-side Plot state is introduced for horizontal nav
 
 ## Run / Stop and frozen data
 
-`Stop` stops acquisition but preserves captured history and the current display state.
+`Stop` stops appending to this Scope recording and preserves captured history and
+the current display state. It does not issue Motor Stop. Baseline acquisition and
+shared Parameter runtime values continue, as does an independently active Tuning
+recording. Channels needed only by this stopped record can be released.
+
+The stopped record owns retained samples, not offsets into the rolling baseline
+buffer. Later telemetry, Tuning runs and baseline buffer wrap cannot overwrite it.
+Changing visibility while stopped can reveal only data present in that frozen
+record; it must not substitute newer baseline history. A new Run starts a new
+Scope record seeded with available recent baseline data.
 
 After Stop the user must still be able to:
 
@@ -224,7 +280,6 @@ The following are deliberately deferred:
 - Trigger;
 - Single;
 - inertial scrolling policy beyond the plotting library's normal behavior;
-- horizontal Y cursors;
-- acquire-vs-hide channel separation.
+- horizontal Y cursors.
 
 These may be added when their workflows are required without reintroducing a parallel horizontal timebase model.

@@ -1,5 +1,5 @@
 import { invoke } from "@tauri-apps/api/core";
-import type { MotionPreview, MotionState } from "./types";
+import type { MotionPreview, MotionRunResult, MotionState } from "./types";
 
 export function getMotion(): Promise<MotionState> {
   return invoke<MotionState>("motion_get");
@@ -14,8 +14,8 @@ export function getMotionPreview(): Promise<MotionPreview> {
 }
 
 
-export function runMotion(): Promise<void> {
-  return invoke<void>("motion_run");
+export function runMotion(): Promise<MotionRunResult> {
+  return invoke<MotionRunResult>("motion_run");
 }
 
 export function stopMotion(): Promise<void> {

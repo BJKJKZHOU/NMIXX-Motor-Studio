@@ -7,11 +7,20 @@
 
 AxDr_L firmware already maintains `Parameter/parameter.yaml` as the single source of truth for Host-visible Parameters and Actions. NMIXX Motor Studio needs the same IDs, types, access rules, units, labels and descriptions without duplicating firmware implementation details or maintaining a second hand-written table.
 
-The source YAML also contains firmware-only fields such as `binding`, `getter`, `command` and `on_change`. Those must not become part of the Host API contract.
+The source YAML also contains firmware-only fields such as `binding`, `getter`, `command` and `on_change`. Those must not become part of the Host API contract. Conversely, Host-only metadata such as write/readback dependencies must not be emitted into firmware runtime tables or change MCU Flash/RAM usage.
 
 ## Decision
 
 Firmware exports a deterministic Host-facing TOML manifest from `parameter.yaml`.
+
+The current AxDr_L_Motor firmware is authoritative. NMIXX follows its exporter,
+protocol, Parameter definitions and Action semantics as they evolve. Adapting to
+the current firmware is the primary implementation path; compatibility with older
+firmware is a separate concern and must not constrain or redefine that contract.
+
+The current manifest exports `protocol = "axdr-canfd"`, source repository/Git SHA,
+Parameters and Actions. It does not export `schema_version` or
+`source.parameter_schema`; NMIXX neither requires nor synthesizes those fields.
 
 ```text
 Parameter/parameter.yaml
@@ -26,6 +35,20 @@ HostSchema / ParameterMetadata / ActionMetadata
 ```
 
 The TOML file is generated and must not be hand-edited. NMIXX treats it as an import/serialization format only; clients consume Rust metadata types rather than TOML parser values.
+
+Writable Parameters may declare Host-only dependency metadata in YAML:
+
+```yaml
+host:
+  readback: [PARAM_LIMIT_WM_EFFECTIVE]
+  readback_prefixes: [PARAM_CTRL_]
+```
+
+The firmware HostSchema exporter expands prefixes into an explicit `readback = [...]`
+symbol list. NMIXX ParameterService uses that list after a successful write to refresh
+firmware-derived values. The normal firmware generator deliberately ignores `host`
+metadata; CI verifies that stripping all Host metadata produces byte-identical
+generated firmware files.
 
 Each exported Parameter/Action has two different naming roles:
 
@@ -47,11 +70,13 @@ NMIXX does not infer a separate public API name from C symbols. If a future exte
 
 ## Consequences
 
-- `parameter.yaml` remains the only hand-maintained contract source.
+- `parameter.yaml` remains the only hand-maintained contract source, including Host write/readback relationships.
 - Firmware implementation-only fields do not leak into the Host contract.
 - Stable exported symbols remain available even when human-facing labels are added.
 - GUI and other clients can present concise labels without using them as the only identity.
 - Schema files are readable and diff-friendly and may contain generation comments.
 - NMIXX can resolve metadata by ID, symbol or label where appropriate.
 - Future GUI forms, CLI presentation and external APIs can consume the same metadata while keeping identity and presentation separate.
-- Schema compatibility can later be checked using `schema_version`, protocol ID, source Git SHA and a content hash.
+- Contract validation follows fields actually exported by the current firmware.
+- Tests use the current export format; firmware changes require updating host
+  behavior and fixtures together, without editing generated manifests by hand.

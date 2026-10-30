@@ -1,54 +1,38 @@
 <script lang="ts">
-  import { onMount, untrack } from "svelte";
+  import { uiLanguage, localize, translate } from "../i18n";
   import {
-    FlexRender,
-    columnFilteringFeature,
-    createFilteredRowModel,
-    createSortedRowModel,
-    createTable,
-    filterFn_includesString,
-    globalFilteringFeature,
-    rowSortingFeature,
-    tableFeatures,
+    FlexRender, columnFilteringFeature, createFilteredRowModel, createSortedRowModel,
+    createTable, filterFn_includesString, globalFilteringFeature, rowSortingFeature, tableFeatures,
   } from "@tanstack/svelte-table";
   import type { ColumnDef } from "@tanstack/svelte-table";
   import type { ConnectionInfo } from "../connection/types";
-  import { listParameters, onParametersChanged, readCachedParameters, readCurrentParameters, writeParameter } from "./api";
+  import { selectParameters } from "./state";
+  import { createParameterEditor } from "./editor";
+  import { parameterText } from "./codec";
   import type { ParameterMetadata, ParameterValue } from "./types";
   import { modifiedParameterIds } from "./persistence";
+  import { canWriteInMotorState } from "./writeState";
+  import type { MotorState } from "../motor/state";
 
-  type Props = {
-    connection: ConnectionInfo | undefined;
-    onError?: (error: unknown) => void;
-  };
-
-  type ParameterRow = {
-    meta: ParameterMetadata;
-    value: ParameterValue | null;
-    error: string | null;
-    pending: boolean;
-  };
-
-  let { connection, onError = () => undefined }: Props = $props();
-
-  let rows = $state<ParameterRow[]>([]);
-  let loadingRegistry = $state(false);
-  let readingValues = $state(false);
+  type Props = { connection: ConnectionInfo | undefined; motorState: MotorState | null; onError?: (error: unknown) => void };
+  type ParameterRow = { meta: ParameterMetadata; value: ParameterValue | null; error: string | null; pending: boolean };
+  let { connection, motorState, onError = () => undefined }: Props = $props();
+  const parameters = selectParameters();
+  const edits = createParameterEditor(parameters);
   let search = $state("");
-  let drafts = $state<Record<number, string>>({});
-  let writing = $state<Set<number>>(new Set());
-  let loadGeneration = 0;
-
-  const READ_BATCH_SIZE = 8;
-
+  let writeErrors = $state<Record<number, string>>({});
+  let drafts = $derived($edits.drafts);
+  let writing = $derived($edits.writing);
+  let loadingRegistry = $derived($parameters.loading);
+  let rows: ParameterRow[] = $derived(Object.values($parameters.metadata).map((meta) => ({
+    meta, value: $parameters.values[meta.symbol] ?? null,
+    error: $parameters.errors[meta.symbol] ?? writeErrors[meta.id] ?? null,
+    pending: $parameters.loading && meta.access.includes("r") && !$parameters.values[meta.symbol],
+  })));
   const features = tableFeatures({
-    columnFilteringFeature,
-    globalFilteringFeature,
-    rowSortingFeature,
-    filteredRowModel: createFilteredRowModel(),
-    sortedRowModel: createSortedRowModel(),
+    columnFilteringFeature, globalFilteringFeature, rowSortingFeature,
+    filteredRowModel: createFilteredRowModel(), sortedRowModel: createSortedRowModel(),
   });
-
   const columns: Array<ColumnDef<typeof features, ParameterRow>> = [
     { id: "id", accessorFn: (row) => row.meta.id, header: "ID" },
     { id: "symbol", accessorFn: (row) => row.meta.symbol, header: "Symbol" },
@@ -60,63 +44,11 @@
     { id: "range", accessorFn: (row) => rangeText(row.meta), header: "Range" },
     { id: "state", accessorFn: (row) => row.meta.writeState ?? "", header: "Write state" },
   ];
+  const table = createTable({ features, columns, get data() { return rows; }, globalFilterFn: filterFn_includesString });
 
-  const table = createTable({
-    features,
-    columns,
-    get data() { return rows; },
-    globalFilterFn: filterFn_includesString,
-  });
-
-  const loadedValues = $derived(rows.filter((row) => !row.pending).length);
-
-  onMount(() => {
-    let disposed = false;
-    let refreshUnlisten: (() => void) | undefined;
-    onParametersChanged(() => void refreshFromCache())
-      .then((stop) => {
-        if (disposed) stop();
-        else refreshUnlisten = stop;
-      })
-      .catch(onError);
-    return () => {
-      disposed = true;
-      refreshUnlisten?.();
-    };
-  });
-
-  $effect(() => {
-    const activeConnection = connection;
-    const generation = ++loadGeneration;
-
-    if (!activeConnection) {
-      rows = [];
-      drafts = {};
-      loadingRegistry = false;
-      readingValues = false;
-      search = "";
-      untrack(() => table.setGlobalFilter(""));
-      return;
-    }
-
-    untrack(() => void loadRegistry(activeConnection, generation));
-  });
-
-  function isReadable(meta: ParameterMetadata): boolean {
-    return meta.access.toLowerCase().includes("r");
-  }
-
-  function isWritable(meta: ParameterMetadata): boolean {
-    return meta.access.toLowerCase().includes("w");
-  }
-
-  function valueText(value: ParameterValue | null): string {
-    if (!value) return "—";
-    if (value.type === "position") return `${value.value.turns}, ${value.value.theta}`;
-    if (value.type === "f32") return Number(value.value).toPrecision(7).replace(/(?:\.0+|(\.\d+?)0+)$/, "$1");
-    return String(value.value);
-  }
-
+  function isWritable(meta: ParameterMetadata) { return meta.access.includes("w"); }
+  function canEdit(meta: ParameterMetadata) { return canWriteInMotorState(meta, motorState) && !$parameters.loading && !$parameters.saving; }
+  function valueText(value: ParameterValue | null) { return parameterText(value) || "—"; }
   function rangeText(meta: ParameterMetadata): string {
     if (!meta.range) return "";
     const left = meta.range.exclusiveMin ? "(" : "[";
@@ -125,115 +57,19 @@
     const max = meta.range.maxSymbol ?? meta.range.max ?? "+∞";
     return `${left}${min}, ${max}${right}`;
   }
-
-  function parseValue(meta: ParameterMetadata, text: string): ParameterValue {
-    const trimmed = text.trim();
-    if (meta.typeName === "position") {
-      const parts = trimmed.split(/[,:]/).map((part) => part.trim());
-      if (parts.length !== 2) throw new Error("Position value must be 'turns, theta'.");
-      const turns = Number(parts[0]);
-      const theta = Number(parts[1]);
-      if (!Number.isInteger(turns) || !Number.isFinite(theta)) throw new Error("Position value contains an invalid number.");
-      return { type: "position", value: { turns, theta } };
-    }
-
-    const parsed = Number(trimmed);
-    if (!Number.isFinite(parsed)) throw new Error("Value must be a finite number.");
-    switch (meta.typeName) {
-      case "u8":
-      case "u32":
-        if (!Number.isInteger(parsed) || parsed < 0) throw new Error(`${meta.typeName} requires a non-negative integer.`);
-        return { type: meta.typeName, value: parsed };
-      case "i8":
-      case "i32":
-        if (!Number.isInteger(parsed)) throw new Error(`${meta.typeName} requires an integer.`);
-        return { type: meta.typeName, value: parsed };
-      case "f32":
-        return { type: "f32", value: parsed };
-    }
+  function editValue(row: ParameterRow, text: string) {
+    edits.edit(row.meta.symbol, text);
+    const next = { ...writeErrors };
+    delete next[row.meta.id];
+    writeErrors = next;
   }
-
-  function applyReadResults(results: Awaited<ReturnType<typeof readCurrentParameters>>) {
-    const byId = new Map(results.map((result) => [result.id, result]));
-    const draftPatch: Record<number, string> = {};
-    rows = rows.map((row) => {
-      const result = byId.get(row.meta.id);
-      if (!result) return row;
-      const value = result.value ?? null;
-      if (value) draftPatch[row.meta.id] = valueText(value);
-      return { ...row, value, error: result.error, pending: false };
+  function keydown(event: KeyboardEvent, row: ParameterRow) {
+    if (!canEdit(row.meta) || writing.has(row.meta.symbol)) return;
+    edits.keydown(event, row.meta.symbol, (error) => {
+      writeErrors = { ...writeErrors, [row.meta.id]: error instanceof Error ? error.message : String(error) };
+      onError(error);
     });
-    drafts = { ...drafts, ...draftPatch };
   }
-
-  async function loadRegistry(activeConnection: ConnectionInfo, generation: number) {
-    loadingRegistry = true;
-    readingValues = false;
-    try {
-      const metadata = await listParameters();
-      if (generation !== loadGeneration || connection !== activeConnection) return;
-
-      rows = metadata.map((meta) => ({ meta, value: null, error: null, pending: isReadable(meta) }));
-      drafts = {};
-      loadingRegistry = false;
-
-      const readable = metadata.filter(isReadable);
-      readingValues = readable.length > 0;
-      for (let offset = 0; offset < readable.length; offset += READ_BATCH_SIZE) {
-        if (generation !== loadGeneration || connection !== activeConnection) return;
-        const batch = readable.slice(offset, offset + READ_BATCH_SIZE);
-        try {
-          const results = await readCurrentParameters(batch.map((item) => item.id));
-          if (generation !== loadGeneration || connection !== activeConnection) return;
-          applyReadResults(results);
-        } catch (error) {
-          const message = error instanceof Error ? error.message : String(error);
-          const ids = new Set(batch.map((item) => item.id));
-          rows = rows.map((row) => ids.has(row.meta.id) ? { ...row, error: message, pending: false } : row);
-        }
-      }
-    } catch (error) {
-      if (generation === loadGeneration) onError(error);
-    } finally {
-      if (generation === loadGeneration && connection === activeConnection) {
-        loadingRegistry = false;
-        readingValues = false;
-      }
-    }
-  }
-
-  async function refreshFromCache() {
-    if (!connection || rows.length === 0) return;
-    const readable = rows.filter((row) => isReadable(row.meta)).map((row) => row.meta.id);
-    if (readable.length === 0) return;
-    try {
-      const results = await readCachedParameters(readable);
-      applyReadResults(results);
-    } catch (error) {
-      onError(error);
-    }
-  }
-
-  async function commitValue(row: ParameterRow) {
-    if (!isWritable(row.meta) || row.pending || writing.has(row.meta.id)) return;
-    writing = new Set(writing).add(row.meta.id);
-    try {
-      const result = await writeParameter(row.meta.id, parseValue(row.meta, drafts[row.meta.id] ?? ""));
-      drafts = { ...drafts, [row.meta.id]: valueText(result.value) };
-      rows = rows.map((item) => item.meta.id === row.meta.id
-        ? { ...item, value: result.value, error: null, pending: false }
-        : item);
-    } catch (error) {
-      const message = error instanceof Error ? error.message : String(error);
-      rows = rows.map((item) => item.meta.id === row.meta.id ? { ...item, error: message } : item);
-      onError(error);
-    } finally {
-      const next = new Set(writing);
-      next.delete(row.meta.id);
-      writing = next;
-    }
-  }
-
   function handleSearch(event: Event) {
     search = (event.currentTarget as HTMLInputElement).value;
     table.setGlobalFilter(search);
@@ -242,19 +78,17 @@
 
 <div class="parameter-root">
   <section class="page-toolbar">
-    <div class="page-title">PARAMETERS</div>
+    <div class="page-title">{translate("parameters.page.title", $uiLanguage)}</div>
     <div class="parameter-toolbar">
       <div class="parameter-search">
         <i class="codicon codicon-search"></i>
-        <input class="compact-input" type="search" placeholder="Search parameters" value={search} disabled={!connection} oninput={handleSearch} />
+        <input class="compact-input" type="search" placeholder={translate("ui.search.parameters", $uiLanguage)} value={search} disabled={!connection} oninput={handleSearch} />
       </div>
       <span class="parameter-count">
         {#if !connection}
-          Not connected
+          {translate("ui.not.connected", $uiLanguage)}
         {:else if loadingRegistry}
-          Reading registry…
-        {:else if readingValues}
-          {loadedValues} / {rows.length} values
+          {translate("ui.reading.registry", $uiLanguage)}
         {:else}
           {table.getRowModel().rows.length} / {rows.length}
         {/if}
@@ -264,9 +98,9 @@
 
   <section class="parameter-content">
     {#if !connection}
-      <div class="empty-state"><i class="codicon codicon-plug"></i><div>Connect a device to inspect its Parameter registry.</div></div>
+      <div class="empty-state"><i class="codicon codicon-plug"></i><div>{translate("ui.connect.a.device.to.inspect.its.parameter.registry", $uiLanguage)}</div></div>
     {:else if rows.length === 0}
-      <div class="empty-state"><i class="codicon codicon-loading codicon-modifier-spin"></i><div>{loadingRegistry ? "Reading Parameter registry…" : "No parameters exposed by schema."}</div></div>
+      <div class="empty-state"><i class="codicon codicon-loading codicon-modifier-spin"></i><div>{localize(loadingRegistry ? "Reading Parameter registry…" : "No parameters exposed by schema.", $uiLanguage)}</div></div>
     {:else}
       <div class="parameter-table-shell">
         <table class="parameter-table">
@@ -277,7 +111,7 @@
                   <th class:parameter-value-column={header.column.id === "value"}>
                     {#if !header.isPlaceholder}
                       <button class="table-header-button" disabled={!header.column.getCanSort()} onclick={header.column.getToggleSortingHandler()}>
-                        <FlexRender {header} />
+                        {#if typeof header.column.columnDef.header === "string"}{localize(header.column.columnDef.header, $uiLanguage)}{:else}<FlexRender {header} />{/if}
                         {#if header.column.getIsSorted() === "asc"}<i class="codicon codicon-arrow-up"></i>{:else if header.column.getIsSorted() === "desc"}<i class="codicon codicon-arrow-down"></i>{/if}
                       </button>
                     {/if}
@@ -297,7 +131,7 @@
                     {:else if cell.column.id === "symbol"}
                       <span class="mono parameter-symbol">{row.meta.symbol}</span>
                     {:else if cell.column.id === "label"}
-                      <span>{row.meta.label}</span>
+                      <span>{localize(row.meta.label, $uiLanguage)}</span>
                     {:else if cell.column.id === "value"}
                       {#if row.pending}
                         <span class="pending-value"><i class="codicon codicon-loading codicon-modifier-spin"></i></span>
@@ -305,20 +139,12 @@
                         <input
                           class:ramModified={$modifiedParameterIds.has(row.meta.id)}
                           class="parameter-value-input mono"
-                          value={drafts[row.meta.id] ?? ""}
-                          disabled={writing.has(row.meta.id)}
+                          value={drafts[row.meta.symbol] ?? ""}
+                          disabled={!canEdit(row.meta) || writing.has(row.meta.symbol)}
                           aria-label={`Value for ${row.meta.label}`}
-                          oninput={(event) => drafts = { ...drafts, [row.meta.id]: event.currentTarget.value }}
-                          onkeydown={(event) => {
-                            if (event.key === "Enter") {
-                              event.preventDefault();
-                              void commitValue(row);
-                              event.currentTarget.blur();
-                            } else if (event.key === "Escape") {
-                              drafts = { ...drafts, [row.meta.id]: row.value ? valueText(row.value) : "" };
-                              event.currentTarget.blur();
-                            }
-                          }}
+                          oninput={(event) => editValue(row, event.currentTarget.value)}
+                          onkeydown={(event) => keydown(event, row)}
+                          onblur={() => edits.discard(row.meta.symbol)}
                         />
                       {:else}
                         <span class="mono">{valueText(row.value)}</span>
@@ -338,7 +164,7 @@
                 {/each}
               </tr>
             {:else}
-              <tr><td colspan={columns.length} class="parameter-no-results">No parameters match “{search}”.</td></tr>
+              <tr><td colspan={columns.length} class="parameter-no-results">{translate("ui.no.parameters.match", $uiLanguage)} “{search}”.</td></tr>
             {/each}
           </tbody>
         </table>

@@ -1,288 +1,83 @@
 <script lang="ts">
-  import { onMount, untrack } from "svelte";
+  import { uiLanguage, localize, translate } from "../i18n";
   import type { ConnectionInfo } from "../connection/types";
-  import { listParameters, onParametersChanged, readCachedParameters, readCurrentParameters, readParameters, writeParameter } from "../parameters/api";
-  import type { ParameterMetadata, ParameterValue } from "../parameters/types";
+  import type { MotorState } from "../motor/state";
+  import { canWriteInMotorState } from "../parameters/writeState";
+  import { selectParameters } from "../parameters/state";
+  import { createParameterEditor } from "../parameters/editor";
+  import { parameterText } from "../parameters/codec";
   import { modifiedParameterIds } from "../parameters/persistence";
-  import { subscribeRefresh } from "../refreshScheduler";
 
-  type Props = {
-    connection: ConnectionInfo | undefined;
-    onError?: (error: unknown) => void;
-  };
-
+  type Props = { connection: ConnectionInfo | undefined; motorState: MotorState | null; onError?: (error: unknown) => void };
   const CURRENT_USER_SYMBOL = "PARAM_LIMIT_I_MAX";
   const SPEED_USER_SYMBOL = "PARAM_LIMIT_WM_MAX";
   const CURRENT_HARDWARE_SYMBOL = "PARAM_LIMIT_I_HARDWARE";
   const SPEED_HARDWARE_SYMBOL = "PARAM_LIMIT_WM_HARDWARE";
+  const CURRENT_EFFECTIVE_SYMBOL = "PARAM_LIMIT_I_EFFECTIVE";
+  const SPEED_EFFECTIVE_SYMBOL = "PARAM_LIMIT_WM_EFFECTIVE";
   const VBUS_MIN_SYMBOL = "PARAM_LIMIT_VBUS_MIN";
   const VBUS_ACTUAL_SYMBOL = "PARAM_ADC_VBUS";
   const VBUS_MAX_SYMBOL = "PARAM_LIMIT_VBUS_MAX";
-
   const OPERATING_LIMITS = [
-    { userSymbol: CURRENT_USER_SYMBOL, hardwareSymbol: CURRENT_HARDWARE_SYMBOL },
-    { userSymbol: SPEED_USER_SYMBOL, hardwareSymbol: SPEED_HARDWARE_SYMBOL },
+    { userSymbol: CURRENT_USER_SYMBOL, hardwareSymbol: CURRENT_HARDWARE_SYMBOL, effectiveSymbol: CURRENT_EFFECTIVE_SYMBOL },
+    { userSymbol: SPEED_USER_SYMBOL, hardwareSymbol: SPEED_HARDWARE_SYMBOL, effectiveSymbol: SPEED_EFFECTIVE_SYMBOL },
   ];
+  const parameters = selectParameters([
+    CURRENT_USER_SYMBOL, SPEED_USER_SYMBOL, CURRENT_HARDWARE_SYMBOL, SPEED_HARDWARE_SYMBOL,
+    CURRENT_EFFECTIVE_SYMBOL, SPEED_EFFECTIVE_SYMBOL, VBUS_MIN_SYMBOL, VBUS_ACTUAL_SYMBOL, VBUS_MAX_SYMBOL,
+  ]);
+  const edits = createParameterEditor(parameters);
+  let { connection, motorState, onError = () => undefined }: Props = $props();
+  let metadata = $derived($parameters.metadata);
+  let values = $derived($parameters.values);
+  let drafts = $derived($edits.drafts);
+  let writing = $derived($edits.writing);
 
-  const ALL_SYMBOLS = [
-    CURRENT_USER_SYMBOL,
-    SPEED_USER_SYMBOL,
-    CURRENT_HARDWARE_SYMBOL,
-    SPEED_HARDWARE_SYMBOL,
-    VBUS_MIN_SYMBOL,
-    VBUS_ACTUAL_SYMBOL,
-    VBUS_MAX_SYMBOL,
-  ];
-
-  let { connection, onError = () => undefined }: Props = $props();
-
-  let metadata = $state<Record<string, ParameterMetadata>>({});
-  let values = $state<Record<string, ParameterValue | null>>({});
-  let drafts = $state<Record<string, string>>({});
-  let loading = $state(false);
-  let writing = $state<Set<string>>(new Set());
-  let busRefreshUnsubscribe: (() => void) | undefined;
-  let busReading = false;
-  let generation = 0;
-
-  onMount(() => {
-    let disposed = false;
-    let refreshUnlisten: (() => void) | undefined;
-    onParametersChanged(() => void refreshFromCache())
-      .then((stop) => {
-        if (disposed) stop();
-        else refreshUnlisten = stop;
-      })
-      .catch(onError);
-
-    busRefreshUnsubscribe = subscribeRefresh(250, () => void refreshBusVoltage());
-
-    return () => {
-      disposed = true;
-      refreshUnlisten?.();
-      busRefreshUnsubscribe?.();
-      busRefreshUnsubscribe = undefined;
-    };
-  });
-
-  $effect(() => {
-    const activeConnection = connection;
-    const token = ++generation;
-
-    if (!activeConnection) {
-      metadata = {};
-      values = {};
-      drafts = {};
-      loading = false;
-      return;
-    }
-
-    untrack(() => void loadLimits(activeConnection, token));
-  });
-
-  function valueText(value: ParameterValue | null | undefined): string {
-    if (!value) return "";
-    if (value.type === "position") return `${value.value.turns}, ${value.value.theta}`;
-    if (value.type === "f32") return Number(value.value).toPrecision(7).replace(/(?:\.0+|(\.\d+?)0+)$/, "$1");
-    return String(value.value);
-  }
-
-  function displayText(symbol: string): string {
-    const value = values[symbol];
-    return value ? valueText(value) : "—";
-  }
-
-  function unitFor(symbol: string): string {
-    return metadata[symbol]?.unit ?? "";
-  }
-
-  function parameterLabel(symbol: string, fallback?: string): string {
-    return metadata[symbol]?.label ?? fallback ?? "Unavailable";
-  }
-
-  function isWritable(symbol: string): boolean {
-    return metadata[symbol]?.access.toLowerCase().includes("w") ?? false;
-  }
-
-  function isConfigured(symbol: string): boolean {
-    const value = values[symbol];
-    if (!value || value.type === "position") return false;
-    return Number.isFinite(Number(value.value));
-  }
-
+  function displayText(symbol: string) { return parameterText(values[symbol]) || "—"; }
+  function unitFor(symbol: string) { return metadata[symbol]?.unit ?? ""; }
+  function parameterLabel(symbol: string, fallback = "Unavailable") { return localize(metadata[symbol]?.label ?? fallback, $uiLanguage); }
+  function isWritable(symbol: string) { return !$parameters.loading && !$parameters.saving && canWriteInMotorState(metadata[symbol], motorState); }
   function numericValue(symbol: string): number | null {
     const value = values[symbol];
     if (!value || value.type === "position") return null;
     const number = Number(value.value);
     return Number.isFinite(number) ? number : null;
   }
-
-  function activeSource(userSymbol: string, hardwareSymbol: string): "user" | "hardware" | null {
-    const user = numericValue(userSymbol);
-    const hardware = numericValue(hardwareSymbol);
-    if (user === null || hardware === null) return null;
-    return user <= hardware ? "user" : "hardware";
-  }
-
-  function parameterValue(meta: ParameterMetadata, text: string): ParameterValue {
-    const parsed = Number(text.trim());
-    if (!Number.isFinite(parsed)) throw new Error(`${meta.label}: value must be finite.`);
-
-    if (meta.typeName === "f32") return { type: "f32", value: parsed };
-    if (meta.typeName === "u8") {
-      if (!Number.isInteger(parsed) || parsed < 0 || parsed > 255) throw new Error(`${meta.label}: expected u8.`);
-      return { type: "u8", value: parsed };
-    }
-    if (meta.typeName === "i8") {
-      if (!Number.isInteger(parsed) || parsed < -128 || parsed > 127) throw new Error(`${meta.label}: expected i8.`);
-      return { type: "i8", value: parsed };
-    }
-    if (meta.typeName === "i32") {
-      if (!Number.isInteger(parsed)) throw new Error(`${meta.label}: expected i32.`);
-      return { type: "i32", value: parsed };
-    }
-    if (meta.typeName === "u32") {
-      if (!Number.isInteger(parsed) || parsed < 0) throw new Error(`${meta.label}: expected u32.`);
-      return { type: "u32", value: parsed };
-    }
-
-    throw new Error(`${meta.label}: Limits page does not edit ${meta.typeName}.`);
-  }
-
-  function applyValues(entries: ParameterMetadata[], results: Awaited<ReturnType<typeof readParameters>>) {
-    const byId = new Map(results.map((item) => [item.id, item]));
-    const nextValues = { ...values };
-    const nextDrafts = { ...drafts };
-    for (const item of entries) {
-      const result = byId.get(item.id);
-      nextValues[item.symbol] = result?.value ?? null;
-      if (result?.value) nextDrafts[item.symbol] = valueText(result.value);
-    }
-    values = nextValues;
-    drafts = nextDrafts;
-  }
-
-  async function loadLimits(activeConnection: ConnectionInfo, token: number) {
-    loading = true;
-    try {
-      const registry = await listParameters();
-      if (token !== generation || connection !== activeConnection) return;
-
-      const wanted = new Set(ALL_SYMBOLS);
-      const entries = registry.filter((item) => wanted.has(item.symbol));
-      metadata = Object.fromEntries(entries.map((item) => [item.symbol, item]));
-
-      const readable = entries.filter((item) => item.access.toLowerCase().includes("r"));
-      const results = await readCurrentParameters(readable.map((item) => item.id));
-      if (token !== generation || connection !== activeConnection) return;
-      applyValues(readable, results);
-    } catch (error) {
-      if (token === generation) onError(error);
-    } finally {
-      if (token === generation) loading = false;
-    }
-  }
-
-  async function refreshFromCache() {
-    if (!connection || Object.keys(metadata).length === 0) return;
-    try {
-      const readable = Object.values(metadata).filter((item) => item.access.toLowerCase().includes("r"));
-      const results = await readCachedParameters(readable.map((item) => item.id));
-      applyValues(readable, results);
-    } catch (error) {
-      onError(error);
-    }
-  }
-
-  async function refreshValues() {
-    const readable = Object.values(metadata).filter((item) => item.access.toLowerCase().includes("r"));
-    if (readable.length === 0) return;
-
-    const results = await readParameters(readable.map((item) => item.id));
-    applyValues(readable, results);
-  }
-
-  async function refreshBusVoltage() {
-    if (!connection || busReading) return;
-    const meta = metadata[VBUS_ACTUAL_SYMBOL];
-    if (!meta || !meta.access.toLowerCase().includes("r")) return;
-
-    busReading = true;
-    try {
-      const results = await readParameters([meta.id]);
-      applyValues([meta], results);
-    } catch (error) {
-      onError(error);
-    } finally {
-      busReading = false;
-    }
-  }
-
+  function isConfigured(symbol: string) { return numericValue(symbol) !== null; }
   function busState(): "under" | "normal" | "over" | null {
     const min = numericValue(VBUS_MIN_SYMBOL);
     const actual = numericValue(VBUS_ACTUAL_SYMBOL);
     const max = numericValue(VBUS_MAX_SYMBOL);
     if (min === null || actual === null || max === null) return null;
-    if (actual < min) return "under";
-    if (actual > max) return "over";
-    return "normal";
+    return actual < min ? "under" : actual > max ? "over" : "normal";
   }
-
-  async function commit(symbol: string) {
-    const meta = metadata[symbol];
-    if (!meta || !isWritable(symbol) || writing.has(symbol)) return;
-
-    writing = new Set(writing).add(symbol);
-    try {
-      const value = parameterValue(meta, drafts[symbol] ?? "");
-      await writeParameter(meta.id, value);
-      await refreshValues();
-    } catch (error) {
-      onError(error);
-      drafts = { ...drafts, [symbol]: valueText(values[symbol]) };
-    } finally {
-      const next = new Set(writing);
-      next.delete(symbol);
-      writing = next;
-    }
-  }
-
-  function handleKeydown(event: KeyboardEvent, symbol: string) {
-    if (event.key === "Enter") {
-      event.preventDefault();
-      void commit(symbol);
-      (event.currentTarget as HTMLInputElement).blur();
-    } else if (event.key === "Escape") {
-      drafts = { ...drafts, [symbol]: valueText(values[symbol]) };
-      (event.currentTarget as HTMLInputElement).blur();
-    }
-  }
+  function handleKeydown(event: KeyboardEvent, symbol: string) { edits.keydown(event, symbol, onError); }
 </script>
 
 <div class="limits-root">
   <section class="page-toolbar">
-    <div class="page-title">LIMITS / SAFETY</div>
+    <div class="page-title">{translate("ui.limits.safety", $uiLanguage).toUpperCase()}</div>
   </section>
 
   <section class="limits-content">
     {#if !connection}
-      <div class="empty-state"><i class="codicon codicon-plug"></i><div>Connect a device to configure limits.</div></div>
+      <div class="empty-state"><i class="codicon codicon-plug"></i><div>{translate("limits.connect.required", $uiLanguage)}</div></div>
     {:else}
       <div class="limits-sheet">
         <section class="limits-section">
-          <div class="section-title">Operating Limits</div>
-          <div class="operating-grid" role="table" aria-label="Operating limits">
+          <div class="section-title">{translate("ui.operating.limits", $uiLanguage)}</div>
+          <div class="operating-grid" role="table" aria-label={translate("limits.aria.operating", $uiLanguage)}>
             <div class="operating-header" role="row">
-              <div role="columnheader">Parameter</div>
-              <div role="columnheader">User Limit</div>
-              <div role="columnheader">Hardware Limit</div>
+              <div role="columnheader">{translate("ui.parameter", $uiLanguage)}</div>
+              <div role="columnheader">{translate("ui.user.limit", $uiLanguage)}</div>
+              <div role="columnheader">{translate("ui.hardware.limit", $uiLanguage)}</div>
+              <div role="columnheader">{translate("ui.effective", $uiLanguage)}</div>
             </div>
 
             {#each OPERATING_LIMITS as row}
-              {@const source = activeSource(row.userSymbol, row.hardwareSymbol)}
               <div class="operating-row" role="row">
                 <div class="parameter-name" role="cell">{parameterLabel(row.userSymbol)}</div>
-                <div class:configured-cell={isConfigured(row.userSymbol)} class:active-limit-cell={source === "user"} class="limit-cell" role="cell">
+                <div class:configured-cell={isConfigured(row.userSymbol)} class="limit-cell" role="cell">
                   {#if metadata[row.userSymbol]}
                     <span class="inline-editor">
                       <input
@@ -290,8 +85,9 @@
                         class="compact-input mono"
                         value={drafts[row.userSymbol] ?? ""}
                         disabled={!isWritable(row.userSymbol) || writing.has(row.userSymbol)}
-                        oninput={(event) => drafts = { ...drafts, [row.userSymbol]: (event.currentTarget as HTMLInputElement).value }}
+                        oninput={(event) => edits.edit(row.userSymbol, event.currentTarget.value)}
                         onkeydown={(event) => handleKeydown(event, row.userSymbol)}
+                        onblur={() => edits.discard(row.userSymbol)}
                       />
                       <span class="unit">{unitFor(row.userSymbol)}</span>
                     </span>
@@ -299,10 +95,19 @@
                     <span class="muted">—</span>
                   {/if}
                 </div>
-                <div class:active-limit-cell={source === "hardware"} class="limit-cell hardware-value mono" role="cell">
+                <div class="limit-cell hardware-value mono" role="cell">
                   {#if metadata[row.hardwareSymbol]}
                     <span>{displayText(row.hardwareSymbol)}</span>
                     <span class="unit">{unitFor(row.hardwareSymbol)}</span>
+                  {:else}
+                    <span class="muted">—</span>
+                  {/if}
+                </div>
+                <div class:active-limit-cell={isConfigured(row.effectiveSymbol)} class="limit-cell hardware-value mono" role="cell"
+                  title={translate("limits.tooltip.effective", $uiLanguage)}>
+                  {#if metadata[row.effectiveSymbol]}
+                    <span>{displayText(row.effectiveSymbol)}</span>
+                    <span class="unit">{unitFor(row.effectiveSymbol)}</span>
                   {:else}
                     <span class="muted">—</span>
                   {/if}
@@ -313,12 +118,12 @@
         </section>
 
         <section class="limits-section bus-section">
-          <div class="section-title">Bus Voltage</div>
-          <div class="bus-grid" role="table" aria-label="Bus voltage limits">
+          <div class="section-title">{translate("ui.bus.voltage", $uiLanguage)}</div>
+          <div class="bus-grid" role="table" aria-label={translate("limits.aria.bus", $uiLanguage)}>
             <div class="bus-header" role="row">
-              <div role="columnheader">Minimum</div>
-              <div role="columnheader">Actual</div>
-              <div role="columnheader">Maximum</div>
+              <div role="columnheader">{translate("ui.minimum", $uiLanguage)}</div>
+              <div role="columnheader">{translate("ui.actual", $uiLanguage)}</div>
+              <div role="columnheader">{translate("ui.maximum", $uiLanguage)}</div>
             </div>
             <div class="bus-row" role="row">
               <div class="bus-cell" role="cell">
@@ -329,15 +134,16 @@
                       class="compact-input mono"
                       value={drafts[VBUS_MIN_SYMBOL] ?? ""}
                       disabled={!isWritable(VBUS_MIN_SYMBOL) || writing.has(VBUS_MIN_SYMBOL)}
-                      oninput={(event) => drafts = { ...drafts, [VBUS_MIN_SYMBOL]: (event.currentTarget as HTMLInputElement).value }}
+                      oninput={(event) => edits.edit(VBUS_MIN_SYMBOL, event.currentTarget.value)}
                       onkeydown={(event) => handleKeydown(event, VBUS_MIN_SYMBOL)}
+                      onblur={() => edits.discard(VBUS_MIN_SYMBOL)}
                     />
                     <span class="unit">{unitFor(VBUS_MIN_SYMBOL)}</span>
                   </span>
                 {:else}
                   <span class="muted">—</span>
                 {/if}
-                <span class="bus-caption">Undervoltage limit</span>
+                <span class="bus-caption">{translate("ui.undervoltage.limit", $uiLanguage)}</span>
               </div>
 
               <div
@@ -354,7 +160,7 @@
                 {:else}
                   <span class="muted">—</span>
                 {/if}
-                <span class="bus-caption">DC bus voltage</span>
+                <span class="bus-caption">{translate("ui.dc.bus.voltage", $uiLanguage)}</span>
               </div>
 
               <div class="bus-cell" role="cell">
@@ -365,15 +171,16 @@
                       class="compact-input mono"
                       value={drafts[VBUS_MAX_SYMBOL] ?? ""}
                       disabled={!isWritable(VBUS_MAX_SYMBOL) || writing.has(VBUS_MAX_SYMBOL)}
-                      oninput={(event) => drafts = { ...drafts, [VBUS_MAX_SYMBOL]: (event.currentTarget as HTMLInputElement).value }}
+                      oninput={(event) => edits.edit(VBUS_MAX_SYMBOL, event.currentTarget.value)}
                       onkeydown={(event) => handleKeydown(event, VBUS_MAX_SYMBOL)}
+                      onblur={() => edits.discard(VBUS_MAX_SYMBOL)}
                     />
                     <span class="unit">{unitFor(VBUS_MAX_SYMBOL)}</span>
                   </span>
                 {:else}
                   <span class="muted">—</span>
                 {/if}
-                <span class="bus-caption">Overvoltage limit</span>
+                <span class="bus-caption">{translate("ui.overvoltage.limit", $uiLanguage)}</span>
               </div>
             </div>
           </div>
@@ -381,21 +188,21 @@
 
         <section class="limits-section position-section unavailable-section">
           <div class="section-heading">
-            <div class="section-title">Position Limits</div>
-            <div class="section-note">Firmware unavailable</div>
+            <div class="section-title">{translate("ui.position.limits", $uiLanguage)}</div>
+            <div class="section-note">{translate("ui.firmware.unavailable", $uiLanguage)}</div>
           </div>
 
-          <div class="position-grid" role="table" aria-label="Position limits">
+          <div class="position-grid" role="table" aria-label={translate("limits.aria.position", $uiLanguage)}>
             <div class="position-row" role="row">
-              <div class="parameter-name" role="cell">Zero reference</div>
+              <div class="parameter-name" role="cell">{translate("ui.zero.reference", $uiLanguage)}</div>
               <div class="muted mono" role="cell">—</div>
             </div>
             <div class="position-row" role="row">
-              <div class="parameter-name" role="cell">Enable</div>
-              <div role="cell"><button class="disabled-control" disabled>Off</button></div>
+              <div class="parameter-name" role="cell">{translate("limits.position.enable", $uiLanguage)}</div>
+              <div role="cell"><button class="disabled-control" disabled>{translate("limits.position.off", $uiLanguage)}</button></div>
             </div>
             <div class="position-row" role="row">
-              <div class="parameter-name" role="cell">Minimum position</div>
+              <div class="parameter-name" role="cell">{translate("limits.position.minimum", $uiLanguage)}</div>
               <div class="position-editor" role="cell">
                 <input class="compact-input mono" value="" placeholder="Turn" disabled />
                 <input class="compact-input mono" value="" placeholder="Theta" disabled />
@@ -403,7 +210,7 @@
               </div>
             </div>
             <div class="position-row" role="row">
-              <div class="parameter-name" role="cell">Maximum position</div>
+              <div class="parameter-name" role="cell">{translate("limits.position.maximum", $uiLanguage)}</div>
               <div class="position-editor" role="cell">
                 <input class="compact-input mono" value="" placeholder="Turn" disabled />
                 <input class="compact-input mono" value="" placeholder="Theta" disabled />
@@ -471,7 +278,7 @@
   .operating-header,
   .operating-row {
     display: grid;
-    grid-template-columns: minmax(180px, 0.9fr) minmax(260px, 1.25fr) minmax(220px, 1fr);
+    grid-template-columns: minmax(160px, 0.8fr) minmax(210px, 1.05fr) minmax(190px, 0.95fr) minmax(190px, 0.95fr);
     column-gap: 18px;
     align-items: stretch;
   }
@@ -519,10 +326,6 @@
 
   .active-limit-cell {
     background: color-mix(in srgb, var(--vscode-focusBorder) 18%, transparent);
-  }
-
-  .configured-cell.active-limit-cell {
-    background: color-mix(in srgb, var(--vscode-focusBorder) 18%, var(--vscode-foreground) 5%);
   }
 
   .hardware-value {

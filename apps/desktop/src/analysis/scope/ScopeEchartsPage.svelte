@@ -1,14 +1,8 @@
 <script lang="ts">
-  import { onDestroy, onMount, tick } from "svelte";
-  import { LineChart } from "echarts/charts";
-  import {
-    DataZoomComponent,
-    GridComponent,
-    LegendComponent,
-    TooltipComponent,
-  } from "echarts/components";
-  import { init, use, type ECharts, type EChartsOption } from "echarts/core";
-  import { CanvasRenderer } from "echarts/renderers";
+  import { uiLanguage, localize, localizeFeedback, translate, translateFormat } from "../../i18n";
+  import { onDestroy, onMount } from "svelte";
+  import ScopeEchartsView from "./ScopeEchartsView.svelte";
+  import { scopeOperation, type ScopeOperation } from "../../automation/operations";
   import type { ConnectionInfo, PlotChannel } from "../../connection/types";
   import { subscribeRefresh } from "../../refreshScheduler";
   import { configureScope, readScopeSnapshot, startScope, stopScope } from "./api";
@@ -20,7 +14,6 @@
   export let onError: (error: unknown) => void = () => undefined;
   export let onClearError: () => void = () => undefined;
 
-  use([LineChart, DataZoomComponent, GridComponent, LegendComponent, TooltipComponent, CanvasRenderer]);
 
   const refreshIntervalMs = 100;
   const defaultLatestSpanSeconds = 0.5;
@@ -31,10 +24,7 @@
     "#fc8452", "#9a60b4", "#ea7ccc", "#91cc75", "#fac858", "#ee6666",
   ];
 
-  let host: HTMLDivElement;
-  let chart: ECharts | undefined;
   let refreshUnsubscribe: (() => void) | undefined;
-  let resizeObserver: ResizeObserver | undefined;
   let reconfigureTimer: ReturnType<typeof setTimeout> | undefined;
   let viewRefreshTimer: ReturnType<typeof setTimeout> | undefined;
   let selectedIds = new Set<number>();
@@ -51,18 +41,15 @@
   let followingLatest = true;
   let viewRange: [number, number] = [-defaultLatestSpanSeconds, 0];
   let viewRevision = 0;
-  let applyingChartOption = false;
   let activeConnection: ConnectionInfo | undefined;
-  let channelNotice = "";
+  let channelNotice: { limit: number; rate: "FAST" | "NORMAL" } | null = null;
 
   $: channels = connection?.channels.filter((channel) => channel.supportsFast || channel.supportsNormal) ?? [];
+  $: visibleChannels = channels.filter((channel) => selectedIds.has(channel.id));
   $: running = snapshot?.state === "LIVE";
   $: if (connection !== activeConnection) {
     activeConnection = connection;
     resetScope();
-  }
-  $: if (active && host) {
-    void tick().then(ensureChart);
   }
   $: onSummary({
     state: snapshot?.state ?? "STOPPED",
@@ -70,7 +57,23 @@
     lostFrames: snapshot?.lostFrames ?? 0,
   });
 
+  // Automation changes the same Application record. Mirror its canonical
+  // selection; do not turn this notification into another device reconfigure.
+  $: adoptScopeOperation($scopeOperation, connection);
+  function adoptScopeOperation(operation: ScopeOperation | undefined, session: ConnectionInfo | undefined) {
+    if (!operation || !session) return;
+    const config = operation.config;
+    selectedIds = new Set(config.channels.map((channel) => channel.id));
+    rates = new Map(config.channels.map((channel) => [channel.id, channel.rate]));
+    activeChannelId = config.channels[0]?.id;
+    configured = true;
+    configurationDirty = false;
+    viewRevision += 1;
+    scheduleViewRefresh(0);
+  }
+
   function defaultRate(channel: PlotChannel): ScopeRate {
+    if (connection?.runtimeChannelIds?.includes(channel.id)) return "normal";
     return channel.supportsFast ? "fast" : "normal";
   }
 
@@ -104,9 +107,9 @@
     if (viewRefreshTimer) clearTimeout(viewRefreshTimer);
     reconfigureTimer = undefined;
     viewRefreshTimer = undefined;
-    configured = false;
+    configured = !!connection?.runtimeChannelIds?.length;
     configurationDirty = false;
-    channelNotice = "";
+    channelNotice = null;
     snapshot = undefined;
     followingLatest = true;
     viewRange = [-defaultLatestSpanSeconds, 0];
@@ -114,18 +117,21 @@
     const availableChannels = connection?.channels.filter(
       (channel) => channel.supportsFast || channel.supportsNormal,
     ) ?? [];
-    const defaults = availableChannels.slice(0, 3);
+    const runtimeIds = new Set(connection?.runtimeChannelIds ?? []);
+    const defaults = runtimeIds.size
+      ? availableChannels.filter((channel) => runtimeIds.has(channel.id))
+      : availableChannels.slice(0, 3);
     selectedIds = new Set(defaults.map((channel) => channel.id));
     rates = new Map(defaults.map((channel) => [channel.id, defaultRate(channel)]));
     verticalScale = new Map(availableChannels.map((channel) => [channel.id, defaultVerticalScale(channel)]));
     verticalOffset = new Map(availableChannels.map((channel) => [channel.id, 0]));
     activeChannelId = defaults[0]?.id;
-    chart?.clear();
-    setEmptyChartOption();
   }
 
   function selectedRateCount(ids: Set<number>, nextRates: Map<number, ScopeRate>, rate: ScopeRate): number {
-    return Array.from(ids).filter((id) => nextRates.get(id) === rate).length;
+    const demand = new Map<number, ScopeRate>((connection?.runtimeChannelIds ?? []).map((id) => [id, "normal"]));
+    for (const id of ids) demand.set(id, nextRates.get(id) ?? "normal");
+    return Array.from(demand.values()).filter((item) => item === rate).length;
   }
 
   function rateLimit(rate: ScopeRate): number {
@@ -133,15 +139,15 @@
     return rate === "fast" ? connection.fastMaxChannels : connection.normalMaxChannels;
   }
 
-  function validateChannelSelection(ids: Set<number>, nextRates: Map<number, ScopeRate>): string {
+  function validateChannelSelection(ids: Set<number>, nextRates: Map<number, ScopeRate>): { limit: number; rate: "FAST" | "NORMAL" } | null {
     for (const rate of ["fast", "normal"] as const) {
       const count = selectedRateCount(ids, nextRates, rate);
       const limit = rateLimit(rate);
       if (count > limit) {
-        return `Scope supports at most ${limit} ${rate.toUpperCase()} channels.`;
+        return { limit, rate: rate === "fast" ? "FAST" : "NORMAL" };
       }
     }
-    return "";
+    return null;
   }
 
   function setSelected(id: number) {
@@ -152,10 +158,6 @@
     if (!channel) return;
 
     if (next.has(id)) {
-      if (running && next.size === 1) {
-        onError("Keep at least one channel selected while Scope is running.");
-        return;
-      }
       next.delete(id);
       nextRates.delete(id);
       if (activeChannelId === id) {
@@ -173,12 +175,11 @@
       return;
     }
 
-    channelNotice = "";
+    channelNotice = null;
     onClearError();
     selectedIds = next;
     rates = nextRates;
     configurationDirty = true;
-    if (snapshot) updateChart(snapshot, displayRange(snapshot.recordedSeconds));
     scheduleHotReconfigure();
   }
 
@@ -195,7 +196,7 @@
       return;
     }
 
-    channelNotice = "";
+    channelNotice = null;
     onClearError();
     rates = nextRates;
     configurationDirty = true;
@@ -203,20 +204,22 @@
   }
 
   async function ensureConfigured() {
-    if (!connection || selectedIds.size === 0) return false;
+    if (!connection) return false;
     if (configured && !configurationDirty) return true;
+    const requestedConnection = connection;
     await configureScope(
       Array.from(selectedIds).map((id) => ({ id, rate: rates.get(id) ?? "normal" })),
     );
+    if (connection !== requestedConnection) return false;
     configured = true;
     configurationDirty = false;
-    channelNotice = "";
+    channelNotice = null;
     onClearError();
     return true;
   }
 
   function scheduleHotReconfigure() {
-    if (!running || selectedIds.size === 0) return;
+    if (!connection) return;
     if (reconfigureTimer) clearTimeout(reconfigureTimer);
     reconfigureTimer = setTimeout(() => {
       reconfigureTimer = undefined;
@@ -225,7 +228,7 @@
   }
 
   async function hotReconfigure() {
-    if (!running || busy || !configurationDirty || selectedIds.size === 0) return;
+    if (!connection || busy || !configurationDirty) return;
     busy = true;
     try {
       await ensureConfigured();
@@ -261,26 +264,19 @@
     }
   }
 
-  function activeChannels() {
-    return channels.filter((channel) => selectedIds.has(channel.id));
-  }
-
   function selectActiveChannel(id: number) {
     if (!selectedIds.has(id) || activeChannelId === id) return;
     activeChannelId = id;
-    if (snapshot) updateChart(snapshot, displayRange(snapshot.recordedSeconds));
   }
 
   function updateVerticalScale(id: number, value: number) {
     if (!Number.isFinite(value) || value <= 0) return;
     verticalScale = new Map(verticalScale).set(id, value);
-    if (snapshot) updateChart(snapshot, displayRange(snapshot.recordedSeconds));
   }
 
   function updateVerticalOffset(id: number, value: number) {
     if (!Number.isFinite(value)) return;
     verticalOffset = new Map(verticalOffset).set(id, value);
-    if (snapshot) updateChart(snapshot, displayRange(snapshot.recordedSeconds));
   }
 
   function autoVertical(id: number) {
@@ -301,7 +297,6 @@
     const span = Math.max(max - min, Math.abs(center) * 0.01, 1e-6);
     verticalOffset = new Map(verticalOffset).set(id, center);
     verticalScale = new Map(verticalScale).set(id, ceil125(span / (verticalDivisions * 0.75)));
-    if (snapshot) updateChart(snapshot, displayRange(snapshot.recordedSeconds));
   }
 
   function availableSeconds(recordedSeconds = snapshot?.recordedSeconds ?? defaultLatestSpanSeconds): number {
@@ -344,127 +339,10 @@
       : clampViewRange(viewRange, recordedSeconds);
   }
 
-  function makeOption(next: ScopeSnapshot, visibleRange: [number, number]): EChartsOption {
-    const active = activeChannels();
-    const visibleAxisChannel = active.find((channel) => channel.id === activeChannelId) ?? active[0];
-
-    const channelAxes = active.map((channel) => {
-      const perDiv = verticalScale.get(channel.id) ?? defaultVerticalScale(channel);
-      const center = verticalOffset.get(channel.id) ?? 0;
-      const half = perDiv * verticalDivisions / 2;
-      const visible = channel.id === visibleAxisChannel?.id;
-      const color = traceColor(channel);
-      return {
-        type: "value" as const,
-        name: visible ? `${channel.label}${channel.unit ? ` (${channel.unit})` : ""}` : "",
-        show: visible,
-        position: "left" as const,
-        min: center - half,
-        max: center + half,
-        interval: perDiv,
-        axisLine: { show: visible, lineStyle: { color } },
-        axisTick: { show: visible },
-        axisLabel: { show: visible, color },
-        nameTextStyle: { color },
-        splitLine: { show: visible, lineStyle: { color: "#303030" } },
-      };
-    });
-    const yAxis = channelAxes.length > 0 ? channelAxes : [{ type: "value" as const }];
-
-    const series = active.map((channel, index) => {
-      const source = next.series.find((item) => item.id === channel.id);
-      const color = traceColor(channel);
-      return {
-        name: channel.label,
-        type: "line" as const,
-        yAxisIndex: index,
-        showSymbol: false,
-        symbol: "none",
-        sampling: "none",
-        animation: false,
-        lineStyle: { color, width: channel.id === visibleAxisChannel?.id ? 1.5 : 1.1 },
-        itemStyle: { color },
-        data: (source?.times ?? []).map((time, pointIndex) => [time, source?.values[pointIndex] ?? null]),
-      };
-    });
-
-    return {
-      animation: false,
-      backgroundColor: "transparent",
-      grid: { left: 76, right: 36, top: 42, bottom: 54, containLabel: false },
-      legend: {
-        top: 4,
-        right: 14,
-        textStyle: { color: "#bdbdbd" },
-      },
-      tooltip: {
-        trigger: "axis",
-        axisPointer: { type: "cross" },
-        backgroundColor: "rgba(30,30,30,0.94)",
-        borderColor: "#4a4a4a",
-        textStyle: { color: "#d0d0d0" },
-      },
-      xAxis: {
-        type: "value",
-        min: -availableSeconds(next.recordedSeconds),
-        max: 0,
-        axisLine: { lineStyle: { color: "#6e6e6e" } },
-        axisLabel: {
-          color: "#9a9a9a",
-          formatter: (value: number) => `${value.toFixed(3)} s`,
-        },
-        splitLine: { lineStyle: { color: "#303030" } },
-      },
-      yAxis,
-      dataZoom: [
-        {
-          type: "inside",
-          xAxisIndex: 0,
-          zoomOnMouseWheel: true,
-          moveOnMouseMove: true,
-          moveOnMouseWheel: false,
-          preventDefaultMouseMove: true,
-          filterMode: "none",
-          startValue: visibleRange[0],
-          endValue: visibleRange[1],
-        },
-      ],
-      series,
-    };
-  }
-
-  function setEmptyChartOption() {
-    if (!chart) return;
-    applyingChartOption = true;
-    try {
-      chart.setOption({
-        animation: false,
-        xAxis: { type: "value", min: -defaultLatestSpanSeconds, max: 0 },
-        yAxis: [{ type: "value" }],
-        dataZoom: [{ type: "inside", xAxisIndex: 0, startValue: -defaultLatestSpanSeconds, endValue: 0 }],
-        series: [],
-      }, { notMerge: true, lazyUpdate: false });
-    } finally {
-      applyingChartOption = false;
-    }
-  }
-
-  function updateChart(next: ScopeSnapshot, visibleRange = displayRange(next.recordedSeconds)) {
-    if (!chart) return;
-    applyingChartOption = true;
-    try {
-      chart.setOption(makeOption(next, visibleRange), {
-        notMerge: false,
-        replaceMerge: ["series", "yAxis"],
-        lazyUpdate: false,
-      });
-    } finally {
-      applyingChartOption = false;
-    }
-  }
-
+  // Acquisition-window scheduling belongs to the page; ECharts rendering stays
+  // in ScopeEchartsView. These callbacks must also exist while Scope is hidden.
   async function refreshSnapshot(allowWhileBusy = false) {
-    if (!configured || snapshotBusy || (busy && !allowWhileBusy)) return;
+    if (!connection || !configured || snapshotBusy || (busy && !allowWhileBusy)) return;
     snapshotBusy = true;
     const revision = viewRevision;
     const requestedFollowingLatest = followingLatest;
@@ -477,13 +355,11 @@
       const next = await readScopeSnapshot(windowSeconds, endOffsetSeconds, maxGraphPoints);
       if (revision !== viewRevision || requestedFollowingLatest !== followingLatest) return;
       snapshot = next;
-      const nextRange = requestedFollowingLatest
+      viewRange = requestedFollowingLatest
         ? latestRange(next.recordedSeconds, viewSpan(requestedRange))
         : clampViewRange(requestedRange, next.recordedSeconds);
-      viewRange = nextRange;
-      updateChart(next, nextRange);
     } catch (error) {
-      onError(error);
+      if (revision === viewRevision) onError(error);
     } finally {
       snapshotBusy = false;
     }
@@ -493,6 +369,7 @@
     if (viewRefreshTimer) clearTimeout(viewRefreshTimer);
     viewRefreshTimer = setTimeout(() => {
       viewRefreshTimer = undefined;
+      if (!connection || !configured) return;
       if (snapshotBusy || busy) {
         scheduleViewRefresh(50);
         return;
@@ -513,101 +390,43 @@
     followingLatest = true;
     viewRange = latestRange(undefined, span);
     viewRevision += 1;
-    if (snapshot) updateChart(snapshot, viewRange);
     scheduleViewRefresh(0);
   }
 
-  function dataZoomRange(event: any): [number, number] | undefined {
-    const payload = event?.batch?.[0] ?? event ?? {};
-    const option = chart?.getOption() as any;
-    const zoom = option?.dataZoom?.[0] ?? {};
-    const min = -availableSeconds();
-    const width = -min;
-
-    const payloadStartValue = Number(payload.startValue);
-    const payloadEndValue = Number(payload.endValue);
-    if (Number.isFinite(payloadStartValue) && Number.isFinite(payloadEndValue)) {
-      return [Math.min(payloadStartValue, payloadEndValue), Math.max(payloadStartValue, payloadEndValue)];
-    }
-
-    const payloadStart = Number(payload.start);
-    const payloadEnd = Number(payload.end);
-    if (Number.isFinite(payloadStart) && Number.isFinite(payloadEnd)) {
-      return [min + width * payloadStart / 100, min + width * payloadEnd / 100];
-    }
-
-    const startValue = Number(zoom.startValue);
-    const endValue = Number(zoom.endValue);
-    if (Number.isFinite(startValue) && Number.isFinite(endValue)) {
-      return [Math.min(startValue, endValue), Math.max(startValue, endValue)];
-    }
-
-    const start = Number(zoom.start);
-    const end = Number(zoom.end);
-    return Number.isFinite(start) && Number.isFinite(end)
-      ? [min + width * start / 100, min + width * end / 100]
-      : undefined;
-  }
-
-  function handleDataZoom(event: any) {
-    if (applyingChartOption) return;
-    const range = dataZoomRange(event);
-    if (range) navigateToRange(range);
-  }
-
-  function ensureChart() {
-    if (!active || !host) return;
-    const rect = host.getBoundingClientRect();
-    if (rect.width < 1 || rect.height < 1) return;
-    if (!chart) {
-      chart = init(host, undefined, { renderer: "canvas" });
-      chart.on("datazoom", handleDataZoom);
-      chart.getZr().on("dblclick", returnToLatest);
-      setEmptyChartOption();
-      if (snapshot) updateChart(snapshot, displayRange(snapshot.recordedSeconds));
-    } else {
-      chart.resize();
-    }
-  }
-
   onMount(() => {
-    resizeObserver = new ResizeObserver(ensureChart);
-    resizeObserver.observe(host);
-    ensureChart();
-
     refreshUnsubscribe = subscribeRefresh(refreshIntervalMs, () => {
-      if (active && running && followingLatest) void refreshSnapshot();
+      if (active && configured && followingLatest && (running || snapshot?.preview || !snapshot)) void refreshSnapshot();
     });
   });
 
   onDestroy(() => {
+    configured = false;
+    viewRevision += 1;
     refreshUnsubscribe?.();
     if (reconfigureTimer) clearTimeout(reconfigureTimer);
     if (viewRefreshTimer) clearTimeout(viewRefreshTimer);
-    resizeObserver?.disconnect();
-    chart?.dispose();
   });
 </script>
 
 <section class="page-toolbar">
-  <div class="page-title">ANALYSIS / SCOPE · ECHARTS SPIKE</div>
+  <div class="page-title">{translate("ui.analysis.scope", $uiLanguage)}</div>
   <div class="toolbar-actions">
     <!-- svelte-ignore a11y_click_events_have_key_events a11y_no_static_element_interactions -->
     <vscode-button
       class:stopping={stopping}
-      disabled={!connection || (!running && selectedIds.size === 0) || busy}
+      disabled={!connection || busy}
       onclick={() => void toggleRun()}
     >
       <i class={`codicon ${stopping ? "codicon-loading codicon-modifier-spin" : running ? "codicon-debug-stop" : "codicon-play"}`}></i>
-      {stopping ? "Stopping…" : running ? "Stop" : "Run"}
+      {localize(stopping ? "Stopping…" : running ? "Stop" : "Run", $uiLanguage)}
     </vscode-button>
   </div>
 </section>
 
 <div class="scope-spike-shell">
   <aside class="scope-spike-sidebar">
-    <div class="section-heading">CHANNELS</div>
-    {#if channelNotice}<div class="scope-channel-notice">{channelNotice}</div>{/if}
+    <div class="section-heading">{translate("scope.channels.heading", $uiLanguage)}</div>
+    {#if channelNotice}<div class="scope-channel-notice">{translateFormat("scope.channel.selection.exceeded", $uiLanguage, channelNotice)}</div>{/if}
     {#each channels as channel}
       <div class:active-channel={activeChannelId === channel.id} class="channel-block">
         <div class="scope-spike-channel">
@@ -638,7 +457,7 @@
         {#if selectedIds.has(channel.id) && activeChannelId === channel.id}
           <div class="channel-y-controls">
             <label>
-              <span>Scale/div</span>
+              <span>{translate("ui.scale.div", $uiLanguage)}</span>
               <input
                 type="number"
                 min="0.000001"
@@ -649,7 +468,7 @@
               <em>{channel.unit ?? ""}/div</em>
             </label>
             <label>
-              <span>Y Pos</span>
+              <span>{translate("ui.y.pos", $uiLanguage)}</span>
               <input
                 type="number"
                 step="any"
@@ -658,25 +477,36 @@
               />
               <em>{channel.unit ?? ""}</em>
             </label>
-            <button class="auto-button" onclick={() => autoVertical(channel.id)}>Auto</button>
+            <button class="auto-button" onclick={() => autoVertical(channel.id)}>{translate("ui.auto", $uiLanguage)}</button>
           </div>
         {/if}
       </div>
     {/each}
     <div class="scope-spike-note">
-      Click a channel name to make its Y axis active. Scale/div and Y Pos control each trace independently.
-      Horizontal zoom and pan are continuous ECharts dataZoom interactions; double-click returns the current span to Latest.
+      {translate("ui.click.a.channel.name.to.make.its.y.axis.active.scale.div.and.y.pos.control.e", $uiLanguage)}
+      {translate("ui.horizontal.zoom.and.pan.are.continuous.echarts.datazoom.interactions.double.", $uiLanguage)}
     </div>
   </aside>
 
   <section class="scope-spike-workspace">
     <div class="scope-spike-meta">
-      <span>{followingLatest ? `latest ${viewSpan(viewRange).toFixed(3)} s` : `history ${viewSpan(viewRange).toFixed(3)} s`}</span>
-      {#if !followingLatest}<button class="latest-button" onclick={returnToLatest}>Latest</button>{/if}
-      <span>{snapshot?.recordedSeconds?.toFixed(3) ?? "0.000"} s recorded</span>
-      <span>loss {snapshot?.lostFrames ?? 0}</span>
+      <span>{localize(followingLatest ? "latest" : "history", $uiLanguage)} {viewSpan(viewRange).toFixed(3)} s</span>
+      {#if !followingLatest}<button class="latest-button" onclick={returnToLatest}>{translate("ui.latest", $uiLanguage)}</button>{/if}
+      <span>{snapshot?.preview ? translate("ui.baseline.preview", $uiLanguage) : (snapshot?.recordedSeconds?.toFixed(3) ?? "0.000") + " s " + translate("ui.recorded", $uiLanguage)}</span>
+      <span>{translate("ui.loss", $uiLanguage)} {snapshot?.lostFrames ?? 0}</span>
     </div>
-    <div bind:this={host} class="scope-spike-plot"></div>
+    <div class="scope-spike-plot">
+      <ScopeEchartsView
+        channels={visibleChannels}
+        {snapshot}
+        {verticalScale}
+        {verticalOffset}
+        {activeChannelId}
+        {viewRange}
+        onViewRangeChange={navigateToRange}
+        onDoubleClick={returnToLatest}
+      />
+    </div>
   </section>
 </div>
 

@@ -95,10 +95,10 @@ Examples:
 
 ```text
 motor.enable
-motor.run
-action.start(RsLs)
-action.start(Flux)
-action.start(JB)
+motion.run
+identification.start(rs_ls)
+identification.start(flux)
+identification.start(jb)
 ```
 
 Before an operation that may energize or move the motor starts, the Application layer checks the prerequisites required by that operation.
@@ -116,6 +116,12 @@ A preflight may inspect:
 - active faults;
 - previously identified motor data;
 - resources or tasks already in use.
+
+For the current firmware, motor-moving commissioning preflight explicitly reads
+`PARAM_EVENT_ERROR` and `PARAM_EVENT_TRIP`. A non-zero value produces a
+structured Protection issue that points clients to Events / Problems before the
+workflow attempts Enable. Warning/report masks do not by themselves block these
+operations.
 
 Preflight does not implement the identification algorithm itself.
 
@@ -312,9 +318,9 @@ Initial intended mapping:
 
 | Action | Required operating limits | Other important prerequisites |
 | --- | --- | --- |
-| Rs/Ls identification | Current limit | valid motor setup and suitable motor state |
-| Flux identification | Current limit, speed limit | valid Rs/Ls result and suitable motor state |
-| J/B identification | Current limit, speed limit | valid Flux result and suitable motor state |
+| Rs/Ls identification | Current limit, Rs/Ls injection peak strictly below configured current limit | valid motor setup and suitable motor state |
+| Flux identification | Current limit, speed limit, Align/I-F currents within limit | valid Rs/Ls result and suitable motor state |
+| J/B identification | Current limit, speed limit, Align/I-F currents within limit | valid Flux result and suitable motor state |
 | Torque run | Current limit, speed limit | suitable motor/control state |
 | Speed run | Current limit, speed limit | suitable motor/control state |
 | Position run | Current limit, speed limit | suitable motor/control state |

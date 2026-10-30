@@ -139,7 +139,7 @@ The phase-search result is automatically applied by the firmware when the operat
 
 The resulting encoder direction and electrical offset are implementation/calibration results. They remain readable through the generic Parameters page but are not permanently displayed on the normal Encoder page. For the normal workflow, `Success` is sufficient.
 
-Phase Search follows the shared stateful-action interaction rule in `UI_INTERACTION_RULES.md`: while the same search task is active, the action control may change from Start to Abort/Stop in the same location rather than presenting two permanently adjacent controls.
+Phase Search uses the shared motor Stop semantic. Its page control remains the Phase Search Start/status control; stopping an active search goes through the same Application motor-stop operation used by the global Stop control. The page must not introduce a separate phase-search Abort/Stop implementation.
 
 ### Encoder direction versus motor direction
 
@@ -231,27 +231,38 @@ Without a valid mechanical zero, position limits cannot be enabled because their
 
 The GUI must not reproduce motor-state orchestration required to perform phase search or homing.
 
-The current AxDr_L firmware starts phase search by selecting `PHASE_SEARCH` motor mode, completing the generic motor-enable action, and then using the generic motor-run action. That device-side composition is hidden by the Rust Application API:
+The current firmware groups phase search and harmonic encoder calibration under
+`ENCODER_CAL`. `ACTION_ENC_PHASE_START` (0x1402) starts phase search;
+`ACTION_ENC_CAL_START` (0x1401) starts harmonic calibration. Both require DISABLED.
+Ordinary Motor Run does not start either task.
 
-```text
-GUI / CLI / Automation
-        |
-        v
-phaseSearch.start()
-        |
-        v
-MotorActionService
-        |
-        +-- PARAM_MOTOR_MODE = PHASE_SEARCH
-        +-- ACTION_MOTOR_ENABLE
-        +-- wait for Enable completion
-        +-- ACTION_MOTOR_RUN
-        +-- expose final completion as semantic phase-search completion
-```
+The Application rejects RUN, disables an ENABLED motor, selects ENCODER_CAL while
+disabled, and sends only the requested task Action. Firmware owns Enable/Run,
+phase application, automatic saving and final Disable. The mode remains ENCODER_CAL.
+Clients use the semantic Application operations, not their own mode/Enable sequence.
 
-The desktop client calls the semantic phase-search command. It does not know or reproduce the firmware sequence.
+Encoder calibration appears below phase search. Its prerequisites include a valid
+phase alignment, healthy feedback, positive flux/inertia/observer bandwidth and
+acceleration/deceleration, and an effective speed limit of at least 1000 rpm.
+The firmware spins at 1000 rpm, samples angle error, applies harmonic correction,
+then repeats phase search and saves. There is no separate Apply button or fabricated
+percentage progress. Global Stop cancels the task; failure/cancellation may invalidate
+phase alignment, so the actual readback remains authoritative.
 
-This is intentionally an Application-level compatibility adapter. If firmware later exposes a native phase-search Action, only the Application implementation needs to change; Encoder GUI, CLI and automation semantics stay stable.
+`PARAM_CAL_VALID`: 0 = no alignment, 1 = phase aligned only, 2 = phase aligned and
+encoder calibrated. The page shows this persistent state independently of the last
+button operation. Setup fields and competing tasks are locked while a task runs,
+including intermediate disabled fitting/saving stages. Firmware also rejects
+parameter writes throughout the active encoder procedure.
+
+Completion is matched by transaction and Action ID. Application refreshes the cache
+and verifies DISABLED, ENCODER_CAL and the expected calibration validity before
+reporting success. A rejected start, failed completion or failed readback is reported.
+The firmware completion includes saving; acceptance alone is never success.
+
+CLI: `nmixxctl ... motor phase-search` or `nmixxctl ... motor encoder-calibration`.
+Automation uses `encoder.phase_search` or `encoder.calibrate` through the same
+Application operations and waits for completion.
 
 The same rule applies to future Set Zero and Homing operations: clients call semantic Application operations, while any required lower-level Parameter/Action composition remains inside the Application layer.
 

@@ -27,6 +27,18 @@ export type MotionCapabilities = {
   sensorlessEntrySpeed: boolean;
 };
 
+export type CommissioningCapabilities = {
+  identificationRsLs: boolean;
+  identificationFlux: boolean;
+  identificationJb: boolean;
+  identificationApply: boolean;
+  phaseSearch: boolean;
+  encoderCalibration: boolean;
+  homing: boolean;
+  positionSetZero: boolean;
+  protectionClear: boolean;
+};
+
 export type PlotChannel = {
   id: number;
   label: string;
@@ -45,4 +57,7 @@ export type ConnectionInfo = {
   normalRateHz: number;
   channels: PlotChannel[];
   motion: MotionCapabilities;
+  commissioning: CommissioningCapabilities;
+  /** Already acquired for runtime values/history; selecting a trace does not add a channel. */
+  runtimeChannelIds?: number[];
 };

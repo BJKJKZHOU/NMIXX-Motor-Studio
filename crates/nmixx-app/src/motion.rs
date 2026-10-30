@@ -1,96 +1,50 @@
-use std::sync::{Arc, RwLock};
+use std::collections::HashMap;
+use std::sync::{Arc, Mutex, RwLock};
 
 use serde::{Deserialize, Serialize};
 
-use crate::{ActionHandle, DeviceSession, ParameterService, ParameterValue, PositionValue};
+use crate::parameter_service::ParameterService;
+use crate::{ActionHandle, DeviceSession, HostSchema, MotorState, ParameterValue, PositionValue};
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "kebab-case")]
-pub enum MotionMode {
-    Position,
-    Speed,
-    SensorlessSpeed,
-    Torque,
-    Mit,
+pub enum MotionMode { Position, Speed, SensorlessSpeed, Torque }
+
+impl MotionMode {
+    pub fn symbol(self) -> &'static str {
+        match self {
+            Self::Position => "POSITION",
+            Self::Speed => "SPEED",
+            Self::SensorlessSpeed => "SENSORLESS_SPEED",
+            Self::Torque => "TORQUE",
+        }
+    }
+
+    fn from_symbol(symbol: &str) -> Option<Self> {
+        match symbol {
+            "POSITION" => Some(Self::Position),
+            "SPEED" => Some(Self::Speed),
+            "SENSORLESS_SPEED" => Some(Self::SensorlessSpeed),
+            "TORQUE" => Some(Self::Torque),
+            _ => None,
+        }
+    }
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "kebab-case")]
-pub enum TrajectoryType {
-    Trapezoidal,
-    SCurve,
-    Filtered,
-}
-
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
-#[serde(rename_all = "kebab-case")]
-pub enum SCurveMode {
-    PeakAccel,
-    MatchedTime,
-}
-
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
-#[serde(rename_all = "kebab-case")]
-pub enum PositionCommand {
-    Absolute,
-    Incremental,
-}
+pub enum PositionCommand { Absolute, Incremental }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
 pub struct MotionConfig {
-    pub mode: MotionMode,
-    pub trajectory: TrajectoryType,
-    pub acceleration: f64,
-    pub deceleration: f64,
-    pub filter_time_ms: f64,
-    pub s_curve_mode: SCurveMode,
-    pub repeat: bool,
-
     pub position_command: PositionCommand,
-    pub position_target_turn: f64,
-    pub position_max_speed: f64,
-
-    pub speed_target: f64,
-    pub sensorless_speed_target: f64,
-    pub sensorless_startup_current: f64,
-    pub sensorless_entry_speed: f64,
-
-    pub torque_target_nm: f64,
-    pub torque_ramp_nm_per_s: f64,
-
-    pub mit_position_ref: f64,
-    pub mit_velocity_ref: f64,
-    pub mit_kp: f64,
-    pub mit_kd: f64,
-    pub mit_torque_feedforward: f64,
+    pub incremental_delta_turn: f64,
+    pub repeat: bool,
 }
-
 impl Default for MotionConfig {
     fn default() -> Self {
-        Self {
-            mode: MotionMode::Position,
-            trajectory: TrajectoryType::Trapezoidal,
-            acceleration: 20.0,
-            deceleration: 20.0,
-            filter_time_ms: 20.0,
-            s_curve_mode: SCurveMode::PeakAccel,
-            repeat: false,
-            position_command: PositionCommand::Incremental,
-            position_target_turn: 1.0,
-            position_max_speed: 8.0,
-            speed_target: 20.0,
-            sensorless_speed_target: 20.0,
-            sensorless_startup_current: 1.0,
-            sensorless_entry_speed: 8.0,
-            torque_target_nm: 0.2,
-            torque_ramp_nm_per_s: 1.0,
-            mit_position_ref: 0.0,
-            mit_velocity_ref: 0.0,
-            mit_kp: 10.0,
-            mit_kd: 0.5,
-            mit_torque_feedforward: 0.0,
-        }
+        Self { position_command: PositionCommand::Incremental, incremental_delta_turn: 1.0, repeat: false }
     }
 }
 
@@ -106,147 +60,257 @@ pub struct MotionPreview {
     pub secondary_unit: Option<&'static str>,
 }
 
-#[derive(Debug, Clone, Default)]
+#[derive(Debug)]
+struct MotionRepeatRuntime {
+    endpoint_a: Option<f64>,
+    endpoint_b: Option<f64>,
+    pending_target_is_b: Option<bool>,
+}
+impl Default for MotionRepeatRuntime {
+    fn default() -> Self {
+        Self { endpoint_a: None, endpoint_b: None, pending_target_is_b: None }
+    }
+}
+
+#[derive(Debug, Clone)]
 pub struct MotionService {
     config: Arc<RwLock<MotionConfig>>,
+    repeat: Arc<Mutex<MotionRepeatRuntime>>,
+}
+impl Default for MotionService {
+    fn default() -> Self {
+        Self {
+            config: Arc::new(RwLock::new(MotionConfig::default())),
+            repeat: Arc::new(Mutex::new(MotionRepeatRuntime::default())),
+        }
+    }
 }
 
 impl MotionService {
     pub fn get(&self) -> MotionConfig {
         self.config.read().expect("Motion config lock poisoned").clone()
     }
-
     pub fn set(&self, config: MotionConfig) -> Result<MotionConfig, String> {
-        validate(&config)?;
+        validate_host_config(&config)?;
+        let current = self.get();
+        let reset_repeat = current.repeat != config.repeat
+            || current.position_command != config.position_command
+            || current.incremental_delta_turn != config.incremental_delta_turn;
         *self.config.write().map_err(|_| "Motion config lock poisoned")? = config.clone();
+        if reset_repeat { self.reset_repeat()?; }
         Ok(config)
     }
 
-    pub fn preview(&self) -> Result<MotionPreview, String> {
-        self.preview_with_speed_limit(None)
+    pub(crate) fn repeat_target(
+        &self,
+        current_position_turn: f64,
+        absolute_target_turn: Option<f64>,
+    ) -> Result<Option<(f64, bool)>, String> {
+        let config = self.get();
+        if !config.repeat { return Ok(None); }
+
+        let mut runtime = self.repeat.lock().map_err(|_| "Motion repeat lock poisoned")?;
+        if runtime.endpoint_a.is_none() || runtime.endpoint_b.is_none() {
+            let target = match config.position_command {
+                PositionCommand::Absolute => absolute_target_turn
+                    .ok_or_else(|| "Absolute repeat target is unavailable".to_owned())?,
+                PositionCommand::Incremental => current_position_turn + config.incremental_delta_turn,
+            };
+            if (target - current_position_turn).abs() <= 1e-9 {
+                return Err("Repeat position endpoints must be different".to_owned());
+            }
+            runtime.endpoint_a = Some(current_position_turn);
+            runtime.endpoint_b = Some(target);
+            runtime.pending_target_is_b = None;
+        }
+
+        // The Host chooses the opposite endpoint for the next manual Run.
+        let target_is_b = runtime.pending_target_is_b != Some(true);
+        let target = (if target_is_b { runtime.endpoint_b } else { runtime.endpoint_a })
+            .ok_or_else(|| "Repeat position endpoints are not initialized".to_owned())?;
+        Ok(Some((target, target_is_b)))
     }
 
-    pub fn preview_with_speed_limit(
+    pub(crate) fn preview_repeat_target(&self) -> Result<Option<f64>, String> {
+        if !self.get().repeat { return Ok(None); }
+        let runtime = self.repeat.lock().map_err(|_| "Motion repeat lock poisoned")?;
+        // 预估往返下一程的时长时只读 A/B；不能初始化或推进往返状态，否则会改变真正 Run 的方向。
+        Ok(if runtime.pending_target_is_b == Some(true) { runtime.endpoint_a } else { runtime.endpoint_b })
+    }
+
+    pub(crate) fn repeat_pending_target(&self) -> Result<Option<f64>, String> {
+        let runtime = self.repeat.lock().map_err(|_| "Motion repeat lock poisoned")?;
+        let target = match runtime.pending_target_is_b {
+            Some(true) => runtime.endpoint_b,
+            Some(false) => runtime.endpoint_a,
+            None => return Ok(None),
+        };
+        target.ok_or_else(|| "Pending Repeat endpoint is unavailable".to_owned()).map(Some)
+    }
+
+    pub(crate) fn repeat_mark_started(&self, target_is_b: bool) -> Result<(), String> {
+        self.repeat.lock().map_err(|_| "Motion repeat lock poisoned")?.pending_target_is_b = Some(target_is_b);
+        Ok(())
+    }
+
+    pub(crate) fn cancel_repeat_leg(&self) -> Result<(), String> {
+        // A new Run after Stop starts its A/B endpoints from the current position.
+        self.reset_repeat()
+    }
+
+    pub(crate) fn reset_runtime(&self) -> Result<(), String> {
+        self.reset_repeat()
+    }
+
+    fn reset_repeat(&self) -> Result<(), String> {
+        *self.repeat.lock().map_err(|_| "Motion repeat lock poisoned")? = MotionRepeatRuntime::default();
+        Ok(())
+    }
+
+    /// A display preview uses one committed cache snapshot. It never reads the device
+    /// or publishes Parameter events. Execution-time reads remain in `run`/Application.
+    pub(crate) fn preview_with_parameters(
         &self,
+        parameters: &ParameterService,
         effective_speed_limit: Option<f64>,
+        current_position_turn_override: Option<f64>,
+        position_target_override: Option<f64>,
     ) -> Result<MotionPreview, String> {
         let config = self.get();
-        validate(&config)?;
-        Ok(generate_preview(&config, effective_speed_limit))
-    }
-
-    pub(crate) fn run(
-        &self,
-        parameters: &ParameterService,
-        session: &DeviceSession,
-    ) -> Result<ActionHandle, String> {
-        let config = self.get();
-        validate(&config)?;
-
-        if config.trajectory != TrajectoryType::Trapezoidal
-            && matches!(config.mode, MotionMode::Position | MotionMode::Speed | MotionMode::SensorlessSpeed)
-        {
-            return Err("selected trajectory is not executable on the connected device".to_owned());
-        }
-
-        let state = read_u8(parameters, "PARAM_MOTOR_STATE")?;
-        if state != 1 {
-            return Err("motor must be ENABLED before Run".to_owned());
-        }
-
-        let desired_mode = mode_wire_value(config.mode)?;
-        let active_mode = read_u8(parameters, "PARAM_MOTOR_MODE")?;
-        if active_mode != desired_mode {
-            return Err("changing Motion mode requires the motor to be DISABLED".to_owned());
-        }
-
-        match config.mode {
+        validate_host_config(&config)?;
+        let snapshot = parameters.snapshot().map_err(|error| error.to_string())?;
+        let value = |symbol: &str| cached_value(parameters, &snapshot, symbol);
+        let number = |symbol: &str| -> Result<f64, String> {
+            match value(symbol)? {
+                ParameterValue::F32(value) if value.is_finite() => Ok(f64::from(value)),
+                _ => Err(format!("{symbol} is not a synchronized finite f32 parameter")),
+            }
+        };
+        let position = |symbol: &str| -> Result<PositionValue, String> {
+            match value(symbol)? {
+                ParameterValue::Position(value) if value.theta.is_finite() => Ok(value),
+                _ => Err(format!("{symbol} is not a synchronized position parameter")),
+            }
+        };
+        let mode = match value("PARAM_MOTOR_MODE")? {
+            ParameterValue::U8(value) => mode_from_wire_value(parameters.schema(), value)?,
+            _ => return Err("Motor mode is not a synchronized u8 parameter".to_owned()),
+        };
+        let profile = match parameters.schema().parameter_by_key("PARAM_MOTION_PROFILE") {
+            None => MotionTrajectory::Trapezoidal,
+            Some(meta) => match value("PARAM_MOTION_PROFILE")? {
+                ParameterValue::U8(raw) => match meta.enum_symbol_u8(raw) {
+                    Some("MOTION_TRAPEZOID") => MotionTrajectory::Trapezoidal,
+                    Some("MOTION_S_TIME") => MotionTrajectory::STime,
+                    Some("MOTION_S_PEAK") => MotionTrajectory::SPeak,
+                    _ => return Err("Unsupported firmware Motion Profile".to_owned()),
+                },
+                _ => return Err("Motion Profile is not a synchronized u8 Parameter".to_owned()),
+            },
+        };
+        let limit = if let Some(limit) = effective_speed_limit {
+            Some(limit)
+        } else if parameters.schema().parameter_by_key("PARAM_LIMIT_WM_EFFECTIVE").is_some() {
+            Some(number("PARAM_LIMIT_WM_EFFECTIVE")?)
+        } else {
+            None
+        };
+        match mode {
             MotionMode::Position => {
-                write_by_symbol(
-                    parameters,
-                    "PARAM_MOTION_WM_MAX",
-                    ParameterValue::F32(config.position_max_speed as f32),
-                )?;
-                write_motion_limits(parameters, &config)?;
-
-                let target_turns = match config.position_command {
-                    PositionCommand::Absolute => config.position_target_turn,
-                    PositionCommand::Incremental => {
-                        let current = read_position(parameters, "PARAM_RUN_POSITION")?;
-                        position_to_turns(current) + config.position_target_turn
+                let acc = number("PARAM_MOTION_WM_ACC")?;
+                let dec = number("PARAM_MOTION_WM_DEC")?;
+                let max_speed = number("PARAM_TARGET_SPEED")?.abs();
+                if max_speed <= 0.0 {
+                    return Err("Position Max Speed must be positive before Run".to_owned());
+                }
+                // 调参往返的下一程可能返回 A 点，不能用仍停留在 B 点的参数目标估计为零距离。
+                let distance_turn = if let Some(target) = position_target_override {
+                    target - current_position_turn_override
+                        .unwrap_or(position_to_turns(position("PARAM_RUN_POSITION")?))
+                } else {
+                    match config.position_command {
+                        PositionCommand::Incremental => config.incremental_delta_turn,
+                        PositionCommand::Absolute => {
+                            // The display preview may use the latest 1 kHz Plot
+                            // position from RuntimeTelemetry. Do not write that f32
+                            // projection back into the exact typed Position Parameter.
+                            // Execution-time Run still reads PARAM_RUN_POSITION from
+                            // the device before deriving an absolute/incremental target.
+                            let current = match current_position_turn_override {
+                                Some(value) if value.is_finite() => value,
+                                _ => position_to_turns(position("PARAM_RUN_POSITION")?),
+                            };
+                            let target = position_to_turns(position("PARAM_TARGET_POSITION")?);
+                            target - current
+                        }
                     }
                 };
-                write_by_symbol(
-                    parameters,
-                    "PARAM_TARGET_POSITION",
-                    ParameterValue::Position(turns_to_position(target_turns)?),
-                )?;
+                Ok(position_preview(distance_turn, max_speed, acc, dec, limit, profile))
             }
-            MotionMode::Speed => {
-                write_motion_limits(parameters, &config)?;
-                write_by_symbol(
-                    parameters,
-                    "PARAM_TARGET_SPEED",
-                    ParameterValue::F32(config.speed_target as f32),
-                )?;
+            MotionMode::Speed | MotionMode::SensorlessSpeed => {
+                let shape = if mode == MotionMode::SensorlessSpeed { MotionTrajectory::Trapezoidal } else { profile };
+                Ok(speed_preview(number("PARAM_TARGET_SPEED")?, number("PARAM_MOTION_WM_ACC")?, limit, shape))
             }
-            MotionMode::SensorlessSpeed => {
-                write_motion_limits(parameters, &config)?;
-                write_by_symbol(
-                    parameters,
-                    "PARAM_TARGET_SPEED",
-                    ParameterValue::F32(config.sensorless_speed_target as f32),
-                )?;
-            }
-            MotionMode::Torque => {
-                write_by_symbol(
-                    parameters,
-                    "PARAM_TARGET_TORQUE",
-                    ParameterValue::F32(config.torque_target_nm as f32),
-                )?;
-            }
-            MotionMode::Mit => {
-                return Err("MIT is not supported by the connected device".to_owned());
-            }
+            MotionMode::Torque => Ok(torque_preview(number("PARAM_TARGET_TORQUE")?)),
         }
-
-        start_action(parameters, session, "ACTION_MOTOR_RUN")
     }
 
-    pub(crate) fn stop(
+    pub(crate) fn run_checked(
         &self,
         parameters: &ParameterService,
         session: &DeviceSession,
+        position_target_override: Option<f64>,
+        checkpoint: impl Fn() -> Result<(), String>,
     ) -> Result<ActionHandle, String> {
-        start_action(parameters, session, "ACTION_MOTOR_STOP")
+        let config = self.get();
+        validate_host_config(&config)?;
+        let state_parameter = parameters.schema().parameter_by_key("PARAM_MOTOR_STATE")
+            .ok_or_else(|| "connected device does not expose PARAM_MOTOR_STATE".to_owned())?;
+        let state = MotorState::from_parameter(state_parameter, read_u8(parameters, "PARAM_MOTOR_STATE")?)?;
+        if state != MotorState::Enabled { return Err(format!("motor must be ENABLED before Run; current state is {state}")); }
+        let mode = mode_from_wire_value(parameters.schema(), read_u8(parameters, "PARAM_MOTOR_MODE")?)?;
+        if mode == MotionMode::Position {
+            // Firmware uses abs(PARAM_TARGET_SPEED) as the Position trajectory cap.
+            let speed = parameters.read(parameter_id(parameters, "PARAM_TARGET_SPEED")?).map_err(|error| error.to_string())?;
+            if !matches!(speed, ParameterValue::F32(value) if value.is_finite() && value.abs() > 0.0) {
+                return Err("Position Max Speed must be positive before Run".to_owned());
+            }
+            let target_turns = if let Some(target) = position_target_override {
+                Some(target)
+            } else if config.position_command == PositionCommand::Incremental {
+                let current = position_to_turns(read_position(parameters, "PARAM_RUN_POSITION")?);
+                Some(current + config.incremental_delta_turn)
+            } else { None };
+            if let Some(target) = target_turns {
+                checkpoint()?;
+                write_by_symbol(parameters, "PARAM_TARGET_POSITION", ParameterValue::Position(turns_to_position(target)?))?;
+            }
+        }
+        checkpoint()?;
+        start_action(parameters, session, "ACTION_MOTOR_RUN")
     }
 }
 
-fn parameter_id(parameters: &ParameterService, symbol: &str) -> Result<u16, String> {
-    parameters
-        .schema()
-        .parameter_by_key(symbol)
-        .map(|metadata| metadata.id)
-        .ok_or_else(|| format!("connected device does not expose {symbol}"))
-}
-
-fn action_id(parameters: &ParameterService, symbol: &str) -> Result<u16, String> {
-    parameters
-        .schema()
-        .action_by_key(symbol)
-        .map(|metadata| metadata.id)
-        .ok_or_else(|| format!("connected device does not expose {symbol}"))
-}
-
-fn write_by_symbol(
+fn cached_value(
     parameters: &ParameterService,
+    snapshot: &HashMap<u16, Result<ParameterValue, String>>,
     symbol: &str,
-    value: ParameterValue,
-) -> Result<(), String> {
+) -> Result<ParameterValue, String> {
+    let id = parameter_id(parameters, symbol)?;
+    snapshot.get(&id).cloned().unwrap_or_else(|| Err(format!("{symbol} has not been read into the shared cache")))
+}
+fn parameter_id(parameters: &ParameterService, symbol: &str) -> Result<u16, String> {
+    parameters.schema().parameter_by_key(symbol).map(|metadata| metadata.id)
+        .ok_or_else(|| format!("connected device does not expose {symbol}"))
+}
+fn action_id(parameters: &ParameterService, symbol: &str) -> Result<u16, String> {
+    parameters.schema().action_by_key(symbol).map(|metadata| metadata.id)
+        .ok_or_else(|| format!("connected device does not expose {symbol}"))
+}
+fn write_by_symbol(parameters: &ParameterService, symbol: &str, value: ParameterValue) -> Result<(), String> {
     let id = parameter_id(parameters, symbol)?;
     parameters.write(id, value).map_err(|error| error.to_string())
 }
-
 fn read_u8(parameters: &ParameterService, symbol: &str) -> Result<u8, String> {
     let id = parameter_id(parameters, symbol)?;
     match parameters.read(id).map_err(|error| error.to_string())? {
@@ -254,7 +318,6 @@ fn read_u8(parameters: &ParameterService, symbol: &str) -> Result<u8, String> {
         _ => Err(format!("{symbol} is not a u8 parameter")),
     }
 }
-
 fn read_position(parameters: &ParameterService, symbol: &str) -> Result<PositionValue, String> {
     let id = parameter_id(parameters, symbol)?;
     match parameters.read(id).map_err(|error| error.to_string())? {
@@ -262,424 +325,244 @@ fn read_position(parameters: &ParameterService, symbol: &str) -> Result<Position
         _ => Err(format!("{symbol} is not a position parameter")),
     }
 }
-
-fn start_action(
-    parameters: &ParameterService,
-    session: &DeviceSession,
-    symbol: &str,
-) -> Result<ActionHandle, String> {
-    let id = action_id(parameters, symbol)?;
-    session.action_start(id).map_err(|error| error.to_string())
+fn start_action(parameters: &ParameterService, session: &DeviceSession, symbol: &str) -> Result<ActionHandle, String> {
+    session.action_start(action_id(parameters, symbol)?).map_err(|error| error.to_string())
 }
-
-fn write_motion_limits(parameters: &ParameterService, config: &MotionConfig) -> Result<(), String> {
-    write_by_symbol(
-        parameters,
-        "PARAM_MOTION_WM_ACC",
-        ParameterValue::F32(config.acceleration as f32),
-    )?;
-    write_by_symbol(
-        parameters,
-        "PARAM_MOTION_WM_DEC",
-        ParameterValue::F32(config.deceleration as f32),
-    )
-}
-
-fn position_to_turns(position: PositionValue) -> f64 {
+pub(crate) fn position_to_turns(position: PositionValue) -> f64 {
     f64::from(position.turns) + f64::from(position.theta) / std::f64::consts::TAU
 }
-
-fn turns_to_position(turns: f64) -> Result<PositionValue, String> {
-    if !turns.is_finite() {
-        return Err("position target must be finite".to_owned());
-    }
-
+pub(crate) fn turns_to_position(turns: f64) -> Result<PositionValue, String> {
+    if !turns.is_finite() { return Err("position target must be finite".to_owned()); }
     let whole = turns.floor();
-    if whole < f64::from(i32::MIN) || whole > f64::from(i32::MAX) {
-        return Err("position target is outside the supported turn range".to_owned());
-    }
-
-    let theta = ((turns - whole) * std::f64::consts::TAU) as f32;
-    Ok(PositionValue {
-        turns: whole as i32,
-        theta,
-    })
+    if whole < f64::from(i32::MIN) || whole > f64::from(i32::MAX) { return Err("position target is outside the supported turn range".to_owned()); }
+    Ok(PositionValue { turns: whole as i32, theta: ((turns - whole) * std::f64::consts::TAU) as f32 })
 }
-
-// Current AxDr_L Motor_Mode_e values. Host Schema already exports the symbols,
-// but schema v1 does not yet export symbol -> numeric enum values. Keep this
-// compatibility mapping isolated here so schema enum metadata can replace it
-// without changing the Motion API or GUI.
-fn mode_wire_value(mode: MotionMode) -> Result<u8, String> {
-    match mode {
-        MotionMode::Torque => Ok(0),
-        MotionMode::Speed => Ok(1),
-        MotionMode::Position => Ok(2),
-        MotionMode::SensorlessSpeed => Ok(5),
-        MotionMode::Mit => Err("MIT has no AxDr_L Motor Mode value".to_owned()),
-    }
+pub(crate) fn mode_wire_value(schema: &HostSchema, mode: MotionMode) -> Result<u8, String> {
+    let parameter = schema.parameter_by_key("PARAM_MOTOR_MODE")
+        .ok_or_else(|| "Motor mode is not exposed".to_owned())?;
+    parameter.enum_u8(mode.symbol()).map_err(|error| error.to_string())
 }
-
-fn validate(config: &MotionConfig) -> Result<(), String> {
-    let require_finite = |value: f64, name: &str| {
-        if value.is_finite() {
-            Ok(())
-        } else {
-            Err(format!("{name} must be finite"))
-        }
-    };
-
-    let validate_trajectory = || -> Result<(), String> {
-        require_finite(config.acceleration, "Acceleration")?;
-        require_finite(config.deceleration, "Deceleration")?;
-        if config.acceleration <= 0.0 || config.deceleration <= 0.0 {
-            return Err("Acceleration and deceleration must be positive".to_owned());
-        }
-        if config.trajectory == TrajectoryType::Filtered {
-            require_finite(config.filter_time_ms, "Filter time")?;
-            if config.filter_time_ms < 0.0 {
-                return Err("Filter time cannot be negative".to_owned());
-            }
-        }
-        Ok(())
-    };
-
-    match config.mode {
-        MotionMode::Position => {
-            validate_trajectory()?;
-            require_finite(config.position_target_turn, "Position target")?;
-            require_finite(config.position_max_speed, "Position max speed")?;
-            if config.position_max_speed <= 0.0 {
-                return Err("Position max speed must be positive".to_owned());
-            }
-        }
-        MotionMode::Speed => {
-            validate_trajectory()?;
-            require_finite(config.speed_target, "Speed target")?;
-        }
-        MotionMode::SensorlessSpeed => {
-            validate_trajectory()?;
-            require_finite(config.sensorless_speed_target, "Sensorless speed target")?;
-        }
-        MotionMode::Torque => {
-            require_finite(config.torque_target_nm, "Torque target")?;
-            require_finite(config.torque_ramp_nm_per_s, "Torque ramp")?;
-            if config.torque_ramp_nm_per_s <= 0.0 {
-                return Err("Torque ramp must be positive".to_owned());
-            }
-        }
-        MotionMode::Mit => {
-            require_finite(config.mit_position_ref, "MIT position reference")?;
-            require_finite(config.mit_velocity_ref, "MIT velocity reference")?;
-            require_finite(config.mit_kp, "MIT Kp")?;
-            require_finite(config.mit_kd, "MIT Kd")?;
-            require_finite(config.mit_torque_feedforward, "MIT torque feedforward")?;
-        }
-    }
-
+pub(crate) fn mode_from_wire_value(schema: &HostSchema, value: u8) -> Result<MotionMode, String> {
+    let parameter = schema.parameter_by_key("PARAM_MOTOR_MODE")
+        .ok_or_else(|| "Motor mode is not exposed".to_owned())?;
+    let symbol = parameter.enum_symbol_u8(value)
+        .ok_or_else(|| format!("unsupported motor mode value {value}"))?;
+    MotionMode::from_symbol(symbol).ok_or_else(|| format!("unsupported motor mode symbol {symbol}"))
+}
+fn validate_host_config(config: &MotionConfig) -> Result<(), String> {
+    if !config.incremental_delta_turn.is_finite() { return Err("Incremental position must be finite".to_owned()); }
     Ok(())
 }
-
-fn s_time_factor(config: &MotionConfig) -> f64 {
-    if config.trajectory == TrajectoryType::SCurve && config.s_curve_mode == SCurveMode::PeakAccel {
-        1.5
-    } else {
-        1.0
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum MotionTrajectory { Trapezoidal, STime, SPeak }
+impl MotionTrajectory {
+    fn time_factor(self) -> f64 {
+        if self == Self::SPeak { 1.875 } else { 1.0 }
     }
-}
-
-fn smoothstep(x: f64) -> f64 {
-    let x = x.clamp(0.0, 1.0);
-    x * x * (3.0 - 2.0 * x)
-}
-
-fn ramp_fraction(config: &MotionConfig, x: f64) -> f64 {
-    match config.trajectory {
-        TrajectoryType::SCurve => smoothstep(x),
-        _ => x.clamp(0.0, 1.0),
+    fn speed_fraction(self, u: f64) -> f64 {
+        if self == Self::Trapezoidal { u } else {
+            u * u * u * (10.0 + u * (-15.0 + 6.0 * u))
+        }
+    }
+    fn distance_fraction(self, u: f64) -> f64 {
+        if self == Self::Trapezoidal { 0.5 * u * u } else {
+            let u2 = u * u;
+            u2 * u2 * (2.5 + u * (-3.0 + u))
+        }
     }
 }
 
 fn limited_speed(requested: f64, effective_speed_limit: Option<f64>) -> f64 {
-    match effective_speed_limit {
-        Some(limit) if limit.is_finite() && limit >= 0.0 => requested.min(limit),
-        _ => requested,
-    }
+    match effective_speed_limit { Some(limit) if limit.is_finite() && limit >= 0.0 => requested.min(limit), _ => requested }
 }
-
-fn generate_preview(config: &MotionConfig, effective_speed_limit: Option<f64>) -> MotionPreview {
-    match config.mode {
-        MotionMode::Position => position_preview(config, effective_speed_limit),
-        MotionMode::Speed | MotionMode::SensorlessSpeed => speed_preview(config, effective_speed_limit),
-        MotionMode::Torque => torque_preview(config),
-        MotionMode::Mit => MotionPreview {
-            times: Vec::new(),
-            primary: Vec::new(),
-            secondary: Vec::new(),
-            primary_label: "Command",
-            secondary_label: None,
-            primary_unit: "",
-            secondary_unit: None,
-        },
+fn position_preview(distance_turn: f64, requested_speed: f64, acceleration: f64, deceleration: f64,
+                    effective_speed_limit: Option<f64>, profile: MotionTrajectory) -> MotionPreview {
+    let distance = distance_turn.abs() * std::f64::consts::TAU;
+    if distance <= f64::EPSILON || acceleration <= 0.0 || deceleration <= 0.0 {
+        return MotionPreview { times: vec![0.0, 1.0], primary: vec![0.0, distance_turn], secondary: vec![0.0, 0.0],
+            primary_label: "Position", secondary_label: Some("Speed"), primary_unit: "turn", secondary_unit: Some("rad/s") };
     }
-}
-
-fn position_preview(config: &MotionConfig, effective_speed_limit: Option<f64>) -> MotionPreview {
-    let distance = config.position_target_turn.abs() * std::f64::consts::TAU;
-    if distance <= f64::EPSILON {
-        return MotionPreview {
-            times: vec![0.0, 1.0],
-            primary: vec![0.0, 0.0],
-            secondary: vec![0.0, 0.0],
-            primary_label: "Position",
-            secondary_label: Some("Speed"),
-            primary_unit: "turn",
-            secondary_unit: Some("rad/s"),
-        };
+    let sign = distance_turn.signum();
+    let speed_limit = limited_speed(requested_speed.abs(), effective_speed_limit);
+    if speed_limit <= 0.0 {
+        return MotionPreview { times: vec![0.0, 1.0], primary: vec![0.0, 0.0], secondary: vec![0.0, 0.0],
+            primary_label: "Position", secondary_label: Some("Speed"), primary_unit: "turn", secondary_unit: Some("rad/s") };
     }
-
-    let sign = config.position_target_turn.signum();
-    let a = config.acceleration;
-    let d = config.deceleration;
-    let factor = s_time_factor(config);
-    let speed_limit = limited_speed(config.position_max_speed, effective_speed_limit);
-    let ramp_distance_at_limit = 0.5 * factor * speed_limit * speed_limit * (1.0 / a + 1.0 / d);
-    let peak_speed = if ramp_distance_at_limit <= distance {
-        speed_limit
-    } else {
-        (2.0 * distance / (factor * (1.0 / a + 1.0 / d))).sqrt()
-    };
-
-    let t_acc = factor * peak_speed / a;
-    let t_dec = factor * peak_speed / d;
-    let ramp_distance = 0.5 * peak_speed * (t_acc + t_dec);
-    let t_cruise = ((distance - ramp_distance).max(0.0)) / peak_speed.max(1e-9);
-    let base_duration = t_acc + t_cruise + t_dec;
-    let tau = if config.trajectory == TrajectoryType::Filtered {
-        config.filter_time_ms / 1000.0
-    } else {
-        0.0
-    };
-    let total_duration = base_duration + if tau > 0.0 { 8.0 * tau } else { 0.0 };
+    // Matches the firmware's SCurve::Plan for a stationary initial reference:
+    // quintic velocity smoothstep; S_PEAK stretches acceleration time by 1.875.
+    let k = profile.time_factor();
+    let peak = speed_limit.min((2.0 * distance / (k * (1.0 / acceleration + 1.0 / deceleration))).sqrt());
+    let t_acc = k * peak / acceleration;
+    let t_dec = k * peak / deceleration;
+    let cruise_distance = (distance - 0.5 * peak * (t_acc + t_dec)).max(0.0);
+    let t_cruise = cruise_distance / peak;
+    let total_duration = t_acc + t_cruise + t_dec;
     let samples = 801usize;
-    let dt = total_duration.max(1e-6) / (samples - 1) as f64;
-
     let mut times = Vec::with_capacity(samples);
     let mut position = Vec::with_capacity(samples);
-    let mut speed: Vec<f64> = Vec::with_capacity(samples);
-    let mut pos = 0.0;
-    let mut filtered_speed = 0.0;
-
+    let mut speed = Vec::with_capacity(samples);
     for i in 0..samples {
-        let t = i as f64 * dt;
-        let desired = if t < t_acc {
-            peak_speed * ramp_fraction(config, t / t_acc.max(1e-9))
+        let t = i as f64 * total_duration / (samples - 1) as f64;
+        let (distance_at_t, speed_at_t) = if t < t_acc {
+            let u = (t / t_acc).clamp(0.0, 1.0);
+            (peak * t_acc * profile.distance_fraction(u), peak * profile.speed_fraction(u))
         } else if t < t_acc + t_cruise {
-            peak_speed
-        } else if t < base_duration {
-            let x = (t - t_acc - t_cruise) / t_dec.max(1e-9);
-            peak_speed * (1.0 - ramp_fraction(config, x))
+            (0.5 * peak * t_acc + peak * (t - t_acc), peak)
         } else {
-            0.0
+            let u = ((t - t_acc - t_cruise) / t_dec).clamp(0.0, 1.0);
+            (0.5 * peak * t_acc + cruise_distance + peak * t_dec * (u - profile.distance_fraction(u)),
+             peak * (1.0 - profile.speed_fraction(u)))
         };
-
-        let current_speed = if tau > 0.0 {
-            let alpha = 1.0 - (-dt / tau).exp();
-            filtered_speed += alpha * (desired - filtered_speed);
-            filtered_speed
-        } else {
-            desired
-        };
-
-        if i > 0 {
-            pos += 0.5 * (speed[i - 1].abs() + current_speed.abs()) * dt;
-        }
         times.push(t);
-        speed.push(sign * current_speed);
-        position.push(sign * pos / std::f64::consts::TAU);
+        speed.push(sign * speed_at_t);
+        position.push(sign * distance_at_t.min(distance) / std::f64::consts::TAU);
     }
-    MotionPreview {
-        times,
-        primary: position,
-        secondary: speed,
-        primary_label: "Position",
-        secondary_label: Some("Speed"),
-        primary_unit: "turn",
-        secondary_unit: Some("rad/s"),
-    }
+    if let Some(last) = position.last_mut() { *last = distance_turn; }
+    if let Some(last) = speed.last_mut() { *last = 0.0; }
+    MotionPreview { times, primary: position, secondary: speed,
+        primary_label: "Position", secondary_label: Some("Speed"), primary_unit: "turn", secondary_unit: Some("rad/s") }
 }
-
-fn speed_preview(config: &MotionConfig, effective_speed_limit: Option<f64>) -> MotionPreview {
-    let target = match config.mode {
-        MotionMode::SensorlessSpeed => config.sensorless_speed_target,
-        _ => config.speed_target,
-    };
+fn speed_preview(target: f64, acceleration: f64, effective_speed_limit: Option<f64>, profile: MotionTrajectory) -> MotionPreview {
     let magnitude = limited_speed(target.abs(), effective_speed_limit);
     let sign = target.signum();
-    let factor = s_time_factor(config);
-    let base_ramp = factor * magnitude / config.acceleration;
-    let tau = if config.trajectory == TrajectoryType::Filtered {
-        config.filter_time_ms / 1000.0
-    } else {
-        0.0
-    };
-    let hold = 0.5_f64.max(base_ramp * 0.25).max(if tau > 0.0 { 6.0 * tau } else { 0.0 });
-    let total_duration = base_ramp + hold;
+    let ramp = if acceleration > 0.0 { profile.time_factor() * magnitude / acceleration } else { 0.0 };
+    let hold = 0.5_f64.max(ramp * 0.25);
+    let total = ramp + hold;
     let samples = 301usize;
-    let dt = total_duration.max(1e-6) / (samples - 1) as f64;
     let mut times = Vec::with_capacity(samples);
     let mut speed = Vec::with_capacity(samples);
-    let mut filtered = 0.0;
-
     for i in 0..samples {
-        let t = i as f64 * dt;
-        let desired = if base_ramp <= f64::EPSILON || t >= base_ramp {
+        let t = i as f64 * total.max(1e-6) / (samples - 1) as f64;
+        let value = if ramp <= f64::EPSILON || t >= ramp {
             magnitude
         } else {
-            magnitude * ramp_fraction(config, t / base_ramp)
-        };
-        let value = if tau > 0.0 {
-            let alpha = 1.0 - (-dt / tau).exp();
-            filtered += alpha * (desired - filtered);
-            filtered
-        } else {
-            desired
+            magnitude * profile.speed_fraction((t / ramp).clamp(0.0, 1.0))
         };
         times.push(t);
         speed.push(sign * value);
     }
-
-    MotionPreview {
-        times,
-        primary: speed,
-        secondary: Vec::new(),
-        primary_label: "Speed",
-        secondary_label: None,
-        primary_unit: "rad/s",
-        secondary_unit: None,
-    }
+    MotionPreview { times, primary: speed, secondary: Vec::new(), primary_label: "Speed",
+        secondary_label: None, primary_unit: "rad/s", secondary_unit: None }
 }
-
-fn torque_preview(config: &MotionConfig) -> MotionPreview {
-    let target = config.torque_target_nm;
-    let ramp = target.abs() / config.torque_ramp_nm_per_s;
-    let total = ramp + 0.5;
-    let samples = 201usize;
-    let mut times = Vec::with_capacity(samples);
-    let mut torque = Vec::with_capacity(samples);
-    for i in 0..samples {
-        let t = i as f64 * total / (samples - 1) as f64;
-        let value = if ramp <= f64::EPSILON || t >= ramp {
-            target
-        } else {
-            target * t / ramp
-        };
-        times.push(t);
-        torque.push(value);
-    }
-    MotionPreview {
-        times,
-        primary: torque,
-        secondary: Vec::new(),
-        primary_label: "Torque",
-        secondary_label: None,
-        primary_unit: "N·m",
-        secondary_unit: None,
-    }
+fn torque_preview(target: f64) -> MotionPreview {
+    MotionPreview { times: vec![0.0, 0.5], primary: vec![target, target], secondary: Vec::new(),
+        primary_label: "Torque", secondary_label: None, primary_unit: "N·m", secondary_unit: None }
 }
 
 #[cfg(test)]
 mod tests {
     use super::*;
+    #[test]
+    fn preview_next_repeat_leg_does_not_advance_execution() {
+        let service = MotionService::default();
+        service.set(MotionConfig { repeat: true, incremental_delta_turn: 30.0, ..MotionConfig::default() }).unwrap();
+        assert_eq!(service.preview_repeat_target().unwrap(), None);
+        assert_eq!(service.repeat_target(4000.0, None).unwrap(), Some((4030.0, true)));
+        assert_eq!(service.preview_repeat_target().unwrap(), Some(4030.0));
+        service.repeat_mark_started(true).unwrap();
+        assert_eq!(service.preview_repeat_target().unwrap(), Some(4000.0));
+        assert_eq!(service.preview_repeat_target().unwrap(), Some(4000.0));
+        assert_eq!(service.repeat_target(4030.0, None).unwrap(), Some((4000.0, false)));
+        service.repeat_mark_started(false).unwrap();
+        assert_eq!(service.preview_repeat_target().unwrap(), Some(4030.0));
+        service.cancel_repeat_leg().unwrap();
+        assert_eq!(service.preview_repeat_target().unwrap(), None);
+    }
 
     #[test]
-    fn s_curve_peak_accel_takes_longer_than_matched_time() {
+    fn host_config_only_validates_incremental_delta() {
         let service = MotionService::default();
         let mut config = service.get();
-        config.mode = MotionMode::Speed;
-        config.speed_target = 20.0;
-        config.trajectory = TrajectoryType::SCurve;
+        config.incremental_delta_turn = f64::NAN;
+        assert!(service.set(config).is_err());
+    }
+    #[test]
+    fn position_round_trip_preserves_turns() {
+        for value in [-2.25, -0.1, 0.0, 1.75, 123.125] {
+            assert!((position_to_turns(turns_to_position(value).unwrap()) - value).abs() < 1e-6);
+        }
+    }
+    #[test]
+    fn speed_preview_respects_cached_effective_limit() {
+        let preview = speed_preview(-100.0, 20.0, Some(30.0), MotionTrajectory::Trapezoidal);
+        assert!(preview.primary.iter().all(|value| *value >= -30.0 && *value <= 0.0));
+        assert_eq!(preview.primary.last(), Some(&-30.0));
+    }
 
-        config.s_curve_mode = SCurveMode::MatchedTime;
-        service.set(config.clone()).unwrap();
-        let matched = service.preview().unwrap();
+    #[test]
+    fn firmware_s_curve_preview_reaches_exact_position_with_zero_end_speed() {
+        let cases = [MotionTrajectory::Trapezoidal, MotionTrajectory::STime, MotionTrajectory::SPeak];
+        let mut durations = Vec::new();
+        for shape in cases {
+            let preview = position_preview(-1.0, 10.0, 20.0, 20.0, None, shape);
+            assert_eq!(preview.primary.last(), Some(&-1.0));
+            assert_eq!(preview.secondary.last(), Some(&0.0));
+            assert!(preview.primary.windows(2).all(|samples| samples[1] <= samples[0]));
+            assert!(preview.secondary.iter().all(|speed| *speed >= -10.00001 && *speed <= 0.0));
+            durations.push(*preview.times.last().unwrap());
+        }
+        assert!(durations[2] > durations[1]);
+        assert!(durations[1] >= durations[0]);
+    }
 
-        config.s_curve_mode = SCurveMode::PeakAccel;
+    #[test]
+    fn firmware_s_curve_speed_preview_starts_and_finishes_at_correct_speed() {
+        for shape in [MotionTrajectory::STime, MotionTrajectory::SPeak] {
+            let preview = speed_preview(20.0, 100.0, None, shape);
+            assert_eq!(preview.primary.first(), Some(&0.0));
+            assert_eq!(preview.primary.last(), Some(&20.0));
+            assert!(preview.primary.windows(2).all(|values| values[1] >= values[0]));
+        }
+    }
+
+    #[test]
+    fn motion_mode_uses_schema_values_not_fixed_ordinals() {
+        let schema = HostSchema::parse(r#"
+protocol = "axdr-canfd"
+
+[source]
+repository = "fixture"
+git_sha = "abc"
+
+[[parameters]]
+symbol = "PARAM_MOTOR_MODE"
+label = "Motor Mode"
+id = 1793
+type = "u8"
+access = "rw"
+description = "mode"
+allowed = [7, 8, 9, 12]
+allowed_symbols = ["TORQUE", "SPEED", "POSITION", "SENSORLESS_SPEED"]
+"#).unwrap();
+
+        assert_eq!(mode_wire_value(&schema, MotionMode::Position).unwrap(), 9);
+        assert_eq!(mode_from_wire_value(&schema, 12).unwrap(), MotionMode::SensorlessSpeed);
+    }
+
+    #[test]
+    fn repeat_targets_are_selected_by_the_host_on_each_manual_run() {
+        let service = MotionService::default();
+        let mut config = service.get();
+        config.repeat = true;
+        config.position_command = PositionCommand::Incremental;
+        config.incremental_delta_turn = 1.0;
         service.set(config).unwrap();
-        let peak = service.preview().unwrap();
 
-        assert!(peak.times.last().unwrap() > matched.times.last().unwrap());
-    }
+        assert_eq!(service.repeat_target(2.0, None).unwrap(), Some((3.0, true)));
+        service.repeat_mark_started(true).unwrap();
+        assert_eq!(service.repeat_pending_target().unwrap(), Some(3.0));
 
-    #[test]
-    fn position_preview_reaches_target() {
-        let service = MotionService::default();
-        let preview = service.preview().unwrap();
-        assert!((preview.primary.last().unwrap() - 1.0).abs() < 2e-3);
-    }
+        // No Action completion is required. A rejected update does not advance.
+        assert_eq!(service.repeat_target(3.0, None).unwrap(), Some((2.0, false)));
+        assert_eq!(service.repeat_target(3.0, None).unwrap(), Some((2.0, false)));
+        service.repeat_mark_started(false).unwrap();
+        assert_eq!(service.repeat_target(2.0, None).unwrap(), Some((3.0, true)));
 
-    #[test]
-    fn filtered_position_preserves_integrated_position_and_settles_speed() {
-        let service = MotionService::default();
-        let mut config = service.get();
-        config.trajectory = TrajectoryType::Filtered;
-        config.filter_time_ms = 80.0;
-        service.set(config).unwrap();
-
-        let preview = service.preview().unwrap();
-        let final_position = *preview.primary.last().unwrap();
-        let final_speed = *preview.secondary.last().unwrap();
-
-        assert!((final_position - 1.0).abs() < 5e-3);
-        assert!(final_speed.abs() < 1e-2);
-    }
-
-    #[test]
-    fn speed_validation_ignores_position_only_fields() {
-        let service = MotionService::default();
-        let mut config = service.get();
-        config.mode = MotionMode::Speed;
-        config.position_max_speed = 0.0;
-        config.speed_target = 20.0;
-        assert!(service.set(config).is_ok());
-    }
-
-    #[test]
-    fn speed_preview_respects_effective_speed_limit() {
-        let service = MotionService::default();
-        let mut config = service.get();
-        config.mode = MotionMode::Speed;
-        config.speed_target = 1000.0;
-        service.set(config).unwrap();
-
-        let preview = service.preview_with_speed_limit(Some(100.0)).unwrap();
-        assert!((preview.primary.last().unwrap() - 100.0).abs() < 1e-6);
-    }
-
-    #[test]
-    fn position_preview_respects_effective_speed_limit() {
-        let service = MotionService::default();
-        let mut config = service.get();
-        config.position_target_turn = 20.0;
-        config.position_max_speed = 100.0;
-        service.set(config).unwrap();
-
-        let preview = service.preview_with_speed_limit(Some(10.0)).unwrap();
-        let peak = preview.secondary.iter().copied().fold(0.0_f64, f64::max);
-        assert!(peak <= 10.0 + 1e-6);
-    }
-
-    #[test]
-    fn filtered_speed_converges_to_target() {
-        let service = MotionService::default();
-        let mut config = service.get();
-        config.mode = MotionMode::Speed;
-        config.trajectory = TrajectoryType::Filtered;
-        config.filter_time_ms = 80.0;
-        config.speed_target = 20.0;
-        service.set(config).unwrap();
-
-        let preview = service.preview().unwrap();
-        assert!((preview.primary.last().unwrap() - 20.0).abs() < 1e-2);
+        // A rejected initial Run must not lock the next attempt to old endpoints.
+        service.cancel_repeat_leg().unwrap();
+        assert_eq!(service.repeat_pending_target().unwrap(), None);
+        assert_eq!(service.repeat_target(8.0, None).unwrap(), Some((9.0, true)));
+        service.reset_runtime().unwrap();
+        assert_eq!(service.repeat_target(10.0, None).unwrap(), Some((11.0, true)));
     }
 }

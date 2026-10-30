@@ -1,5 +1,7 @@
 # NMIXX Motor Studio architecture
 
+> **Normative architecture contract.** Do not revise these boundaries merely to match a temporary implementation. See `docs/README.md`.
+
 ## Product boundary
 
 NMIXX Motor Studio is centered on a headless Rust Application Runtime.
@@ -23,10 +25,10 @@ The architecture follows these rules:
 3. **Wire details stay in the core.** CAN IDs, DLC rules, USB framing, transaction matching and payload layouts must not leak into Application API or clients.
 4. **Transport and protocol remain independent.** USB CDC, native CAN FD and future transports carry the same protocol frame model through adapters.
 5. **Application behavior is shared.** State checks, resource arbitration, protection-aware behavior, task lifecycle and error semantics belong in `nmixx-app`, not separately in each client.
-6. **Long operations use one Task model.** Identification, recording, replay and future commissioning workflows expose common lifecycle/progress/cancellation semantics.
+6. **Finite firmware Actions share one completion mechanism.** Host-owned workflows keep domain-specific lifecycle until multiple domains genuinely require the same abstraction; do not introduce a generic Task framework preemptively.
 7. **Automation is composition, not core policy.** Repeat-N tests, quality thresholds and commissioning sequences are normally built by calling the Application API instead of being hard-coded into the device core.
-8. **Stable data contracts are generated where practical.** Firmware Parameter/Action schema should generate host IDs and metadata rather than requiring duplicated hand-maintained tables.
-9. **No hidden global state.** Session, transport, task ownership and subscriptions are explicit objects with clear lifetimes.
+8. **Stable data contracts are generated where practical.** Firmware Parameter/Action schema should generate host IDs and metadata rather than requiring duplicated hand-maintained tables. This includes Host-only Parameter readback dependencies: they are declared in firmware YAML, expanded into HostSchema, and consumed by ParameterService without entering firmware runtime tables. Enum semantics are resolved by HostSchema symbols; Application and GUI domain code must not depend on firmware enum ordinals such as `0/1/2`.
+9. **No hidden global state.** Session, transport, task ownership and subscriptions are explicit objects with clear lifetimes. Problems/history are Application-owned connection state; pages consume one shared projection and do not derive protection state independently.
 10. **Errors preserve layer context.** Transport, wire/protocol, device and application failures remain distinguishable so failures can be diagnosed without string parsing.
 
 ## Layer rules
@@ -75,11 +77,11 @@ CLI -----------+--> ApplicationSession --> domain services --> DeviceSession
 Automation ----+
 ```
 
-Normal product clients must not assemble `DeviceSession + ParameterService + ScopeSession + MotionService` themselves. Tauri is a thin IPC bridge over `ApplicationSession`; the formal CLI uses the same runtime. Low-level smoke/protocol tests may intentionally use `DeviceSession` directly because their purpose is to validate the lower layer itself.
+Normal product clients must not assemble `DeviceSession + ParameterService + MixedScopeSession + MotionService` themselves. Tauri is a thin IPC bridge over `ApplicationSession`; the formal CLI uses the same runtime. Low-level smoke/protocol tests may intentionally use the explicit `nmixx_app::raw` namespace because their purpose is to validate the lower layer itself. Raw session/stream types are not re-exported beside the normal Application API.
 
-Host-only models that are meaningful while disconnected, such as the editable Motion command model and theoretical preview, may outlive a device connection. When connected, the same shared model instance is injected into `ApplicationSession`; a second copy must not be created.
+Host-only models that are meaningful while disconnected, such as the editable Motion command model and theoretical preview, may outlive a device connection. The desktop owns one shared `MotionService` and injects that same instance into each new `ApplicationSession`; a second host model must not be created. Connection-specific execution state such as Repeat A/B endpoints is reset when a new session is attached, while the editable Motion command configuration is retained.
 
-The Application API should expose domain concepts such as `parameter.get`, `motor.enable`, `motor.disable`, `motor.stop`, `action.start`, `stream.subscribe` and `task.cancel`, not raw CAN IDs or payload bytes.
+The Application API exposes domain concepts such as `parameter.get`, `motor.enable`, `motor.disable`, `motor.stop`, `motion.run`, `encoder.phase_search`, `config.save` and `protection.clear`, not raw CAN IDs or payload bytes. HostSchema Action metadata may be listed or inspected, but normal product workflows do not execute arbitrary schema Actions through a generic dispatch endpoint. The existing `nmixxctl action start` command is retained as an explicit expert compatibility surface. It still enters through ApplicationSession so legacy CLI behavior keeps the same motor arbitration/readback semantics; GUI and normal Motor/Motion/Identification commands do not depend on it. GUI pages also use Application-level capability discovery for semantic operations; they do not inspect `ACTION_*` symbols to decide which workflow buttons exist.
 
 ### clients
 
@@ -90,6 +92,11 @@ A client may format values, render a progress bar, or compose a workflow, but it
 ## Desktop GUI functional domains
 
 The desktop client is split by **functional domain and shared internal capability**, not by visual rectangles or one-file-per-widget rules.
+
+This architecture includes both current and planned domains. Whether a capability
+counts toward the current software-completion target is defined explicitly by
+`INTEGRATION_VERIFICATION_MATRIX.md`; planned domains must not be mistaken for
+currently verified functionality.
 
 ```text
 App shell
@@ -106,6 +113,7 @@ App shell
   |     +-- Current Loop
   |     +-- Speed Loop
   |     +-- Position Loop
+  +-- Motion
   +-- Control Tuning
   |
   +-- Analysis
@@ -139,12 +147,12 @@ Connection configuration and Connect/Disconnect are not duplicated in the shell.
 Global motor controls follow these semantics:
 
 ```text
-DISABLED   [ Enable ]   [ Stop ] disabled
-ENABLED    [ Disable ]  [ Stop ] disabled
-RUN        [ Disable ]  [ Stop ] active
+DISABLED   [ Enable ]   [ Stop ]
+ENABLED    [ Disable ]  [ Stop ]
+RUN        [ Disable ]  [ Stop ]
 ```
 
-`Enable / Disable` is one stateful button in a stable location. Text, icon and color change together to indicate the action that pressing the button will perform. `Stop` is a separate persistent button because stopping current motion/task and changing motor enable state are different operations.
+`Enable / Disable` is one stateful button in a stable location. Text, icon and color change together to indicate the action that pressing the button will perform. `Stop` is a separate persistent button because stopping current motion/task and changing motor enable state are different operations. The host does not gate Stop on the current motor state; while connected, pressing Stop immediately invokes the shared Application stop semantic. Only connection loss or an already in-flight Stop request may temporarily disable the control.
 
 `Run` is not a global shell action. Run always has workflow context: position/speed/torque motion, a tuning experiment, identification internals, Bode excitation, or another domain operation. The page/domain that defines the command owns the Run/Start action.
 
@@ -180,13 +188,12 @@ Rules:
 Approved now:
 
 - **VSCode Elements + Codicons** for basic controls and icons.
-- **uPlot** for Scope/FFT/Bode plotting mechanics, including scales, axes, cursor and plugins.
-- **Split.js** for simple fixed split panes.
+- **ECharts** for Scope/FFT/Bode and Motion plotting mechanics, including scales, axes, zoom/pan and extension points.
 - **TanStack Table** for Parameters and Events table state, sorting and filtering.
 
 Introduce only when the corresponding product need exists:
 
-- **Dockview** for draggable/persisted IDE-style panel layouts; do not replace simple Split.js layouts preemptively.
+- **Dockview** for draggable/persisted IDE-style panel layouts; do not replace simple fixed layouts preemptively.
 - **xterm.js** for an Automation terminal frontend.
 - **Monaco Editor** for script editing.
 
@@ -212,6 +219,9 @@ Limits / Safety
 Control architecture
     |
     v
+Motion
+    |
+    v
 Control Tuning
     |
     v
@@ -225,6 +235,7 @@ The order communicates the normal engineering sequence without turning the appli
 - **Encoder** configures feedback protocol/interface and protocol-specific parameters. Phase search current, homing and zero-setting tools belong here because they establish position/electrical alignment.
 - **Limits / Safety** configures user operating limits and other software safety boundaries while keeping hardware protection semantics distinct.
 - **Control Architecture** is a parent workflow with three child pages: **Current Loop**, **Speed Loop**, and **Position Loop**. Each child configures that loop's control structure: controller type, topology, feedback/observer choice, filters, feedforward and the Parameters that belong to those blocks. It may expose editable Bandwidth/Kp/Ki inside the diagram when those Parameters are part of the active block, but it is not the primary repeated tune-run-inspect workspace. Detailed page rules are in `CONTROL_ARCHITECTURE_PAGE.md`.
+- **Motion** is the general direct-command workspace for the currently supported Position/Speed/Sensorless-Speed/Torque command semantics and trajectory preview. It uses the shared Parameter/Application state and does not own motor Enable/Disable. Detailed page rules are in `MOTION_PAGE.md`.
 - **Control Tuning** runs bounded tuning experiments for the already selected structure: it repeats only the common / primary tuning Parameters, binds them to one motion command, captures the synchronized response, and preserves the completed waveform for comparison. It does not absorb structural options such as controller type, filters, feedback selection or feedforward.
 - **Analysis** provides general-purpose continuous or manually triggered engineering analysis. Scope, FFT and Bode share acquisition and plotting infrastructure but are not responsible for the Control Tuning experiment workflow.
 
@@ -237,7 +248,7 @@ The Parameter subsystem is the single source of truth for host-visible parameter
 ```text
 Parameter service
       |
-      +--> Parameters table   (all parameters, direct read/write/import/export)
+      +--> Parameters table   (all parameters, direct read/write; import/export requires its own approved contract)
       +--> Motor page         (motor-related parameter view)
       +--> Encoder page       (feedback-related parameter view)
       +--> Limits page        (operating/safety limits)
@@ -387,97 +398,104 @@ stop capture and keep waveform
 
 There is deliberately no implicit Enable/Disable in the experiment. The global Stop control remains available while an experiment is running and stops the active motion/task through the same Application state used by the page.
 
-The waveform panel is not an indefinitely scrolling Scope. It reuses shared acquisition/uPlot infrastructure but is finite and synchronized to the tuning experiment.
+The waveform panel is not an indefinitely scrolling Scope. It reuses shared acquisition/ECharts infrastructure but is finite and synchronized to the tuning experiment.
 
-## Motion is a shared runtime model, not page-local state
+## Motion ownership and execution semantics
 
-Motion is a first-class application domain. It owns the complete motor-motion command and trajectory-generation model, not merely a target setpoint.
-
-The full Motion page and the compact Motion controls shown during Control Tuning are two views over the **same Application-level Motion model**.
+Motion is a first-class application domain, but device Parameters and host command semantics have different owners.
 
 ```text
-                    Application / Motion model
+                         ParameterService
                               |
-                 +------------+------------+
-                 |                         |
-            Motion page              Control Tuning
-          full editor/view            compact editor
-                 |                         |
-                 +------------+------------+
-                              |
-                       same state object
+          +-------------------+-------------------+
+          |                   |                   |
+      Motion page       Control Tuning       Parameters page
+          |
+          +--> device-owned values
+               - PARAM_MOTOR_MODE
+               - PARAM_MOTION_WM_MAX
+               - PARAM_MOTION_WM_ACC
+               - PARAM_MOTION_WM_DEC
+               - PARAM_TARGET_POSITION
+               - PARAM_TARGET_SPEED
+               - PARAM_TARGET_TORQUE
+               - optional schema-advertised motion Parameters
+
+Application Motion model
+          |
+          +--> host-only command semantics
+               - Absolute / Incremental position interpretation
+               - incremental position delta
+               - manual alternating Repeat state
 ```
 
-There must not be separate page-local copies of motion parameters, an Apply/synchronize step, or a snapshot that diverges between these views. Editing a shared field from either page updates the same runtime state and the other view must reflect the new value immediately.
+A device-owned value must not also be stored in `MotionConfig`. Editing the same Parameter from Motion, Control Tuning or the generic Parameters page changes the same active device RAM value and every view observes that shared value.
 
-The Motion page is the complete motion-command editor. Control Tuning exposes only the compact subset needed to excite the motor while tuning controllers and observing analysis data. Fields hidden from the compact tuning view still belong to the same Motion model.
+Numeric device Parameters follow the workbench editor rule defined in `UI_INTERACTION_RULES.md`: typing creates a draft, Enter writes RAM and reads back the canonical value, while Escape or leaving the editor without Enter discards the draft. Enum/select controls such as motor mode may write immediately because one selection is already a complete value.
 
-The initial operating/control modes exposed by Motion are broader than the traditional position/speed/torque trio:
+### Run is execution, not synchronization
 
-- **Position**
-- **Speed**
-- **Sensorless Speed**
-- **Torque**
-- **MIT**
+Normal Motion Parameters are committed before Run. `motion.run` must not bulk-copy a Host configuration object into device Parameters.
 
-The mode selector itself is shared state. If a view is allowed to change the active mode, every other Motion view observes that same active mode.
+For Speed, Sensorless Speed and Torque, Run normally reduces to validating the required runtime state and starting `ACTION_MOTOR_RUN`.
 
-Motion configuration includes the trajectory-generator behavior appropriate to the selected mode. Position motion may use trapezoidal/T-profile, S-curve, filtered trajectory or future trajectory types. Speed motion also uses a configurable trajectory rather than jumping directly to a speed setpoint; acceleration, deceleration and the selected shaping method are part of the same Motion state. Other modes may expose their own mode-specific command shaping when meaningful.
+Absolute Position target is also a normal device Parameter and is written when the user commits the target field.
 
-The current trajectory semantics are explicit:
+Incremental Position is intentionally different because the user enters a delta, not an absolute firmware target. At execution time the Application reads the current position, adds the committed host-side delta, writes the resulting `PARAM_TARGET_POSITION`, then starts `ACTION_MOTOR_RUN`.
 
-- **T / Trapezoidal**: Acc and Dec are the constant acceleration/deceleration magnitudes of the base profile.
-- **S-curve / Peak Accel**: Acc and Dec are the actual maximum acceleration/deceleration magnitudes. Smooth acceleration shaping therefore takes longer than a T-profile using the same values.
-- **S-curve / Matched Time**: Acc and Dec describe the equivalent T-profile timing. Acceleration/deceleration duration is kept equal to the T-profile, so the internal S-curve peak acceleration is higher.
-- **Filtered**: Acc and Dec define a base T-profile. Filter Time is the time constant of a causal first-order low-pass applied to the base speed command. Position is obtained by integrating the filtered speed; preview code must not rescale position independently from speed merely to force the endpoint.
+### Manual Repeat
 
-The exact trajectory implementations belong behind the Application-level Motion API. GUI pages select and edit trajectory semantics; they do not implement their own ramp, S-curve or filter generators.
+Repeat is host command semantics, not a firmware Repeat mode and not an automatic loop.
 
-Mode-specific command fields also share one owner. Conceptually the Application API should expose one coherent Motion domain such as:
+With Position Repeat enabled, the first manual Run establishes endpoints A and B. One Run executes only one leg. When the prior trajectory reference reaches its endpoint, the **next manual Run**
+writes the opposite Position target (without another Motor Run Action while RUN):
 
 ```text
-motion.mode
-
-motion.trajectory.type
-motion.trajectory.acc
-motion.trajectory.dec
-motion.trajectory.filter
-...
-
-motion.position.target
-motion.position.speed
-
-motion.speed.target
-
-motion.sensorless_speed.target
-...
-
-motion.mit.position_ref
-motion.mit.velocity_ref
-motion.mit.kp
-motion.mit.kd
-motion.mit.torque_ff
+Run #1: A -> B
+Run #2: B -> A
+Run #3: A -> B
 ```
 
-The exact public API names may evolve, but GUI components must not create parallel storage for these values.
+There is no automatic second Run. Stop, Disable, a failed Run or a fault must not advance the Repeat direction. A future continuously cycling servo-test feature is a separate workflow.
 
-The distinction between the two GUI surfaces is therefore **capability and density**, not ownership:
+### Executable trajectory capability
 
-- **Motion page**: complete mode-specific command configuration, trajectory type and shaping configuration, command/trajectory preview, advanced motion options where applicable, and Run/Stop.
-- **Control Tuning**: compact controls for the same Motion state beside Scope/Bode/FFT-oriented tuning tools.
+The GUI exposes only trajectory behavior the connected firmware actually advertises as executable. Current AxDr_L Position/Speed motion uses the T/Trapezoidal planner represented by `Wm_Max / Wm_Acc / Wm_Dec`; unsupported S-curve, filtered-profile and MIT controls are not presented as normal executable Motion options.
 
-Run, Stop and Disable have intentionally different semantics:
+If future firmware exposes additional executable trajectory Parameters/capabilities, those controls may appear from schema/capability discovery without introducing parallel Host copies of their values.
 
-- **Run** executes the currently configured Motion command using the selected trajectory generator.
-- **Stop** is a normal controlled stop. It must transition the current command toward the stopped state using the active trajectory/deceleration semantics instead of abruptly removing motor drive.
-- **Disable** is the emergency/immediate drive-off operation at the application level. It removes motor enable rather than following the normal motion trajectory.
+The full Motion page and Control Tuning are therefore two workflow projections over the same device Parameters plus the same small Application-owned command semantics. Their difference is presentation density and experiment workflow, not value ownership.
 
-Therefore a Stop button on the Motion page and a Stop button in Control Tuning must invoke the same Application-level controlled-stop operation. They must not be implemented as aliases for Disable. Likewise, any global Disable control must remain semantically distinct and visually recognizable from normal Stop.
+Run, Stop and Disable remain distinct:
 
-Sensorless Speed remains a separate operating mode rather than a checkbox on normal Speed because startup and observer handover have distinct runtime semantics. The Motion page should expose only the user-facing startup controls needed for normal operation; low-level observer/handover tuning belongs to deeper control/debug configuration.
+- **Run** starts the ENABLED motor or switches the target of an already RUN Host-side Position Repeat.
+- **Stop** performs the normal controlled-stop operation exposed by the Application.
+- **Disable** removes motor enable and is not an alias for Stop.
 
-MIT is also represented as its own mode because its command surface is inherently different from trajectory Position/Speed control: position reference, velocity reference, Kp, Kd and torque feedforward are edited as one MIT command set.
+Sensorless Speed remains a separate operating mode where the firmware exposes it because startup and observer handover have distinct runtime semantics. Only user-facing Parameters actually exposed by the connected schema are shown.
 
+## Runtime telemetry and Scope ownership
+
+Connection-scoped runtime telemetry and user-owned Scope recording are separate concepts.
+
+```text
+Device Plot NORMAL baseline (1 kHz)
+        |
+        +--> RuntimeTelemetry: Iq / Wm / PositionTotalTurns / Vbus
+        |
+        +--> rolling baseline history
+        |
+        +--> optional Scope record when the user presses Run
+```
+
+The baseline starts with the device session and continues independently of Scope
+Run/Stop. Scope may display baseline NORMAL channels without allocating another
+device channel. Selecting the same baseline ID at FAST rate is no longer the
+baseline view; it becomes an explicit Scope acquisition demand.
+
+The bottom status bar consumes RuntimeTelemetry, not page-local polling and not a
+reconstructed exact Parameter value. Plot position is an f32 total-turn display
+signal; it must not overwrite the exact typed multi-turn Position Parameter.
 
 ## Analysis shares acquisition and plotting infrastructure
 
@@ -491,7 +509,7 @@ Detailed Scope interaction rules, including mouse-centered time zoom, history pa
 
 The GUI must not open its own transport or decode telemetry wire frames for any of these functions. Acquisition remains an Application Runtime capability.
 
-Chart interaction should use uPlot capabilities and plugins instead of recreating generic plotting behavior in Svelte. Unit metadata should drive reusable scale/axis policy rather than page-specific conditionals.
+Chart interaction should use ECharts capabilities and extension points instead of recreating generic plotting behavior in Svelte. Unit metadata should drive reusable scale/axis policy rather than page-specific conditionals.
 
 ## Connection is transport-oriented
 

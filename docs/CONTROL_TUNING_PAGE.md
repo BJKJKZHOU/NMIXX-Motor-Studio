@@ -83,11 +83,10 @@ The left side is the experiment waveform area. The lower-left area defines the m
 
 The page skeleton is stable. Waveform-related configuration must remain inside the existing Experiment Waveform panel; it must not move Motion Command or the right-side tuning parameter column.
 
-Inside the Experiment Waveform panel, three browser-style sub-tabs share the same bounded content area:
+Inside the Experiment Waveform panel, two browser-style sub-tabs share the same bounded content area:
 
-- **Waveform** — the captured multi-channel time plot;
-- **Channels** — capture channel/rate selection;
-- **Scale** — per-channel display multiplier.
+- **Waveform** — the captured multi-channel time plot with inline Y controls;
+- **Channels** — capture channel/rate selection.
 
 Switching tabs replaces the waveform content area rather than expanding an extra settings panel above the waveform. This preserves the existing page proportions.
 
@@ -234,9 +233,12 @@ execute motion
         v
 finish condition
         |
-        +-- Position, Repeat off -> trajectory time + settling -> controlled Stop
+        +-- Position -> one manual Run executes one leg
+        |      -> firmware reference reaches the target, then settling -> controlled Stop
+        |      -> if Repeat is enabled and the leg succeeds, arm the opposite
+        |         endpoint for the next manual Run only
         |
-        +-- Speed / Sensorless Speed / Torque / Repeat -> user Stop
+        +-- Speed / Sensorless Speed / Torque -> user Stop
         |
         +-- persistent global Stop -> same experiment stop path
         v
@@ -269,13 +271,18 @@ A Stop should preserve a coherent experiment result/error state and retain the w
 
 This page does not use an endless scrolling Plot session.
 
+An unexpected DISABLED/fault state during the leg is an experiment failure even
+when a Stop command was already accepted. This clears any pending Repeat endpoint
+and retains the normal Stop/record cleanup path.
+
 A capture is bounded by one tuning experiment rather than by a fixed duration for every Motion mode.
 
 The initial lifecycle uses:
 
 - pre-motion capture: 0.5 s;
-- Position with Repeat disabled: run for the calculated trajectory duration, keep a short settling interval, then issue the normal controlled Stop;
-- Speed / Sensorless Speed / Torque and repeated Position: continue until the user presses local or global Stop;
+- Position: one page-local Run executes one Position leg; the Application reads the exact firmware `PARAM_REF_POSITION` and committed target until the reference reaches that endpoint, holds a short settling interval, then requests controlled Stop. The preview duration is not used as a completion signal;
+- when Position Repeat is enabled, the successful finite leg keeps the Application-owned A/B endpoints for the **next manual** Tuning Run. Only its internal planned Stop preserves these endpoints; global/page-local Stop, Disable, a failed leg or a recording-limit early Stop reset them. The firmware never receives a Repeat mode;
+- Speed / Sensorless Speed / Torque: continue until the user presses local or global Stop;
 - post-stop capture: 0.75 s after the motor leaves RUN;
 - one finite non-overwriting raw capture for the complete experiment, bounded by a 128 MiB RAM protection budget;
 - a shorter live preview window while the experiment is running.
@@ -283,6 +290,10 @@ The initial lifecycle uses:
 The post-stop interval is important because position/speed tuning must show the stop transient, residual vibration and settling. Control Tuning does not silently roll over or overwrite the beginning of an experiment. The Application converts the selected FAST/NORMAL channel rates into the maximum finite capture duration that fits the 128 MiB raw-sample budget. As the capture approaches that limit, it issues a controlled Stop early enough to preserve the post-capture interval, retains the samples already recorded, and reports that the recording limit was reached.
 
 The waveform remains on screen after capture ends so the user can inspect the complete response before changing the next parameter set.
+
+Repeat does not mean continuous cycling in Control Tuning. Continuous A <-> B
+servo testing is a separate workflow/control and must not be folded into the
+Repeat checkbox or the normal tuning Run lifecycle.
 
 If the experiment is stopped early, the capture/task layer should still finish the record coherently rather than leaving the plotting service in an unrelated running state.
 
@@ -330,19 +341,54 @@ FAST and NORMAL samples keep their native sample rates. The GUI does not upsampl
 
 ### Waveform interaction
 
-The tuning waveform is intentionally simpler than the general Scope page.
+Control Tuning uses the same Scope/ECharts waveform core as the general Scope page. The difference is presentation and workflow, not a second plotting implementation.
 
-It supports:
+The compact tuning panel keeps its own tab layout:
 
-- one shared horizontal time axis;
-- mouse-wheel Time/div changes;
-- horizontal drag within the finite captured record;
-- stable per-channel color identity within the capture;
-- one positive display multiplier per selected channel.
+- **Waveform** — the shared Scope waveform view with inline Y controls;
+- **Channels** — experiment capture channel/rate selection.
 
-The Scale tab edits the multiplier directly as `×N`. The rendering rule is exactly `display_y = raw_sample × multiplier`. With `×1`, the plotted curve is the original floating-point sample value without per-channel normalization or per-channel auto-ranging. All tuning curves share one display Y scale, so relative numeric magnitude is preserved unless the user explicitly changes a multiplier. The multiplier is display-only: raw capture values, exports and future measurements continue to use the original physical values. The tuning waveform does not expose Y offset, Y-position markers, cursors, trigger controls, Follow Latest, or the full Scope acquisition controls.
+All tuning curves share one numeric Y axis. The inline channel selector chooses
+which curve's display multiplier to edit; it does not select a separate axis.
+Displayed Y = plotted value × channel multiplier (default 1). For example, speed
+500 rad/s at ×0.01 appears at Y=5 alongside current 5 A at ×1. Legend labels show
+non-unit multipliers, while hover readouts show values before the display multiplier.
 
-The intended workflow is to configure channels and display multipliers infrequently, then repeatedly change tuning parameters, Run the same motion, inspect the waveform, and tune again.
+Position curves show displacement for this experiment: plotted position = absolute
+position − actual position read before pre-capture. Reference and feedback share
+this origin, preserving their tracking error; labels are prefixed with Δ and hover
+readouts show displacement in turns. Position channels come from the current
+HostSchema `position` type, not hardcoded IDs or labels. Each successful new capture
+gets a new origin; zooming, panning and refreshing retain it, even when the visible
+window excludes the start. Stored capture data retain the absolute position.
+
+Y min/max apply to all curves and do not reset their multipliers. The initial
+common range fits all plotted values (including relative-position envelopes). Editing a
+multiplier or bound freezes the common range across snapshot refreshes and tab
+switches, so autoscaling cannot cancel the multiplier's visual effect. There is
+no center-offset control or separate Scale tab. Display edits do not change raw
+capture values, write Parameters or change experiment capture selection.
+
+The tuning X axis starts at capture time 0. Before a position experiment moves,
+the host freezes the full planned display duration from the current trajectory
+preview (distance, effective speed limit, acceleration, deceleration and profile),
+plus 0.5 s pre-capture, 0.5 s position settling and 0.75 s post-capture. Repeat uses
+the next A/B endpoint without advancing repeat state. Samples fill this fixed
+extent; refreshing reads the capture from its start rather than a moving tail.
+The planned duration is display-only: firmware reference arrival still determines
+Stop, and the recording budget remains independent. Overruns extend the axis in
+steps instead of clipping samples. Speed/torque have no predetermined stop time
+and start with a 3 s extent that grows as needed. User zoom survives refreshes;
+double-click restores the full experiment, and a new capture resets X to its plan.
+
+Generic plotting behavior remains shared with Scope:
+
+- ECharts owns waveform rendering, continuous horizontal zoom/pan, coordinate transforms and hover behavior;
+- the same Scope snapshot/series model is rendered in both pages;
+- Control Tuning must not maintain a separate Time/div, pointer-drag or chart-rendering engine;
+- tuning-specific channel defaults and finite experiment lifecycle remain owned by Control Tuning.
+
+The compact layout may expose fewer controls at once than the full Scope page, but this is only a UI projection over the same Scope display capability. Raw capture values and experiment data ownership are unchanged.
 
 ### Waveform LOD
 

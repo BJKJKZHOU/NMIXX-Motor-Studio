@@ -24,7 +24,7 @@ B                —              [...]         B result          —
 
 The columns have different meanings:
 
-- **Default**: firmware-compiled/default value when the Host schema eventually exposes it. Until then the GUI shows `—` rather than inventing a value.
+- **Default**: firmware-compiled/default value exported by the generated HostSchema when available. Missing metadata is shown as `—`; the GUI never invents a default.
 - **Active**: the parameter currently used by firmware control/identification logic. Writable values use the shared Parameter API.
 - **Identified**: the latest valid identification result for the corresponding identification group.
 - **Action**: the semantic identification operation associated with that result.
@@ -82,7 +82,7 @@ The page should present running/success/failure/apply state next to the correspo
 
 `Apply` is an Action, not a direct GUI copy between fields.
 
-The current firmware exposes a shared identification apply action. The Application/UI associates the apply request with the identification result that is currently ready and refreshes the affected Active parameters after completion.
+The current firmware exposes one shared identification Apply action whose device-side meaning is tied to the firmware's current internal identification mode. The Application therefore owns a session-scoped **Apply candidate**: only the identification type whose finite Action most recently completed successfully with a valid result is eligible for Apply. GUI and Automation must pass that type back to the semantic Application API; they must not infer Apply eligibility from historical `*_VALID` flags alone.
 
 The initial mappings are:
 
@@ -102,13 +102,14 @@ J/B result
 
 If an Active value is edited manually after an identified result has been applied, the UI must not continue implying that the active value still represents the unchanged applied result.
 
-Identification presentation must also survive page recreation. When the Motor page is entered, it derives the stable result state from device Parameters rather than assuming `idle`:
+Identification presentation must also survive page recreation without guessing firmware-internal mode:
 
 - result valid and Active values match the identified result -> `Applied`;
-- result valid and Active values differ -> `Apply` remains available;
+- result valid, Active values differ, and Application reports that type as the current Apply candidate -> `Apply`;
+- result valid but no matching Application candidate -> the Identified value remains visible, but Apply is not offered; rerun that identification to create a new candidate;
 - no valid result -> idle.
 
-Transient `Running`, `Applying` and immediate failure feedback remain runtime UI state.
+This deliberately favors correct shared-Action semantics over applying an older valid result to the wrong firmware identification mode. Transient `Running`, `Applying` and immediate failure feedback remain runtime UI state.
 
 ## Identification settings
 
@@ -116,7 +117,9 @@ Identification startup/configuration values that have a clear user-facing role m
 
 The current GUI exposes the user-facing identification setup Parameters required by the Application preflight when the connected firmware provides them:
 
-- the shared I/F forced-start current, `PARAM_IDENT_IF_CURRENT`;
+- the Rs/Ls injection peak current, `PARAM_MOTOR_RL_I_PEAK`;
+- the shared Align current, `PARAM_MOTOR_ALIGN_CURRENT`;
+- the shared I/F forced-start current, `PARAM_MOTOR_IF_CURRENT`;
 - J/B excitation ratio, `PARAM_IDENT_JB_EXCITE_RATIO`;
 - J/B excitation frequency, `PARAM_IDENT_JB_EXCITE_HZ`.
 
@@ -152,6 +155,26 @@ Examples include:
 
 The GUI may request/display structured preflight information and navigate the user to another domain such as Limits / Safety, but the authoritative check is repeated when the Action starts.
 
+Clicking Rs/Ls, Flux, or J/B Start is one explicit operation. The desktop sends a
+single semantic identification request with permission for Application-owned
+mode/Enable sequencing. It does not ask for a second confirmation, re-send the
+request after a modal dialog, or require the operator to expose the firmware's
+internal IDENT mode. Application performs preflight, selects IDENT while
+DISABLED, and enables if required before dispatching the finite Action; an
+already ENABLED motor in a different mode may be disabled and re-enabled by
+Application, as with Encoder Phase Search. Starting from RUN remains rejected.
+
+The Motor page displays this behavior and possible motor rotation as an
+informational note, not an interactive modal. Blocked preflight appears as
+"Prerequisites not met" with reasons, separately from an Action that actually
+started and failed. The global Stop control remains the way to interrupt an
+operation. After an identification completes (success or failure), the Application
+automatically disables the motor and verifies DISABLED before reporting completion.
+It retains IDENT mode and successful results; Apply remains a separate user action
+and works while disabled. Disable failures are reported instead of successful
+workflow completion. Automation and CLI may still
+use the explicit allowEnable option to constrain their own scripts.
+
 ## Global motor controls
 
 Motor identification actions are domain actions; global motor state controls remain in the application shell.
@@ -164,7 +187,7 @@ The page does not duplicate the persistent global:
 
 interaction. Shared shell behavior is defined in `UI_INTERACTION_RULES.md`.
 
-An identification Action may internally require firmware/Application sequencing appropriate to that semantic operation, but the GUI must not reproduce low-level mode/action sequences itself.
+An identification Action may internally require firmware/Application sequencing appropriate to that semantic operation, but the GUI must not reproduce low-level mode/action sequences itself. Stopping Identification uses the same Application motor-stop semantic as the global Stop control; the page does not expose a separate Identification Abort workflow.
 
 ## Parameter/API boundary
 
@@ -186,11 +209,12 @@ The current GUI implements:
 - latest valid Rs/Ls, Flux and J/B results;
 - Rs/Ls, Flux and J/B Action start/completion state;
 - explicit Apply after a valid result;
-- shared I/F startup current when exposed by the Host schema;
+- Rs/Ls injection peak, Align current and shared I/F startup current from the same HostSchema;
+- DISABLED-only writes locked in the UI while the motor is ENABLED/RUN;
 - J/B excitation ratio and frequency when exposed by the Host schema.
 
-Current limitations that must remain explicit rather than simulated:
+Current implementation notes:
 
-- firmware compiled/default values are not yet exported in the current Host schema, so the Default column is `—`;
+- firmware compiled/default motor values are exported by HostSchema and the Default column consumes that generated metadata;
 - additional identification settings appear only when they become intentional Host-visible parameters;
 - detailed internal identification phases remain firmware implementation details.

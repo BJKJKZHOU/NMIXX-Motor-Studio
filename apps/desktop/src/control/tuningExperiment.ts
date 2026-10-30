@@ -21,6 +21,10 @@ export type TuningExperimentSnapshot = {
   recordedSeconds: number;
   windowSeconds: number;
   endOffsetSeconds: number;
+  positionOriginTurns: number | null;
+  positionChannelIds: number[];
+  captureId: number;
+  plannedDurationSeconds: number | null;
 };
 
 export type TuningExperimentSelection = {

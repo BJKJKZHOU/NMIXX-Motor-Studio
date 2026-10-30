@@ -5,3 +5,16 @@ import type { ActionHandle } from "../actions/types";
 export function startPhaseSearch(): Promise<ActionHandle> {
   return invoke<ActionHandle>("phase_search_start");
 }
+
+export function startHoming(): Promise<ActionHandle> {
+  return invoke<ActionHandle>("homing_start");
+}
+
+export function setPositionZero(): Promise<ActionHandle> {
+  return invoke<ActionHandle>("encoder_set_zero");
+}
+
+/** Firmware applies/saves compensation and repeats phase search before completion. */
+export function startEncoderCalibration(): Promise<ActionHandle> {
+  return invoke<ActionHandle>("encoder_calibration_start");
+}
